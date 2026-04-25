@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package sbe.test;
+
+option java_package = "com.trendvidia.protowire.sbe.testproto";
+option java_multiple_files = true;
+
+import "sbe/annotations.proto";
+
+option (sbe.schema_id) = 1;
+option (sbe.version) = 0;
+
+message NewOrderSingle {
+  option (sbe.template_id) = 1;
+
+  uint64 order_id = 1;
+  string symbol = 2 [(sbe.length) = 8];
+  int64 price = 3;
+  uint32 quantity = 4;
+  uint32 side = 5 [(sbe.encoding) = "uint8"];
+
+  message Fill {
+    int64 fill_price = 1;
+    uint32 fill_qty = 2;
+    uint64 fill_id = 3;
+  }
+  repeated Fill fills = 6;
+}

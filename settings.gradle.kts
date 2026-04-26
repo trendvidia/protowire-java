@@ -15,4 +15,5 @@ include(
     ":envelope",
     ":registry-client",
     ":cli",
+    ":dump-envelope",
 )

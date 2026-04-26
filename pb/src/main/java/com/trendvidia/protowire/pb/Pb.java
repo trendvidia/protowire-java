@@ -59,7 +59,7 @@ public final class Pb {
 
     // -- struct info cache ---------------------------------------------------
 
-    private record FieldInfo(Field field, int number, FieldKind kind, Class<?> elementClass) {}
+    private record FieldInfo(Field field, int number, FieldKind kind, Class<?> elementClass, Class<?> mapKeyClass) {}
 
     private record StructInfo(List<FieldInfo> ordered, Map<Integer, FieldInfo> byNumber) {}
 
@@ -77,16 +77,17 @@ public final class Pb {
             if (pf == null) continue;
             f.setAccessible(true);
             FieldKind kind = FieldKind.classify(f);
-            Class<?> elem = elementClass(f);
-            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem);
+            Class<?> elem = elementClass(f, kind);
+            Class<?> mapKey = kind == FieldKind.MAP ? mapKeyClass(f) : null;
+            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem, mapKey);
             ordered.add(fi);
             byNumber.put(pf.value(), fi);
         }
         return new StructInfo(List.copyOf(ordered), Map.copyOf(byNumber));
     }
 
-    private static Class<?> elementClass(Field f) {
-        if (List.class.isAssignableFrom(f.getType())) {
+    private static Class<?> elementClass(Field f, FieldKind kind) {
+        if (kind == FieldKind.LIST) {
             if (f.getGenericType() instanceof ParameterizedType pt
                     && pt.getActualTypeArguments().length == 1
                     && pt.getActualTypeArguments()[0] instanceof Class<?> c) {
@@ -94,7 +95,25 @@ public final class Pb {
             }
             return Object.class;
         }
+        if (kind == FieldKind.MAP) {
+            // For maps, "elementClass" is the value type; key type is read separately.
+            if (f.getGenericType() instanceof ParameterizedType pt
+                    && pt.getActualTypeArguments().length == 2
+                    && pt.getActualTypeArguments()[1] instanceof Class<?> c) {
+                return c;
+            }
+            return Object.class;
+        }
         return f.getType();
+    }
+
+    private static Class<?> mapKeyClass(Field f) {
+        if (f.getGenericType() instanceof ParameterizedType pt
+                && pt.getActualTypeArguments().length == 2
+                && pt.getActualTypeArguments()[0] instanceof Class<?> c) {
+            return c;
+        }
+        return Object.class;
     }
 
     // -- marshal -------------------------------------------------------------
@@ -122,7 +141,44 @@ public final class Pb {
             return;
         }
 
+        if (fi.kind == FieldKind.MAP) {
+            // proto3 maps: each entry is a length-prefixed MapEntry message
+            // with key at field 1 and value at field 2.
+            Map<?, ?> map = (Map<?, ?>) value;
+            if (map.isEmpty()) return;
+            for (Map.Entry<?, ?> e : map.entrySet()) {
+                ByteArrayOutputStream entryBuf = new ByteArrayOutputStream();
+                CodedOutputStream entryOut = CodedOutputStream.newInstance(entryBuf);
+                if (e.getKey() != null) {
+                    marshalScalarIfNonZero(entryOut, 1, fi.mapKeyClass, e.getKey());
+                }
+                if (e.getValue() != null) {
+                    marshalScalarIfNonZero(entryOut, 2, fi.elementClass, e.getValue());
+                }
+                entryOut.flush();
+                out.writeByteArray(fi.number, entryBuf.toByteArray());
+            }
+            return;
+        }
+
         marshalScalar(out, fi.number, fi.field.getType(), value);
+    }
+
+    /** Emit a scalar only when its value is non-zero (proto3 zero-skip). Used by map-entry encoding. */
+    private static void marshalScalarIfNonZero(CodedOutputStream out, int num, Class<?> type, Object v) throws IOException {
+        if (isZero(type, v)) return;
+        marshalScalar(out, num, type, v);
+    }
+
+    private static boolean isZero(Class<?> type, Object v) {
+        if (v == null) return true;
+        if (type == boolean.class || type == Boolean.class) return !((Boolean) v);
+        if (type == String.class) return ((String) v).isEmpty();
+        if (type == byte[].class) return ((byte[]) v).length == 0;
+        if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
+            return ((Number) v).doubleValue() == 0d;
+        }
+        return false;
     }
 
     private static void marshalScalar(CodedOutputStream out, int num, Class<?> type, Object v) throws IOException {
@@ -215,8 +271,48 @@ public final class Pb {
             list.add(readScalar(in, fi.elementClass, wireType));
             return;
         }
+        if (fi.kind == FieldKind.MAP) {
+            @SuppressWarnings("unchecked")
+            Map<Object, Object> map = (Map<Object, Object>) fi.field.get(dest);
+            if (map == null) {
+                map = new HashMap<>();
+                fi.field.set(dest, map);
+            }
+            byte[] entryBytes = in.readByteArray();
+            CodedInputStream entryIn = CodedInputStream.newInstance(entryBytes);
+            Object key = scalarZero(fi.mapKeyClass);
+            Object val = scalarZero(fi.elementClass);
+            while (true) {
+                int tag = entryIn.readTag();
+                if (tag == 0) break;
+                int n = WireFormat.getTagFieldNumber(tag);
+                int wt = WireFormat.getTagWireType(tag);
+                if (n == 1) {
+                    key = readScalar(entryIn, fi.mapKeyClass, wt);
+                } else if (n == 2) {
+                    val = readScalar(entryIn, fi.elementClass, wt);
+                } else {
+                    entryIn.skipField(tag);
+                }
+            }
+            map.put(key, val);
+            return;
+        }
         Object value = readScalar(in, fi.field.getType(), wireType);
         fi.field.set(dest, value);
+    }
+
+    private static Object scalarZero(Class<?> type) {
+        if (type == boolean.class || type == Boolean.class) return Boolean.FALSE;
+        if (type == int.class || type == Integer.class) return 0;
+        if (type == long.class || type == Long.class) return 0L;
+        if (type == short.class || type == Short.class) return (short) 0;
+        if (type == byte.class || type == Byte.class) return (byte) 0;
+        if (type == float.class || type == Float.class) return 0f;
+        if (type == double.class || type == Double.class) return 0d;
+        if (type == String.class) return "";
+        if (type == byte[].class) return new byte[0];
+        return null;
     }
 
     private static Object readScalar(CodedInputStream in, Class<?> type, int wireType) throws IOException {

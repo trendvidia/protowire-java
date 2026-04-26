@@ -6,11 +6,15 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PbTest {
 
@@ -91,5 +95,62 @@ class PbTest {
         assertEquals(b.amount, decoded.amount);
         assertEquals(0, b.price.compareTo(decoded.price));
         assertEquals(b.price.scale(), decoded.price.scale());
+    }
+
+    public static class WithMaps {
+        @ProtoField(1) Map<String, String> tags = new HashMap<>();
+        @ProtoField(2) Map<Integer, String> codes = new HashMap<>();
+        @ProtoField(3) Map<String, Long> counts = new HashMap<>();
+        public WithMaps() {}
+    }
+
+    @Test
+    void mapsRoundTrip() throws IOException {
+        WithMaps orig = new WithMaps();
+        orig.tags.put("env", "prod");
+        orig.tags.put("team", "platform");
+        orig.tags.put("key with space", "v");
+        orig.codes.put(404, "Not Found");
+        orig.codes.put(500, "Internal");
+        orig.counts.put("a", 1L);
+        orig.counts.put("b", -7L);
+
+        byte[] bytes = Pb.marshal(orig);
+        WithMaps got = Pb.unmarshal(bytes, WithMaps.class);
+
+        assertEquals(orig.tags, got.tags);
+        assertEquals(orig.codes, got.codes);
+        assertEquals(orig.counts, got.counts);
+    }
+
+    @Test
+    void emptyMapEmitsNothing() throws IOException {
+        WithMaps orig = new WithMaps();
+        byte[] bytes = Pb.marshal(orig);
+        assertEquals(0, bytes.length);
+
+        WithMaps got = Pb.unmarshal(bytes, WithMaps.class);
+        assertTrue(got.tags.isEmpty());
+        assertTrue(got.codes.isEmpty());
+        assertTrue(got.counts.isEmpty());
+    }
+
+    @Test
+    void mapZeroValueEntriesRoundTrip() throws IOException {
+        // proto3 maps: empty key/value still produce a MapEntry — the entry
+        // bytes are minimal but the entry still exists. On decode, missing
+        // key or value fields fall back to scalar zero.
+        WithMaps orig = new WithMaps();
+        // LinkedHashMap to keep iteration deterministic across JVMs.
+        orig.tags = new LinkedHashMap<>();
+        orig.tags.put("", "");
+        orig.tags.put("k", "");
+
+        byte[] bytes = Pb.marshal(orig);
+        WithMaps got = Pb.unmarshal(bytes, WithMaps.class);
+
+        assertEquals("", got.tags.get(""));
+        assertEquals("", got.tags.get("k"));
+        assertEquals(2, got.tags.size());
     }
 }

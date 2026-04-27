@@ -17,4 +17,5 @@ include(
     ":cli",
     ":dump-envelope",
     ":bench-pxf",
+    ":bench-sbe",
 )

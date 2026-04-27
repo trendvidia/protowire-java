@@ -16,4 +16,5 @@ include(
     ":registry-client",
     ":cli",
     ":dump-envelope",
+    ":bench-pxf",
 )

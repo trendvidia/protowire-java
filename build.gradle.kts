@@ -5,7 +5,7 @@ plugins {
 
 allprojects {
     group = "com.trendvidia.protowire"
-    version = "0.1.0"
+    version = "0.70.0"
 
     repositories {
         mavenCentral()

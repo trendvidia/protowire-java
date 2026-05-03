@@ -2,7 +2,7 @@
 
 Native Java port of [github.com/trendvidia/protowire](https://github.com/trendvidia/protowire) — a protobuf-backed serialization toolkit.
 
-Java 21, Gradle multi-module, `protobuf-gradle-plugin`, picocli, JUnit 5.
+Java 21, Gradle multi-module, `protobuf-gradle-plugin`, JUnit 5.
 
 ## Modules
 
@@ -13,15 +13,13 @@ Java 21, Gradle multi-module, `protobuf-gradle-plugin`, picocli, JUnit 5.
 | `:sbe` | `com.trendvidia.protowire.sbe` | FIX SBE binary codec, driven by SBE annotations on `.proto` schemas. `Codec.marshal`, `Codec.unmarshal`, and a zero-allocation `View`. Includes `Convert.xmlToProto` / `Convert.protoToXml`. |
 | `:envelope` | `com.trendvidia.protowire.envelope` | Standard API response envelope, generated from `envelope/v1/envelope.proto`, with `Envelopes` builders + queries. |
 | `:proto-annotations` | `com.trendvidia.protowire.proto.{pxf,sbe}` | Compiled proto annotations: `pxf.required`, `pxf.default`, `pxf.BigInt/Decimal/BigFloat`, `sbe.schema_id/template_id/length/encoding`. |
-| `:registry-client` | `com.trendvidia.protoregistry.v1` | gRPC client stub generated from `protoregistry/v1/registry.proto`. Server is **not** ported. |
-| `:cli` | `com.trendvidia.protowire.cli` | picocli-based `protowire` CLI. |
+| `:dump-envelope`, `:bench-pxf`, `:bench-sbe` | (test harnesses) | Per-port binaries used by the cross-port runner scripts in the spec repo. Not part of the public library API. |
 
 ## Build & test
 
 ```sh
 ./gradlew build       # compile + test all modules
 ./gradlew :pxf:test   # only PXF
-./gradlew :cli:installDist
 ```
 
 Java 21 toolchain is required (configured automatically via Gradle).
@@ -109,22 +107,15 @@ SBE (`:sbe`):
 
 - ✅ Generated `Envelope`/`AppError`/`FieldError` from proto plus `Envelopes` builders + queries.
 
-## CLI
+## Command-line tool
+
+The `protowire` CLI is shared across every port and lives in the spec repo at [github.com/trendvidia/protowire/cmd/protowire](https://github.com/trendvidia/protowire/tree/main/cmd/protowire). Install:
 
 ```sh
-./gradlew :cli:installDist
-./cli/build/install/cli/bin/cli encode -p schema.desc -m pkg.Type input.pxf > out.pb
-./cli/build/install/cli/bin/cli decode -p schema.desc -m pkg.Type input.pb > out.pxf
-./cli/build/install/cli/bin/cli validate -p schema.desc -m pkg.Type input.pxf
-./cli/build/install/cli/bin/cli fmt -p schema.desc -m pkg.Type input.pxf
-./cli/build/install/cli/bin/cli sbe2proto schema.xml > schema.proto
-./cli/build/install/cli/bin/cli proto2sbe -p schema.desc > schema.xml
-
-# Registry mode
-./cli/build/install/cli/bin/cli encode -s host:50051 -n NS --schema NAME -m pkg.Type input.pxf
+go install github.com/trendvidia/protowire/cmd/protowire@latest
 ```
 
-`--proto` accepts a `FileDescriptorSet` (e.g. `protoc -o schema.desc schema.proto`). Unlike the Go module, this Java CLI does not bundle a `.proto` source compiler — pass a precompiled descriptor set or use registry mode.
+Java users use this library for in-process encode/decode and the shared CLI for command-line operations. There is no separate Java CLI binary.
 
 ## Wire compatibility
 

@@ -13,8 +13,6 @@ include(
     ":pxf",
     ":sbe",
     ":envelope",
-    ":registry-client",
-    ":cli",
     ":dump-envelope",
     ":bench-pxf",
     ":bench-sbe",

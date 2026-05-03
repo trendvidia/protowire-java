@@ -1,5 +1,6 @@
 package com.trendvidia.protowire.pxf;
 
+import java.io.ByteArrayOutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
@@ -98,26 +99,137 @@ final class Lexer {
 
     private Token lexString(Position pp) {
         advance(); // opening "
-        StringBuilder sb = new StringBuilder();
+        // Accumulate bytes, then UTF-8-decode at the end. This mirrors the
+        // Go lexer's byte-oriented accumulator so literal multi-byte UTF-8
+        // round-trips correctly and \\u / \\U escapes are encoded as UTF-8
+        // bytes that decode to the right Java String.
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
         while (pos < input.length) {
-            byte ch = advance();
-            if (ch == '"') return new Token(TokenKind.STRING, sb.toString(), pp);
-            if (ch == '\\') {
-                if (pos >= input.length) return new Token(TokenKind.ILLEGAL, "unterminated escape sequence", pp);
-                byte esc = advance();
-                switch (esc) {
-                    case '"' -> sb.append('"');
-                    case '\\' -> sb.append('\\');
-                    case 'n' -> sb.append('\n');
-                    case 't' -> sb.append('\t');
-                    case 'r' -> sb.append('\r');
-                    default -> { sb.append('\\'); sb.append((char) (esc & 0xff)); }
-                }
+            int ch = advance() & 0xff;
+            if (ch == '"') {
+                return new Token(TokenKind.STRING, out.toString(StandardCharsets.UTF_8), pp);
+            }
+            if (ch != '\\') {
+                out.write(ch);
                 continue;
             }
-            sb.append((char) (ch & 0xff));
+            if (pos >= input.length) {
+                return new Token(TokenKind.ILLEGAL, "unterminated escape sequence", pp);
+            }
+            int esc = advance() & 0xff;
+            switch (esc) {
+                case '"', '\\', '\'', '?' -> out.write(esc);
+                case 'a' -> out.write(0x07);
+                case 'b' -> out.write(0x08);
+                case 'f' -> out.write(0x0C);
+                case 'n' -> out.write('\n');
+                case 'r' -> out.write('\r');
+                case 't' -> out.write('\t');
+                case 'v' -> out.write(0x0B);
+                case 'x' -> {
+                    // Exactly 2 hex digits → 1 byte.
+                    if (pos + 1 >= input.length) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid \\x escape: expected 2 hex digits", pp);
+                    }
+                    int hi = hexVal(input[pos] & 0xff);
+                    int lo = hexVal(input[pos + 1] & 0xff);
+                    if (hi < 0 || lo < 0) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid \\x escape: expected 2 hex digits", pp);
+                    }
+                    advance(); advance();
+                    out.write((hi << 4) | lo);
+                }
+                case '0', '1', '2', '3' -> {
+                    // \\nnn — 3 octal digits, leading 0–3 keeps result <= 0xFF.
+                    if (pos + 1 >= input.length) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid octal escape: expected 3 octal digits", pp);
+                    }
+                    int d1 = octVal(input[pos] & 0xff);
+                    int d2 = octVal(input[pos + 1] & 0xff);
+                    if (d1 < 0 || d2 < 0) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid octal escape: expected 3 octal digits", pp);
+                    }
+                    advance(); advance();
+                    out.write(((esc - '0') << 6) | (d1 << 3) | d2);
+                }
+                case 'u' -> {
+                    int r = readHexRune(4);
+                    if (r < 0 || !isValidRune(r)) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid \\u escape: expected 4 hex digits forming a valid codepoint",
+                                pp);
+                    }
+                    encodeRune(r, out);
+                }
+                case 'U' -> {
+                    int r = readHexRune(8);
+                    if (r < 0 || !isValidRune(r)) {
+                        return new Token(TokenKind.ILLEGAL,
+                                "invalid \\U escape: expected 8 hex digits forming a valid codepoint",
+                                pp);
+                    }
+                    encodeRune(r, out);
+                }
+                default -> {
+                    return new Token(TokenKind.ILLEGAL,
+                            "unknown escape sequence \\" + (char) esc, pp);
+                }
+            }
         }
         return new Token(TokenKind.ILLEGAL, "unterminated string", pp);
+    }
+
+    private static int hexVal(int c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+
+    private static int octVal(int c) {
+        if (c >= '0' && c <= '7') return c - '0';
+        return -1;
+    }
+
+    /** Reads exactly n hex digits and returns the assembled codepoint, or -1 on error. */
+    private int readHexRune(int n) {
+        if (pos + n > input.length) return -1;
+        int r = 0;
+        for (int i = 0; i < n; i++) {
+            int v = hexVal(input[pos] & 0xff);
+            if (v < 0) return -1;
+            r = (r << 4) | v;
+            advance();
+        }
+        return r;
+    }
+
+    /** Mirrors Go's utf8.ValidRune. */
+    private static boolean isValidRune(int r) {
+        return r >= 0 && r <= 0x10FFFF && (r < 0xD800 || r > 0xDFFF);
+    }
+
+    /** Writes the UTF-8 encoding of a valid Unicode scalar to out. */
+    private static void encodeRune(int r, ByteArrayOutputStream out) {
+        if (r <= 0x7F) {
+            out.write(r);
+        } else if (r <= 0x7FF) {
+            out.write(0xC0 | (r >> 6));
+            out.write(0x80 | (r & 0x3F));
+        } else if (r <= 0xFFFF) {
+            out.write(0xE0 | (r >> 12));
+            out.write(0x80 | ((r >> 6) & 0x3F));
+            out.write(0x80 | (r & 0x3F));
+        } else {
+            out.write(0xF0 | (r >> 18));
+            out.write(0x80 | ((r >> 12) & 0x3F));
+            out.write(0x80 | ((r >> 6) & 0x3F));
+            out.write(0x80 | (r & 0x3F));
+        }
     }
 
     private Token lexTripleString(Position pp) {
@@ -154,17 +266,33 @@ final class Lexer {
 
     private Token lexBytes(Position pp) {
         advance(); // b
-        Token t = lexString(pp);
-        if (t.kind() != TokenKind.STRING) return t;
-        try {
-            Base64.getDecoder().decode(t.value());
-        } catch (IllegalArgumentException e) {
-            try { Base64.getDecoder().decode(t.value() + padding(t.value())); }
-            catch (IllegalArgumentException e2) {
-                return new Token(TokenKind.ILLEGAL, "invalid base64 in bytes literal", pp);
-            }
+        if (pos >= input.length || input[pos] != '"') {
+            return new Token(TokenKind.ILLEGAL, "expected '\"' after b", pp);
         }
-        return new Token(TokenKind.BYTES, t.value(), pp);
+        advance(); // opening "
+        int start = pos;
+        while (pos < input.length) {
+            byte c = input[pos];
+            if (c == '"') {
+                String raw = new String(input, start, pos - start, StandardCharsets.UTF_8);
+                advance(); // closing "
+                try {
+                    Base64.getDecoder().decode(raw);
+                } catch (IllegalArgumentException e) {
+                    try {
+                        Base64.getDecoder().decode(raw + padding(raw));
+                    } catch (IllegalArgumentException e2) {
+                        return new Token(TokenKind.ILLEGAL, "invalid base64 in bytes literal", pp);
+                    }
+                }
+                return new Token(TokenKind.BYTES, raw, pp);
+            }
+            if (c == '\n') {
+                return new Token(TokenKind.ILLEGAL, "unterminated bytes literal", pp);
+            }
+            advance();
+        }
+        return new Token(TokenKind.ILLEGAL, "unterminated bytes literal", pp);
     }
 
     static String padding(String s) {

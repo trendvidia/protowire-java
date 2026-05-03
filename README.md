@@ -124,3 +124,20 @@ Verified by the `exampleFixtureRoundTrip` test in `pxf/src/test/java/.../PxfTest
 ## Why a native Java JAR (vs a wrapper)
 
 For Kotlin, Scala, Clojure, and any other JVM language, the native Java JAR is consumed directly. A wrapper around a non-JVM implementation would not be.
+
+## Limitations & open gaps
+
+The Java port is built on `com.google.protobuf:protobuf-java`'s `DynamicMessage` reflection API. A few things that fall out of that choice or are explicit deferred work:
+
+- **Reflection-driven hot path.** `DynamicMessage` field access goes through `Descriptors.FieldDescriptor` lookups; on tight benchmarks this is meaningfully slower than codegen-bound libraries. Latency-sensitive callers should profile before committing — and ideas for a `protoc-java`-style codegen path are welcome.
+- **Java 17+ minimum.** The build uses sealed types, records, and pattern switches; we won't backport to 8 or 11. JVM languages targeting older bytecode (Kotlin / Scala / Clojure on legacy LTS) are not supported.
+- **No standalone Java CLI.** The shared CLI lives in [trendvidia/protowire/cmd/protowire](https://github.com/trendvidia/protowire/tree/main/cmd/protowire) and JVM users invoke it as a binary; there is no in-JVM CLI surface to call from build plugins yet. A Maven / Gradle plugin would be welcome.
+- **SBE XML schema interop.** `proto2sbe` is shipped; consuming a hand-authored XML schema to produce `.proto` is open work. The shared CLI handles this in Go today.
+
+## Contributing & governance
+
+This repository is part of the `protowire-*` family and is governed by [**Steward**](https://github.com/trendvidia/steward) — the meritocratic, AI-driven governance engine that runs all of the ports. Voting weight is per-directory expertise, the constitution is public in [`governance.pxf`](https://github.com/trendvidia/steward/blob/main/governance.pxf), and Steward routes draft / first-time PRs through a [private mentorship pipeline](https://github.com/trendvidia/steward#-private-mentorship-mode) so initial contributions get private feedback rather than public-review friction.
+
+If any of the items above sound interesting, pull requests are welcome. New contributors start at zero trust and accumulate influence by shipping merged PRs in the directories they actually work on — the [escrow pipeline](https://github.com/trendvidia/steward#%EF%B8%8F-the-escrow-pipeline-zero-trust-onboarding) auto-routes large first-time PRs through 2–3 sandbox issues before unlocking them for community review.
+
+See the [Steward README](https://github.com/trendvidia/steward) for a longer walkthrough of vector reputation, escrow, and the immune system.

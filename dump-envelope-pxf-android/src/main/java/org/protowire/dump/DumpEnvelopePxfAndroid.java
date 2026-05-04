@@ -11,7 +11,10 @@ import org.protowire.envelope.v1.Envelope;
 import org.protowire.envelope.v1.EnvelopePxfMeta;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
+import org.protowire.pxf.android.LitePxf;
 import org.protowire.pxf.android.LiteWireWriter;
+
+import java.util.Arrays;
 
 public final class DumpEnvelopePxfAndroid {
     private DumpEnvelopePxfAndroid() {}
@@ -50,8 +53,29 @@ public final class DumpEnvelopePxfAndroid {
         // implies LiteWireWriter produced a well-formed Envelope.
         Envelope env = Envelope.parseFrom(wire);
         byte[] bytes = env.toByteArray();
+
+        // Marshal-direction sanity check: typed Envelope → PXF text via
+        // LitePxf.marshal, then re-parse + re-encode. The resulting bytes
+        // must match the forward encode exactly. Asserts both LiteWireReader
+        // and Format.formatDocument round-trip the canonical envelope shape
+        // (including the metadata map field) without information loss.
+        String roundTripText = LitePxf.marshal(env, EnvelopePxfMeta.INSTANCE);
+        Ast.Document roundTripDoc = Parser.parse(roundTripText);
+        byte[] roundTripWire = LiteWireWriter.encode(roundTripDoc, EnvelopePxfMeta.INSTANCE);
+        if (!Arrays.equals(bytes, roundTripWire)) {
+            throw new AssertionError(
+                "marshal-round-trip wire mismatch:\n" +
+                "  forward: " + hex(bytes) + "\n" +
+                "  marshal: " + hex(roundTripWire) + "\n" +
+                "  text:    " + roundTripText);
+        }
+
+        System.out.println(hex(bytes));
+    }
+
+    private static String hex(byte[] bytes) {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) sb.append(String.format("%02x", b));
-        System.out.println(sb);
+        return sb.toString();
     }
 }

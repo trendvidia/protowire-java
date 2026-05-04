@@ -8,8 +8,13 @@ import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
+import org.protowire.pxf.TimeFormats;
 
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -35,12 +40,18 @@ import java.util.Set;
  * {@code map<K, V>} fields (each wire entry becomes an {@link Ast.MapEntry}
  * inside a {@link Ast.Block}).
  *
- * <p>Not yet handled (queued follow-ups): well-known type fast paths
- * ({@code Timestamp}, {@code Duration}, {@code *Value} wrappers,
- * {@code pxf.BigInt} / {@code Decimal} / {@code BigFloat}). Without those
- * fast paths, well-known types decode to a generic {@link Ast.BlockVal}
- * containing the underlying submessage shape — still valid PXF and
- * round-trip-encodes correctly, just not as the canonical bare literal.
+ * <p><b>Well-known type fast paths.</b> When {@link PxfMeta#wellKnownKinds()}
+ * marks a field as a recognized WKT, the decoder reads the submessage's wire
+ * bytes and emits the canonical bare PXF literal — {@link Ast.TimestampVal}
+ * for {@code google.protobuf.Timestamp}, {@link Ast.DurationVal} for
+ * {@code Duration}, the unwrapped scalar for {@code *Value} wrappers
+ * ({@code StringValue}, {@code Int32Value}, etc.), and bare numeric literals
+ * for {@code pxf.BigInt} / {@code Decimal} / {@code BigFloat}. Without
+ * {@code wellKnownKinds()} populated (hand-built {@code PxfMeta}
+ * implementations that omit the table), these fields fall through to the
+ * generic nested-message path and decode as {@link Ast.BlockVal}; that's
+ * still valid PXF and round-trip-encodes correctly, just not as the canonical
+ * bare literal.
  *
  * <p>Output ordering: AST entries appear in <em>field-number order</em>,
  * not declaration order. That's deterministic and matches protobuf's
@@ -249,6 +260,19 @@ public final class LiteWireReader {
 
     private static Ast.Value readNestedMessage(
             CodedInputStream in, int fieldNum, PxfMeta meta, PxfRegistry registry) throws IOException {
+        // WKT fast path: when the host PxfMeta marks this field as a recognized
+        // well-known type, peel off the submessage's length-delimited record
+        // and synthesize the canonical bare literal (Timestamp string,
+        // unwrapped scalar, etc.) instead of recursing as a generic block.
+        int wkt = meta.wellKnownKinds().getOrDefault(fieldNum, PxfMeta.WKT_NONE);
+        if (wkt != PxfMeta.WKT_NONE) {
+            int len = in.readRawVarint32();
+            int oldLimit = in.pushLimit(len);
+            Ast.Value v = readWellKnown(in, wkt);
+            in.popLimit(oldLimit);
+            return v;
+        }
+
         PxfMeta nested = meta.nestedMetas().get(fieldNum);
         if (nested == null) {
             String fqn = meta.messageTypes().get(fieldNum);
@@ -266,6 +290,234 @@ public final class LiteWireReader {
         List<Ast.Entry> entries = readEntries(in, nested, registry);
         in.popLimit(oldLimit);
         return new Ast.BlockVal(Position.UNKNOWN, entries);
+    }
+
+    /**
+     * Reads a recognized well-known submessage's payload bytes (the caller has
+     * already pushed the length limit) and returns the canonical bare PXF
+     * literal. Re-encoding the returned value via {@link LiteWireWriter}
+     * reproduces the same wire bytes — the textual form differs (literal vs.
+     * struct), the wire form does not.
+     */
+    private static Ast.Value readWellKnown(CodedInputStream in, int wkt) throws IOException {
+        return switch (wkt) {
+            case PxfMeta.WKT_TIMESTAMP    -> readTimestamp(in);
+            case PxfMeta.WKT_DURATION     -> readDuration(in);
+            case PxfMeta.WKT_STRING_VALUE -> new Ast.StringVal(Position.UNKNOWN, readWrapperString(in));
+            case PxfMeta.WKT_BYTES_VALUE  -> new Ast.BytesVal(Position.UNKNOWN, readWrapperBytes(in));
+            case PxfMeta.WKT_BOOL_VALUE   -> new Ast.BoolVal(Position.UNKNOWN, readWrapperBool(in));
+            case PxfMeta.WKT_INT32_VALUE  -> intVal(readWrapperVarint(in, K_INT32));
+            case PxfMeta.WKT_INT64_VALUE  -> intVal(readWrapperVarint(in, K_INT64));
+            case PxfMeta.WKT_UINT32_VALUE -> intVal(readWrapperVarint(in, K_UINT32));
+            case PxfMeta.WKT_UINT64_VALUE -> uintVal(readWrapperVarint(in, K_UINT64));
+            case PxfMeta.WKT_FLOAT_VALUE  -> new Ast.FloatVal(Position.UNKNOWN, Float.toString(readWrapperFloat(in)));
+            case PxfMeta.WKT_DOUBLE_VALUE -> new Ast.FloatVal(Position.UNKNOWN, Double.toString(readWrapperDouble(in)));
+            case PxfMeta.WKT_BIG_INT      -> readBigInt(in);
+            case PxfMeta.WKT_DECIMAL      -> readDecimal(in);
+            case PxfMeta.WKT_BIG_FLOAT    -> readBigFloat(in);
+            default -> throw new IllegalStateException("unknown WKT kind " + wkt);
+        };
+    }
+
+    /** Decodes a {@code google.protobuf.Timestamp} payload into an Ast.TimestampVal. */
+    private static Ast.TimestampVal readTimestamp(CodedInputStream in) throws IOException {
+        long seconds = 0L;
+        int nanos = 0;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            int num = WireFormat.getTagFieldNumber(tag);
+            switch (num) {
+                case 1  -> seconds = in.readInt64();
+                case 2  -> nanos   = in.readInt32();
+                default -> in.skipField(tag);
+            }
+        }
+        Instant t = Instant.ofEpochSecond(seconds, nanos);
+        return new Ast.TimestampVal(Position.UNKNOWN, t, TimeFormats.formatRfc3339(t));
+    }
+
+    /** Decodes a {@code google.protobuf.Duration} payload into an Ast.DurationVal. */
+    private static Ast.DurationVal readDuration(CodedInputStream in) throws IOException {
+        long seconds = 0L;
+        int nanos = 0;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            int num = WireFormat.getTagFieldNumber(tag);
+            switch (num) {
+                case 1  -> seconds = in.readInt64();
+                case 2  -> nanos   = in.readInt32();
+                default -> in.skipField(tag);
+            }
+        }
+        Duration d = Duration.ofSeconds(seconds, nanos);
+        return new Ast.DurationVal(Position.UNKNOWN, d, TimeFormats.formatGoDuration(d));
+    }
+
+    /** Reads a {@code StringValue} payload — proto3 default-omitted empty string yields "". */
+    private static String readWrapperString(CodedInputStream in) throws IOException {
+        String value = "";
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) {
+                value = in.readString();
+            } else {
+                in.skipField(tag);
+            }
+        }
+        return value;
+    }
+
+    /** Reads a {@code BytesValue} payload — proto3 default-omitted empty payload yields []. */
+    private static byte[] readWrapperBytes(CodedInputStream in) throws IOException {
+        byte[] value = new byte[0];
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) {
+                value = in.readByteArray();
+            } else {
+                in.skipField(tag);
+            }
+        }
+        return value;
+    }
+
+    /** Reads a {@code BoolValue} payload — proto3 default-omitted empty payload yields false. */
+    private static boolean readWrapperBool(CodedInputStream in) throws IOException {
+        boolean value = false;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) {
+                value = in.readBool();
+            } else {
+                in.skipField(tag);
+            }
+        }
+        return value;
+    }
+
+    /**
+     * Reads an integer-wrapper payload ({@code Int32Value}, {@code UInt64Value},
+     * etc.) — peels off the value=1 field if present, returning a long that
+     * the caller wraps in either signed ({@link #intVal}) or unsigned
+     * ({@link #uintVal}) decimal form. Default-omitted (empty payload) yields 0.
+     */
+    private static long readWrapperVarint(CodedInputStream in, int kind) throws IOException {
+        long value = 0L;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) {
+                value = switch (kind) {
+                    case K_INT32  -> in.readInt32();
+                    case K_INT64  -> in.readInt64();
+                    case K_UINT32 -> Integer.toUnsignedLong(in.readUInt32());
+                    case K_UINT64 -> in.readUInt64();
+                    default -> throw new IllegalStateException("not a varint wrapper kind: " + kind);
+                };
+            } else {
+                in.skipField(tag);
+            }
+        }
+        return value;
+    }
+
+    private static float readWrapperFloat(CodedInputStream in) throws IOException {
+        float value = 0f;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) value = in.readFloat();
+            else in.skipField(tag);
+        }
+        return value;
+    }
+
+    private static double readWrapperDouble(CodedInputStream in) throws IOException {
+        double value = 0d;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            if (WireFormat.getTagFieldNumber(tag) == 1) value = in.readDouble();
+            else in.skipField(tag);
+        }
+        return value;
+    }
+
+    /**
+     * Decodes a {@code pxf.BigInt} payload — {@code abs} (unsigned big-endian
+     * magnitude bytes, field 1) plus {@code negative} (bool, field 2) — into an
+     * {@link Ast.IntVal} carrying the BigInteger's exact decimal form. Empty
+     * payload (proto3 default-omission applied to both fields) yields 0.
+     */
+    private static Ast.IntVal readBigInt(CodedInputStream in) throws IOException {
+        BigInteger abs = BigInteger.ZERO;
+        boolean negative = false;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            switch (WireFormat.getTagFieldNumber(tag)) {
+                case 1  -> abs      = unsignedBytesToBigInteger(in.readByteArray());
+                case 2  -> negative = in.readBool();
+                default -> in.skipField(tag);
+            }
+        }
+        BigInteger value = negative ? abs.negate() : abs;
+        return new Ast.IntVal(Position.UNKNOWN, value.toString());
+    }
+
+    /**
+     * Decodes a {@code pxf.Decimal} payload — {@code unscaled} (bytes, field 1),
+     * {@code scale} (int32, field 2), {@code negative} (bool, field 3) — into
+     * a BigDecimal-shaped {@link Ast.FloatVal}. {@link BigDecimal#toPlainString}
+     * avoids scientific notation so the literal lexes as a plain float.
+     */
+    private static Ast.FloatVal readDecimal(CodedInputStream in) throws IOException {
+        BigInteger unscaled = BigInteger.ZERO;
+        int scale = 0;
+        boolean negative = false;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            switch (WireFormat.getTagFieldNumber(tag)) {
+                case 1  -> unscaled = unsignedBytesToBigInteger(in.readByteArray());
+                case 2  -> scale    = in.readInt32();
+                case 3  -> negative = in.readBool();
+                default -> in.skipField(tag);
+            }
+        }
+        BigInteger signed = negative ? unscaled.negate() : unscaled;
+        BigDecimal value = new BigDecimal(signed, scale);
+        return new Ast.FloatVal(Position.UNKNOWN, value.toPlainString());
+    }
+
+    /**
+     * Decodes a {@code pxf.BigFloat} payload — {@code mantissa} (bytes, field 1),
+     * {@code exponent} (int32, field 2), {@code prec} (uint32, field 3 — read
+     * but ignored on the way out, since the encoder recomputes it from the
+     * mantissa's bitLength), {@code negative} (bool, field 4) — into a
+     * {@link Ast.FloatVal}. The value is reconstructed as
+     * {@code (-1)^negative × mantissa × 10^exponent}; the encoder stores
+     * {@code exponent = -BigDecimal.scale()}, so the decoder mirrors that
+     * convention exactly.
+     */
+    private static Ast.FloatVal readBigFloat(CodedInputStream in) throws IOException {
+        BigInteger mantissa = BigInteger.ZERO;
+        int exponent = 0;
+        boolean negative = false;
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            switch (WireFormat.getTagFieldNumber(tag)) {
+                case 1  -> mantissa = unsignedBytesToBigInteger(in.readByteArray());
+                case 2  -> exponent = in.readInt32();
+                case 3  -> in.readUInt32(); // prec — encoder recomputes from bitLength
+                case 4  -> negative = in.readBool();
+                default -> in.skipField(tag);
+            }
+        }
+        BigInteger signed = negative ? mantissa.negate() : mantissa;
+        BigDecimal value = new BigDecimal(signed, -exponent);
+        return new Ast.FloatVal(Position.UNKNOWN, value.toPlainString());
+    }
+
+    /** Treats raw bytes as an unsigned big-endian magnitude. */
+    private static BigInteger unsignedBytesToBigInteger(byte[] b) {
+        if (b.length == 0) return BigInteger.ZERO;
+        return new BigInteger(1, b);
     }
 
     /**

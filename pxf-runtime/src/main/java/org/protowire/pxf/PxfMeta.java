@@ -116,4 +116,47 @@ public interface PxfMeta {
     default Set<Integer> mapFields() {
         return Set.of();
     }
+
+    /**
+     * Field number → well-known-type kind, for fields whose target message is
+     * one of the recognized PXF/Google WKTs. Drives the lite-runtime decoder's
+     * fast path: instead of recursing into the submessage as a generic
+     * {@code BlockVal}, the decoder synthesizes the canonical bare literal
+     * (e.g. {@code "2024-01-01T00:00:00Z"} for {@code google.protobuf.Timestamp})
+     * that a hand-written PXF document would use. Re-encoding either form via
+     * {@link org.protowire.pxf.android.LiteWireWriter LiteWireWriter} produces
+     * the same wire bytes, so this is purely a textual-canonicalization step.
+     *
+     * <p>Constants in {@link PxfMeta} ({@code WKT_TIMESTAMP}, {@code WKT_BIG_INT},
+     * etc.). The codegen plugin populates this from the field's target message
+     * FQN at build time. Default empty — hand-built {@code PxfMeta} implementations
+     * that omit this map cause the decoder to fall through to its generic
+     * nested-message path, which still round-trips correctly, just not through
+     * the bare literal form.
+     */
+    default Map<Integer, Integer> wellKnownKinds() {
+        return Map.of();
+    }
+
+    // --- Well-known type kind constants ----------------------------------------
+    //
+    // Stable integers that the codegen plugin emits in WELL_KNOWN_KINDS tables
+    // and the lite runtime branches on. Adding new WKTs is fine; renumbering
+    // existing ones breaks every previously-generated PxfMeta.
+
+    int WKT_NONE         = 0;
+    int WKT_TIMESTAMP    = 1;  // google.protobuf.Timestamp
+    int WKT_DURATION     = 2;  // google.protobuf.Duration
+    int WKT_STRING_VALUE = 3;  // google.protobuf.StringValue
+    int WKT_BYTES_VALUE  = 4;  // google.protobuf.BytesValue
+    int WKT_BOOL_VALUE   = 5;  // google.protobuf.BoolValue
+    int WKT_INT32_VALUE  = 6;  // google.protobuf.Int32Value
+    int WKT_INT64_VALUE  = 7;  // google.protobuf.Int64Value
+    int WKT_UINT32_VALUE = 8;  // google.protobuf.UInt32Value
+    int WKT_UINT64_VALUE = 9;  // google.protobuf.UInt64Value
+    int WKT_FLOAT_VALUE  = 10; // google.protobuf.FloatValue
+    int WKT_DOUBLE_VALUE = 11; // google.protobuf.DoubleValue
+    int WKT_BIG_INT      = 12; // pxf.BigInt
+    int WKT_DECIMAL      = 13; // pxf.Decimal
+    int WKT_BIG_FLOAT    = 14; // pxf.BigFloat
 }

@@ -3,7 +3,10 @@ package org.protowire.pxf.android;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
+import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
+import org.protowire.pxf.PxfRegistry;
+import org.protowire.pxf.SimplePxfRegistry;
 
 import java.util.HexFormat;
 import java.util.List;
@@ -208,5 +211,163 @@ final class LiteWireWriterTest {
         PxfMeta m = meta(Map.of(), Map.of(), Set.of(), Set.of());
 
         assertArrayEquals(new byte[0], LiteWireWriter.encode(doc, m));
+    }
+
+    // --- nested message + enum --------------------------------------------
+
+    /** Anonymous PxfMeta with messageTypes/enumTypes overridable — used by nested tests. */
+    private static PxfMeta richMeta(
+            String fullName,
+            Map<String, Integer> fieldNumbers,
+            Map<Integer, Integer> fieldKinds,
+            Map<Integer, String> messageTypes,
+            Map<Integer, String> enumTypes) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return fieldNumbers; }
+            @Override public Map<Integer, Integer> fieldKinds()         { return fieldKinds; }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return messageTypes; }
+            @Override public Map<Integer, String>  enumTypes()          { return enumTypes; }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        };
+    }
+
+    @Test
+    void nestedMessage_blockSyntax() {
+        // message Outer { Inner inner = 1; }
+        // message Inner { string s = 1; }
+        // PXF: inner { s = "hi" }
+        // Inner wire bytes: 0a 02 "hi" → 0a 02 68 69     (total 4 bytes)
+        // Outer wire bytes: tag 0x0a (field 1, LEN), len 4, then nested → 0a 04 0a 02 68 69
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta innerMeta = richMeta("test.Inner",
+                Map.of("s", 1),
+                Map.of(1, 9 /* STRING */),
+                Map.of(),
+                Map.of());
+
+        PxfMeta outerMeta = richMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Map.of(1, "test.Inner"),
+                Map.of());
+
+        PxfRegistry registry = new SimplePxfRegistry()
+                .register(innerMeta);
+
+        assertEquals("0a040a026869", hex(LiteWireWriter.encode(doc, outerMeta, registry)));
+    }
+
+    @Test
+    void enum_byIdentifier_resolvedThroughRegistry() {
+        // message Sample { Status status = 1; }
+        // enum Status { STATUS_UNKNOWN = 0; STATUS_ACTIVE = 1; }
+        // PXF: status = STATUS_ACTIVE  →  tag 0x08 (field 1, varint), value 0x01
+        Ast.Document doc = Parser.parse("status = STATUS_ACTIVE");
+
+        PxfEnum statusEnum = new PxfEnum() {
+            @Override public String fullName() { return "test.Status"; }
+            @Override public Map<String, Integer> values() {
+                return Map.of("STATUS_UNKNOWN", 0, "STATUS_ACTIVE", 1);
+            }
+            @Override public Map<Integer, String> names() {
+                return Map.of(0, "STATUS_UNKNOWN", 1, "STATUS_ACTIVE");
+            }
+        };
+
+        PxfMeta sampleMeta = richMeta("test.Sample",
+                Map.of("status", 1),
+                Map.of(1, 14 /* ENUM */),
+                Map.of(),
+                Map.of(1, "test.Status"));
+
+        PxfRegistry registry = new SimplePxfRegistry().register(statusEnum);
+
+        assertEquals("0801", hex(LiteWireWriter.encode(doc, sampleMeta, registry)));
+    }
+
+    @Test
+    void enum_byIntegerLiteral_acceptedDirectly() {
+        // PXF allows bare integers for enum-typed fields (forward-compat / unknown values).
+        Ast.Document doc = Parser.parse("status = 1");
+
+        PxfMeta sampleMeta = richMeta("test.Sample",
+                Map.of("status", 1),
+                Map.of(1, 14 /* ENUM */),
+                Map.of(),
+                Map.of(1, "test.Status"));
+
+        // No PxfEnum needs to be registered — integer path bypasses the lookup.
+        PxfRegistry registry = new SimplePxfRegistry();
+
+        assertEquals("0801", hex(LiteWireWriter.encode(doc, sampleMeta, registry)));
+    }
+
+    @Test
+    void nestedMessage_missingRegistryEntry_throws() {
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta outerMeta = richMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Map.of(1, "test.Inner"),
+                Map.of());
+
+        PxfRegistry registry = new SimplePxfRegistry();  // empty
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, outerMeta, registry));
+        assertEquals(
+            "PxfRegistry has no entry for nested message 'test.Inner' (referenced from field 1 of test.Outer)",
+            e.getMessage());
+    }
+
+    @Test
+    void enum_unknownValueName_throws() {
+        Ast.Document doc = Parser.parse("status = STATUS_DELETED");
+
+        PxfEnum statusEnum = new PxfEnum() {
+            @Override public String fullName() { return "test.Status"; }
+            @Override public Map<String, Integer> values() { return Map.of("STATUS_UNKNOWN", 0); }
+            @Override public Map<Integer, String> names()  { return Map.of(0, "STATUS_UNKNOWN"); }
+        };
+
+        PxfMeta sampleMeta = richMeta("test.Sample",
+                Map.of("status", 1),
+                Map.of(1, 14 /* ENUM */),
+                Map.of(),
+                Map.of(1, "test.Status"));
+
+        PxfRegistry registry = new SimplePxfRegistry().register(statusEnum);
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, sampleMeta, registry));
+        assertEquals("unknown enum value 'STATUS_DELETED' for test.Status", e.getMessage());
+    }
+
+    @Test
+    void twoArgEncode_throwsIfNestedFieldHit() {
+        // Verifies the sentinel registry: 2-arg encode against a schema with a
+        // nested-message field fails fast and points at the 3-arg overload.
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta outerMeta = richMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Map.of(1, "test.Inner"),
+                Map.of());
+
+        IllegalStateException e = assertThrows(IllegalStateException.class,
+                () -> LiteWireWriter.encode(doc, outerMeta));
+        assertEquals(true, e.getMessage().contains("encode(doc, meta, registry)"));
     }
 }

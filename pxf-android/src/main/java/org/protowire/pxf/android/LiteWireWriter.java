@@ -2,7 +2,9 @@ package org.protowire.pxf.android;
 
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
+import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
+import org.protowire.pxf.PxfRegistry;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -23,18 +25,28 @@ import java.util.Set;
  * Foo          msg   = Foo.parseFrom(bytes);
  * }</pre>
  *
- * <p><b>Scope.</b> This first cut handles every protobuf scalar
- * type ({@code int32/64}, {@code uint32/64}, {@code sint32/64},
- * {@code fixed32/64}, {@code sfixed32/64}, {@code bool}, {@code float},
- * {@code double}, {@code string}, {@code bytes}) and {@code repeated}
- * scalars with the proto3 default-packing rules. Not yet supported (queued
- * follow-ups): nested messages, enums, maps, oneofs, well-known wrappers,
- * applying {@code (pxf.default)}, and validating {@code (pxf.required)}.
+ * <p><b>Scope.</b> Handles every protobuf scalar type ({@code int32/64},
+ * {@code uint32/64}, {@code sint32/64}, {@code fixed32/64},
+ * {@code sfixed32/64}, {@code bool}, {@code float}, {@code double},
+ * {@code string}, {@code bytes}), {@code repeated} scalars with proto3
+ * default-packing, nested messages (recursive — looked up by FQN through a
+ * caller-supplied {@link PxfRegistry}), and enum-typed fields (identifier
+ * tokens are translated to integers via the registry's {@link PxfEnum};
+ * integer literals are also accepted, mirroring PXF's grammar).
  *
- * <p>Encountering a field of an unsupported kind throws
- * {@link UnsupportedOperationException}; encountering an unknown field name
- * throws {@link IllegalArgumentException}. Both cases are deliberate: a
- * future PR will narrow the gaps as the corresponding emitter logic lands.
+ * <p>Not yet supported (queued follow-ups): maps, oneof mutual-exclusion
+ * checks, well-known wrappers, applying {@code (pxf.default)}, and
+ * validating {@code (pxf.required)}.
+ *
+ * <p>Two encode overloads:
+ * <ul>
+ *   <li>{@link #encode(Ast.Document, PxfMeta)} — for messages with no nested
+ *       message-typed fields and no enum-typed fields. Throws if either
+ *       path is hit.</li>
+ *   <li>{@link #encode(Ast.Document, PxfMeta, PxfRegistry)} — full version;
+ *       the registry resolves nested {@link PxfMeta} and {@link PxfEnum}
+ *       references by their {@code fullName()}.</li>
+ * </ul>
  */
 public final class LiteWireWriter {
     private LiteWireWriter() {}
@@ -49,18 +61,53 @@ public final class LiteWireWriter {
     private static final int K_FIXED32  = 7;
     private static final int K_BOOL     = 8;
     private static final int K_STRING   = 9;
+    private static final int K_MESSAGE  = 11;
     private static final int K_BYTES    = 12;
     private static final int K_UINT32   = 13;
+    private static final int K_ENUM     = 14;
     private static final int K_SFIXED32 = 15;
     private static final int K_SFIXED64 = 16;
     private static final int K_SINT32   = 17;
     private static final int K_SINT64   = 18;
 
-    /** Encode a top-level PXF document into protobuf wire bytes. */
+    /**
+     * Sentinel registry used by the 2-arg {@link #encode(Ast.Document, PxfMeta)}
+     * overload. Throws on every lookup so messages that genuinely need a
+     * registry (any with nested-message or enum-typed fields) fail fast with
+     * a clear pointer to the 3-arg overload.
+     */
+    private static final PxfRegistry REGISTRY_REQUIRED = new PxfRegistry() {
+        @Override public PxfMeta lookupMessage(String fullName) {
+            throw new IllegalStateException(
+                "encoding requires a PxfRegistry to resolve nested message '" + fullName +
+                "' — call encode(doc, meta, registry) with one registered");
+        }
+        @Override public PxfEnum lookupEnum(String fullName) {
+            throw new IllegalStateException(
+                "encoding requires a PxfRegistry to resolve enum '" + fullName +
+                "' — call encode(doc, meta, registry) with one registered");
+        }
+    };
+
+    /**
+     * Encode a top-level PXF document into protobuf wire bytes. Use this
+     * overload only for messages whose schemas have no nested-message and no
+     * enum-typed fields — those paths require a {@link PxfRegistry} for FQN
+     * resolution, and this overload's sentinel registry will throw if hit.
+     */
     public static byte[] encode(Ast.Document doc, PxfMeta meta) {
+        return encode(doc, meta, REGISTRY_REQUIRED);
+    }
+
+    /**
+     * Encode a top-level PXF document into protobuf wire bytes. The registry
+     * resolves nested {@link PxfMeta} and {@link PxfEnum} references by the
+     * full names declared in {@code meta.messageTypes()} / {@code enumTypes()}.
+     */
+    public static byte[] encode(Ast.Document doc, PxfMeta meta, PxfRegistry registry) {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(buffer);
-        writeEntries(out, doc.entries(), meta);
+        writeEntries(out, doc.entries(), meta, registry);
         try {
             out.flush();
         } catch (IOException e) {
@@ -69,7 +116,11 @@ public final class LiteWireWriter {
         return buffer.toByteArray();
     }
 
-    private static void writeEntries(CodedOutputStream out, List<Ast.Entry> entries, PxfMeta meta) {
+    private static void writeEntries(
+            CodedOutputStream out,
+            List<Ast.Entry> entries,
+            PxfMeta meta,
+            PxfRegistry registry) {
         Map<String, Integer> fieldNumbers = meta.fieldNumbers();
         Map<Integer, Integer> fieldKinds = meta.fieldKinds();
         Set<Integer> repeated = meta.repeatedFields();
@@ -84,19 +135,122 @@ public final class LiteWireWriter {
                     }
                     int kind = fieldKinds.getOrDefault(num, 0);
                     if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
-                        writeRepeated(out, num, kind, list, packed.contains(num));
-                    } else if (repeated.contains(num)) {
-                        // Single value into a repeated slot — protobuf permits this; emit one element.
-                        writeScalar(out, num, kind, a.value());
+                        writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
                     } else {
-                        writeScalar(out, num, kind, a.value());
+                        writeField(out, num, kind, a.value(), meta, registry);
                     }
                 }
-                case Ast.Block b -> throw new UnsupportedOperationException(
-                    "nested message field '" + b.name() + "' is not yet supported by the lite-runtime encoder");
+                case Ast.Block b -> {
+                    Integer num = fieldNumbers.get(b.name());
+                    if (num == null) {
+                        throw new IllegalArgumentException("unknown field name: " + b.name());
+                    }
+                    int kind = fieldKinds.getOrDefault(num, 0);
+                    if (kind != K_MESSAGE) {
+                        throw new IllegalArgumentException(
+                            "block syntax requires a message-typed field; '" + b.name() +
+                            "' has kind " + kind);
+                    }
+                    writeNestedMessage(out, num, b.entries(), meta, registry);
+                }
                 case Ast.MapEntry m -> throw new UnsupportedOperationException(
                     "map entry '" + m.key() + "' is not yet supported by the lite-runtime encoder");
             }
+        }
+    }
+
+    /**
+     * Single-value field write — dispatches {@link #writeScalar} for scalar
+     * kinds, plus the enum (translate identifier → int via registry) and
+     * message (single-element-into-repeated-block-style) paths.
+     */
+    private static void writeField(
+            CodedOutputStream out,
+            int num,
+            int kind,
+            Ast.Value v,
+            PxfMeta meta,
+            PxfRegistry registry) {
+        if (kind == K_ENUM) {
+            writeEnum(out, num, v, meta, registry);
+            return;
+        }
+        if (kind == K_MESSAGE) {
+            // PXF allows `field = { ... }` (BlockVal) as an alternative to the bare-block form.
+            if (v instanceof Ast.BlockVal bv) {
+                writeNestedMessage(out, num, bv.entries(), meta, registry);
+                return;
+            }
+            throw new IllegalArgumentException(
+                "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
+        }
+        writeScalar(out, num, kind, v);
+    }
+
+    private static void writeNestedMessage(
+            CodedOutputStream out,
+            int num,
+            List<Ast.Entry> entries,
+            PxfMeta meta,
+            PxfRegistry registry) {
+        String typeFqn = meta.messageTypes().get(num);
+        if (typeFqn == null) {
+            throw new IllegalStateException(
+                "MESSAGE_TYPES table missing entry for field number " + num + " in " + meta.fullName());
+        }
+        PxfMeta nestedMeta = registry.lookupMessage(typeFqn);
+        if (nestedMeta == null) {
+            throw new IllegalArgumentException(
+                "PxfRegistry has no entry for nested message '" + typeFqn +
+                "' (referenced from field " + num + " of " + meta.fullName() + ")");
+        }
+        // Encode the nested entries to a side buffer first so we know the byte length.
+        byte[] nestedBytes = encode(new Ast.Document("", entries, List.of()), nestedMeta, registry);
+        try {
+            out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+            out.writeUInt32NoTag(nestedBytes.length);
+            out.writeRawBytes(nestedBytes);
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+    }
+
+    private static void writeEnum(
+            CodedOutputStream out,
+            int num,
+            Ast.Value v,
+            PxfMeta meta,
+            PxfRegistry registry) {
+        int enumValue;
+        if (v instanceof Ast.IdentVal id) {
+            String typeFqn = meta.enumTypes().get(num);
+            if (typeFqn == null) {
+                throw new IllegalStateException(
+                    "ENUM_TYPES table missing entry for field number " + num + " in " + meta.fullName());
+            }
+            PxfEnum enumMeta = registry.lookupEnum(typeFqn);
+            if (enumMeta == null) {
+                throw new IllegalArgumentException(
+                    "PxfRegistry has no entry for enum '" + typeFqn +
+                    "' (referenced from field " + num + " of " + meta.fullName() + ")");
+            }
+            Integer mapped = enumMeta.values().get(id.name());
+            if (mapped == null) {
+                throw new IllegalArgumentException(
+                    "unknown enum value '" + id.name() + "' for " + enumMeta.fullName());
+            }
+            enumValue = mapped;
+        } else if (v instanceof Ast.IntVal i) {
+            // PXF accepts a bare integer for an enum field — used for unknown / forward-compat values.
+            enumValue = (int) Long.parseLong(i.raw());
+        } else {
+            throw new IllegalArgumentException(
+                "expected enum identifier or integer literal, got " + v.getClass().getSimpleName());
+        }
+        try {
+            out.writeEnum(num, enumValue);
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
         }
     }
 
@@ -126,10 +280,17 @@ public final class LiteWireWriter {
         }
     }
 
-    private static void writeRepeated(CodedOutputStream out, int num, int kind, Ast.ListVal list, boolean packed) {
+    private static void writeRepeated(
+            CodedOutputStream out,
+            int num,
+            int kind,
+            Ast.ListVal list,
+            boolean packed,
+            PxfMeta meta,
+            PxfRegistry registry) {
         if (!packed) {
             for (Ast.Value v : list.elements()) {
-                writeScalar(out, num, kind, v);
+                writeField(out, num, kind, v, meta, registry);
             }
             return;
         }

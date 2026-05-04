@@ -40,9 +40,12 @@ import java.util.Set;
  * tokens are translated to integers via the registry's {@link PxfEnum};
  * integer literals are also accepted, mirroring PXF's grammar).
  *
- * <p>Not yet supported (queued follow-ups): maps, oneof mutual-exclusion
- * checks, well-known wrappers, applying {@code (pxf.default)}, and
- * validating {@code (pxf.required)}.
+ * <p>Maps, oneof mutual-exclusion, {@code (pxf.required)} validation,
+ * {@code (pxf.default)} application, and the {@code google.protobuf.Timestamp}
+ * / {@code Duration} well-known types are all handled. Still queued: the
+ * single-value wrapper types ({@code StringValue}, {@code Int32Value},
+ * {@code BoolValue}, etc.) and the protowire-specific bignum types
+ * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}).
  *
  * <p>Two encode overloads, plus an embedded-lookup fast path:
  * <ul>
@@ -326,6 +329,20 @@ public final class LiteWireWriter {
             return;
         }
         if (kind == K_MESSAGE) {
+            // Well-known type fast paths: when the user writes a bare timestamp
+            // or duration literal (`created = 2024-01-15T10:30:00Z`), the lexer
+            // produced a TimestampVal/DurationVal — we emit the well-known
+            // (seconds, nanos) submessage shape directly without recursing.
+            if (v instanceof Ast.TimestampVal tv) {
+                requireWellKnownTarget(num, meta, "com.google.protobuf.Timestamp", "timestamp");
+                writeWellKnownSecondsNanos(out, num, tv.value().getEpochSecond(), tv.value().getNano());
+                return;
+            }
+            if (v instanceof Ast.DurationVal dv) {
+                requireWellKnownTarget(num, meta, "com.google.protobuf.Duration", "duration");
+                writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
+                return;
+            }
             // PXF allows `field = { ... }` (BlockVal) as an alternative to the bare-block form.
             if (v instanceof Ast.BlockVal bv) {
                 writeNestedMessage(out, num, bv.entries(), meta, registry);
@@ -335,6 +352,56 @@ public final class LiteWireWriter {
                 "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
         }
         writeScalar(out, num, kind, v);
+    }
+
+    /**
+     * Confirms a TimestampVal / DurationVal landed on a field whose target
+     * Java type is the matching well-known wrapper. Catches user errors like
+     * sticking a timestamp literal into a hand-written submessage that
+     * happens to be MESSAGE-typed but isn't actually
+     * {@code google.protobuf.Timestamp} — without this check the encoder
+     * would silently produce wire bytes structured like a Timestamp into a
+     * field that expects something else entirely.
+     */
+    private static void requireWellKnownTarget(
+            int num, PxfMeta meta, String expectedJavaFqn, String literalKind) {
+        String actual = meta.messageTypes().get(num);
+        if (!expectedJavaFqn.equals(actual)) {
+            throw new IllegalArgumentException(
+                literalKind + " literal at field " + num + " of " + meta.fullName() +
+                " requires " + expectedJavaFqn + "; messageTypes() reports " +
+                (actual == null ? "<unset>" : actual));
+        }
+    }
+
+    /**
+     * Writes a {@code google.protobuf.Timestamp} / {@code Duration}-shaped
+     * submessage: a length-delimited record at field {@code num} whose
+     * payload is {@code seconds} (int64, field 1) and {@code nanos}
+     * (int32, field 2). Default-zero components are omitted per protobuf
+     * convention, so the all-zero case writes a zero-byte payload.
+     */
+    private static void writeWellKnownSecondsNanos(
+            CodedOutputStream out, int num, long seconds, int nanos) {
+        int payloadSize = 0;
+        if (seconds != 0L) {
+            payloadSize += CodedOutputStream.computeInt64Size(1, seconds);
+        }
+        if (nanos != 0) {
+            payloadSize += CodedOutputStream.computeInt32Size(2, nanos);
+        }
+        try {
+            out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+            out.writeUInt32NoTag(payloadSize);
+            if (seconds != 0L) {
+                out.writeInt64(1, seconds);
+            }
+            if (nanos != 0) {
+                out.writeInt32(2, nanos);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
     }
 
     private static void writeNestedMessage(

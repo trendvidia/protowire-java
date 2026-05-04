@@ -1,4 +1,4 @@
-package org.protowire.pxf.android;
+package org.protowire.pxf;
 
 import java.util.Map;
 import java.util.Set;

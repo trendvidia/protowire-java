@@ -2,6 +2,7 @@ package org.protowire.pxf.android;
 
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
+import org.protowire.pxf.PxfMeta;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;

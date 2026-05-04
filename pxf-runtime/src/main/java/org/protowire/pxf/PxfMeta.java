@@ -79,4 +79,26 @@ public interface PxfMeta {
      * cross-message references in {@link #messageTypes()}.
      */
     String fullName();
+
+    /**
+     * Field number → {@link PxfMeta} of the target nested message type, for
+     * fields of kind 11 (MESSAGE). Generated {@code <Message>PxfMeta} classes
+     * populate this with direct {@code <Sub>PxfMeta.INSTANCE} references at
+     * codegen time, so the runtime can recurse into nested messages without
+     * a separate {@link PxfRegistry} lookup. Default returns {@link Map#of()}
+     * — implementors that don't expose embedded references fall back to the
+     * registry path.
+     */
+    default Map<Integer, PxfMeta> nestedMetas() {
+        return Map.of();
+    }
+
+    /**
+     * Field number → {@link PxfEnum} of the target enum type, for fields of
+     * kind 14 (ENUM). Same shape and rationale as {@link #nestedMetas()};
+     * default returns {@link Map#of()}.
+     */
+    default Map<Integer, PxfEnum> enumMetas() {
+        return Map.of();
+    }
 }

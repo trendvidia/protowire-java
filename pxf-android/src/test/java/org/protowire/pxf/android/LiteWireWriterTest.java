@@ -370,4 +370,143 @@ final class LiteWireWriterTest {
                 () -> LiteWireWriter.encode(doc, outerMeta));
         assertEquals(true, e.getMessage().contains("encode(doc, meta, registry)"));
     }
+
+    // --- embedded nested/enum lookup --------------------------------------
+
+    /** PxfMeta that overrides nestedMetas() / enumMetas() — the embedded fast path. */
+    private static PxfMeta embeddingMeta(
+            String fullName,
+            Map<String, Integer> fieldNumbers,
+            Map<Integer, Integer> fieldKinds,
+            Map<Integer, String> messageTypes,
+            Map<Integer, String> enumTypes,
+            Map<Integer, PxfMeta> embeddedNested,
+            Map<Integer, PxfEnum> embeddedEnums) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return fieldNumbers; }
+            @Override public Map<Integer, Integer> fieldKinds()         { return fieldKinds; }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return messageTypes; }
+            @Override public Map<Integer, String>  enumTypes()          { return enumTypes; }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, PxfMeta> nestedMetas()        { return embeddedNested; }
+            @Override public Map<Integer, PxfEnum> enumMetas()          { return embeddedEnums; }
+        };
+    }
+
+    @Test
+    void nestedMessage_viaEmbedded_no2argRegistryNeeded() {
+        // Embedded fast path: meta carries a direct nested PxfMeta reference,
+        // so 2-arg encode (sentinel registry) succeeds even though the schema
+        // has a message-typed field.
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta innerMeta = richMeta("test.Inner",
+                Map.of("s", 1),
+                Map.of(1, 9 /* STRING */),
+                Map.of(),
+                Map.of());
+
+        PxfMeta outerMeta = embeddingMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Map.of(1, "test.Inner"),
+                Map.of(),
+                Map.of(1, innerMeta),
+                Map.of());
+
+        // No registry — 2-arg encode works because nestedMetas() carries the reference.
+        assertEquals("0a040a026869", hex(LiteWireWriter.encode(doc, outerMeta)));
+    }
+
+    @Test
+    void enum_viaEmbedded_no2argRegistryNeeded() {
+        Ast.Document doc = Parser.parse("status = STATUS_ACTIVE");
+
+        PxfEnum statusEnum = new PxfEnum() {
+            @Override public String fullName() { return "test.Status"; }
+            @Override public Map<String, Integer> values() {
+                return Map.of("STATUS_UNKNOWN", 0, "STATUS_ACTIVE", 1);
+            }
+            @Override public Map<Integer, String> names() {
+                return Map.of(0, "STATUS_UNKNOWN", 1, "STATUS_ACTIVE");
+            }
+        };
+
+        PxfMeta sampleMeta = embeddingMeta("test.Sample",
+                Map.of("status", 1),
+                Map.of(1, 14 /* ENUM */),
+                Map.of(),
+                Map.of(1, "test.Status"),
+                Map.of(),
+                Map.of(1, statusEnum));
+
+        assertEquals("0801", hex(LiteWireWriter.encode(doc, sampleMeta)));
+    }
+
+    @Test
+    void embedded_takesPrecedenceOverRegistry() {
+        // When embedded carries a reference for the field, registry is irrelevant
+        // — even if the registry has a (different) entry for the same FQN.
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta correctInnerMeta = richMeta("test.Inner",
+                Map.of("s", 1),
+                Map.of(1, 9),
+                Map.of(),
+                Map.of());
+
+        // A bogus meta sharing the same fullName but a different field-number
+        // mapping — registry would emit different bytes if it won.
+        PxfMeta bogusInnerMeta = richMeta("test.Inner",
+                Map.of("s", 99),
+                Map.of(99, 9),
+                Map.of(),
+                Map.of());
+
+        PxfMeta outerMeta = embeddingMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11),
+                Map.of(1, "test.Inner"),
+                Map.of(),
+                Map.of(1, correctInnerMeta),
+                Map.of());
+
+        PxfRegistry registry = new SimplePxfRegistry().register(bogusInnerMeta);
+
+        // Field-1 encoding (0a 02 "hi" inside the LEN payload), confirming embedded won.
+        assertEquals("0a040a026869", hex(LiteWireWriter.encode(doc, outerMeta, registry)));
+    }
+
+    @Test
+    void embeddedMissing_fallsThroughToRegistry() {
+        // Embedded map empty — registry covers the gap.
+        Ast.Document doc = Parser.parse("inner { s = \"hi\" }");
+
+        PxfMeta innerMeta = richMeta("test.Inner",
+                Map.of("s", 1),
+                Map.of(1, 9),
+                Map.of(),
+                Map.of());
+
+        PxfMeta outerMeta = embeddingMeta("test.Outer",
+                Map.of("inner", 1),
+                Map.of(1, 11),
+                Map.of(1, "test.Inner"),
+                Map.of(),
+                Map.of(),
+                Map.of());
+
+        PxfRegistry registry = new SimplePxfRegistry().register(innerMeta);
+
+        assertEquals("0a040a026869", hex(LiteWireWriter.encode(doc, outerMeta, registry)));
+    }
 }

@@ -38,14 +38,22 @@ import java.util.Set;
  * checks, well-known wrappers, applying {@code (pxf.default)}, and
  * validating {@code (pxf.required)}.
  *
- * <p>Two encode overloads:
+ * <p>Two encode overloads, plus an embedded-lookup fast path:
  * <ul>
- *   <li>{@link #encode(Ast.Document, PxfMeta)} — for messages with no nested
- *       message-typed fields and no enum-typed fields. Throws if either
- *       path is hit.</li>
+ *   <li>{@link #encode(Ast.Document, PxfMeta)} — works whenever the
+ *       supplied {@link PxfMeta} carries its own nested-message and enum
+ *       references via {@link PxfMeta#nestedMetas()} / {@link PxfMeta#enumMetas()}.
+ *       Codegen-generated {@code <Message>PxfMeta} classes populate those
+ *       maps with direct {@code <Sub>PxfMeta.INSTANCE} references, so the
+ *       common case is "pass {@code FooPxfMeta.INSTANCE}, no registry
+ *       needed". Throws if a nested or enum lookup misses the embedded map
+ *       and would have to fall back to a registry that wasn't supplied.</li>
  *   <li>{@link #encode(Ast.Document, PxfMeta, PxfRegistry)} — full version;
  *       the registry resolves nested {@link PxfMeta} and {@link PxfEnum}
- *       references by their {@code fullName()}.</li>
+ *       references by their {@code fullName()} when the embedded maps don't
+ *       have them. Useful for hand-built {@link PxfMeta} implementations,
+ *       test fixtures, and cross-module references that aren't pre-linked
+ *       at codegen time.</li>
  * </ul>
  */
 public final class LiteWireWriter {
@@ -193,16 +201,23 @@ public final class LiteWireWriter {
             List<Ast.Entry> entries,
             PxfMeta meta,
             PxfRegistry registry) {
-        String typeFqn = meta.messageTypes().get(num);
-        if (typeFqn == null) {
-            throw new IllegalStateException(
-                "MESSAGE_TYPES table missing entry for field number " + num + " in " + meta.fullName());
-        }
-        PxfMeta nestedMeta = registry.lookupMessage(typeFqn);
+        // Prefer the meta's embedded nested reference (populated by codegen)
+        // over a registry lookup. This is the path for codegen-generated
+        // <Message>PxfMeta classes; registry is the fallback for hand-built
+        // PxfMeta implementations or test fixtures that don't pre-link.
+        PxfMeta nestedMeta = meta.nestedMetas().get(num);
         if (nestedMeta == null) {
-            throw new IllegalArgumentException(
-                "PxfRegistry has no entry for nested message '" + typeFqn +
-                "' (referenced from field " + num + " of " + meta.fullName() + ")");
+            String typeFqn = meta.messageTypes().get(num);
+            if (typeFqn == null) {
+                throw new IllegalStateException(
+                    "MESSAGE_TYPES table missing entry for field number " + num + " in " + meta.fullName());
+            }
+            nestedMeta = registry.lookupMessage(typeFqn);
+            if (nestedMeta == null) {
+                throw new IllegalArgumentException(
+                    "PxfRegistry has no entry for nested message '" + typeFqn +
+                    "' (referenced from field " + num + " of " + meta.fullName() + ")");
+            }
         }
         // Encode the nested entries to a side buffer first so we know the byte length.
         byte[] nestedBytes = encode(new Ast.Document("", entries, List.of()), nestedMeta, registry);
@@ -223,16 +238,20 @@ public final class LiteWireWriter {
             PxfRegistry registry) {
         int enumValue;
         if (v instanceof Ast.IdentVal id) {
-            String typeFqn = meta.enumTypes().get(num);
-            if (typeFqn == null) {
-                throw new IllegalStateException(
-                    "ENUM_TYPES table missing entry for field number " + num + " in " + meta.fullName());
-            }
-            PxfEnum enumMeta = registry.lookupEnum(typeFqn);
+            // Prefer embedded enum reference; fall back to registry lookup.
+            PxfEnum enumMeta = meta.enumMetas().get(num);
             if (enumMeta == null) {
-                throw new IllegalArgumentException(
-                    "PxfRegistry has no entry for enum '" + typeFqn +
-                    "' (referenced from field " + num + " of " + meta.fullName() + ")");
+                String typeFqn = meta.enumTypes().get(num);
+                if (typeFqn == null) {
+                    throw new IllegalStateException(
+                        "ENUM_TYPES table missing entry for field number " + num + " in " + meta.fullName());
+                }
+                enumMeta = registry.lookupEnum(typeFqn);
+                if (enumMeta == null) {
+                    throw new IllegalArgumentException(
+                        "PxfRegistry has no entry for enum '" + typeFqn +
+                        "' (referenced from field " + num + " of " + meta.fullName() + ")");
+                }
             }
             Integer mapped = enumMeta.values().get(id.name());
             if (mapped == null) {

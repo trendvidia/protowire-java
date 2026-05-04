@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sbe;
 
-option java_package = "com.trendvidia.protowire.proto.sbe";
+option java_package = "org.protowire.proto.sbe";
 option java_multiple_files = true;
 
 import "google/protobuf/descriptor.proto";

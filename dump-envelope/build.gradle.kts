@@ -8,6 +8,6 @@ dependencies {
 }
 
 application {
-    mainClass.set("com.trendvidia.protowire.dump.DumpEnvelope")
+    mainClass.set("org.protowire.dump.DumpEnvelope")
     applicationName = "dump-envelope"
 }

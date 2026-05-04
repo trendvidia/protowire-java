@@ -1,4 +1,4 @@
-# protowire4java
+# protowire-java
 
 Native Java port of [github.com/trendvidia/protowire](https://github.com/trendvidia/protowire) — a protobuf-backed serialization toolkit.
 
@@ -8,11 +8,11 @@ Java 21, Gradle multi-module, `protobuf-gradle-plugin`, JUnit 5.
 
 | Module | Java package | Notes |
 |--------|--------------|-------|
-| `:pb` | `com.trendvidia.protowire.pb` | Schema-free struct ↔ proto3 binary marshaling. Field numbers come from the `@ProtoField(N)` annotation — the Java analogue of Go's `protowire:"N"` struct tag. |
-| `:pxf` | `com.trendvidia.protowire.pxf` | PXF text ↔ `Message` / `DynamicMessage`. Two-tier decoder split: `Pxf.parse()` returns an AST with comments; `Pxf.unmarshal` / `Pxf.unmarshalFull` use a fused fast decoder. |
-| `:sbe` | `com.trendvidia.protowire.sbe` | FIX SBE binary codec, driven by SBE annotations on `.proto` schemas. `Codec.marshal`, `Codec.unmarshal`, and a zero-allocation `View`. Includes `Convert.xmlToProto` / `Convert.protoToXml`. |
-| `:envelope` | `com.trendvidia.protowire.envelope` | Standard API response envelope, generated from `envelope/v1/envelope.proto`, with `Envelopes` builders + queries. |
-| `:proto-annotations` | `com.trendvidia.protowire.proto.{pxf,sbe}` | Compiled proto annotations: `pxf.required`, `pxf.default`, `pxf.BigInt/Decimal/BigFloat`, `sbe.schema_id/template_id/length/encoding`. |
+| `:pb` | `org.protowire.pb` | Schema-free struct ↔ proto3 binary marshaling. Field numbers come from the `@ProtoField(N)` annotation — the Java analogue of Go's `protowire:"N"` struct tag. |
+| `:pxf` | `org.protowire.pxf` | PXF text ↔ `Message` / `DynamicMessage`. Two-tier decoder split: `Pxf.parse()` returns an AST with comments; `Pxf.unmarshal` / `Pxf.unmarshalFull` use a fused fast decoder. |
+| `:sbe` | `org.protowire.sbe` | FIX SBE binary codec, driven by SBE annotations on `.proto` schemas. `Codec.marshal`, `Codec.unmarshal`, and a zero-allocation `View`. Includes `Convert.xmlToProto` / `Convert.protoToXml`. |
+| `:envelope` | `org.protowire.envelope` | Standard API response envelope, generated from `envelope/v1/envelope.proto`, with `Envelopes` builders + queries. |
+| `:proto-annotations` | `org.protowire.proto.{pxf,sbe}` | Compiled proto annotations: `pxf.required`, `pxf.default`, `pxf.BigInt/Decimal/BigFloat`, `sbe.schema_id/template_id/length/encoding`. |
 | `:dump-envelope`, `:bench-pxf`, `:bench-sbe` | (test harnesses) | Per-port binaries used by the cross-port runner scripts in the spec repo. Not part of the public library API. |
 
 ## Build & test
@@ -29,8 +29,8 @@ Java 21 toolchain is required (configured automatically via Gradle).
 ### Decode
 
 ```java
-import com.trendvidia.protowire.pxf.Pxf;
-import com.trendvidia.protowire.pxf.Result;
+import org.protowire.pxf.Pxf;
+import org.protowire.pxf.Result;
 
 // schema-bound (compiled-in proto)
 ServerConfig.Builder b = ServerConfig.newBuilder();

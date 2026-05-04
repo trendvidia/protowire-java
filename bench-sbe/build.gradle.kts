@@ -9,6 +9,6 @@ dependencies {
 }
 
 application {
-    mainClass.set("com.trendvidia.protowire.bench.BenchSbe")
+    mainClass.set("org.protowire.bench.BenchSbe")
     applicationName = "bench-sbe"
 }

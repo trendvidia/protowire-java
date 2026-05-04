@@ -185,6 +185,14 @@ public final class LiteWireWriter {
                     }
                     if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
                         writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
+                    } else if (meta.mapFields().contains(num) && a.value() instanceof Ast.BlockVal mbv) {
+                        // PXF accepts both `labels { … }` (bare-block) and
+                        // `labels = { … }` (assignment-with-block) for map
+                        // fields; the bare-block form lands as Ast.Block in
+                        // writeEntries above, the assignment form lands here
+                        // as Ast.Assignment(BlockVal). Route both through the
+                        // map encoder.
+                        writeMap(out, num, mbv.entries(), meta, registry);
                     } else {
                         writeField(out, num, kind, a.value(), meta, registry);
                     }

@@ -810,4 +810,116 @@ final class LiteWireWriterTest {
                 () -> LiteWireWriter.encode(doc, m));
         assertEquals(true, e.getMessage().contains("outside a map field block"));
     }
+
+    // --- well-known types: Timestamp + Duration ---------------------------
+
+    /**
+     * PxfMeta with a single MESSAGE-typed field whose target is configured
+     * via messageTypes — used to check the well-known FQN dispatch for
+     * Timestamp/Duration fields.
+     */
+    private static PxfMeta wellKnownHostMeta(
+            String fullName, String fieldName, int fieldNumber, String javaTargetFqn) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of(fieldName, fieldNumber); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(fieldNumber, 11 /* MESSAGE */); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(fieldNumber, javaTargetFqn); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        };
+    }
+
+    @Test
+    void timestamp_atEpoch_emitsZeroPayload() {
+        // created = 1970-01-01T00:00:00Z  →  seconds=0, nanos=0  →  empty submessage
+        // Wire: tag(1, LEN) = 0x0a, len = 0x00
+        Ast.Document doc = Parser.parse("created = 1970-01-01T00:00:00Z");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.google.protobuf.Timestamp");
+
+        assertEquals("0a00", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void timestamp_secondsOnly() {
+        // created = 1970-01-01T00:00:01Z  →  seconds=1, nanos=0
+        // Inner: tag(1, varint) + 0x01  =  08 01  (2 bytes)
+        // Outer: 0a 02 08 01
+        Ast.Document doc = Parser.parse("created = 1970-01-01T00:00:01Z");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.google.protobuf.Timestamp");
+
+        assertEquals("0a020801", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void timestamp_secondsAndNanos() {
+        // created = 1970-01-01T00:00:01.000000500Z  →  seconds=1, nanos=500
+        // Inner: 08 01 10 f4 03  (5 bytes;  500 = 0xf4 0x03 in varint)
+        // Outer: 0a 05 08 01 10 f4 03
+        Ast.Document doc = Parser.parse("created = 1970-01-01T00:00:01.000000500Z");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.google.protobuf.Timestamp");
+
+        assertEquals("0a050801" + "10f403", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void duration_hoursAndMinutes() {
+        // ttl = 1h30m  →  seconds = 5400, nanos = 0
+        // 5400 in varint: low 7 bits = 5400 & 0x7f = 0x18, with continuation = 0x98;
+        // next 7 bits = 5400 >> 7 = 42 = 0x2a, no continuation. So 5400 = 98 2a.
+        // Inner: tag(1, varint) + 98 2a  =  08 98 2a  (3 bytes)
+        // Outer: 0a 03 08 98 2a
+        Ast.Document doc = Parser.parse("ttl = 1h30m");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "ttl", 1, "com.google.protobuf.Duration");
+
+        assertEquals("0a0308982a", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void duration_withNanos() {
+        // ttl = 100ms  →  seconds = 0, nanos = 100_000_000
+        // Inner: tag(2, varint) + varint(100_000_000)  =  10 80 c2 d7 2f  (5 bytes)
+        //   100_000_000 in varint:
+        //     bin: 0000 0101 1111 0101 1110 0001 0000 0000  =  100_000_000
+        //     7-bit groups (LSB-first): 0000000, 0000010, 1111011, 1100001, 0000000
+        //     ... but easier to compute via known: 100M = 0x80 0xc2 0xd7 0x2f in varint.
+        // Outer: 0a 05 10 80 c2 d7 2f
+        Ast.Document doc = Parser.parse("ttl = 100ms");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "ttl", 1, "com.google.protobuf.Duration");
+
+        assertEquals("0a051080c2d72f", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void timestamp_onWrongFqnTarget_throws() {
+        // Field is MESSAGE-typed but targets some random submessage, NOT
+        // google.protobuf.Timestamp. Encoding a TimestampVal at it should
+        // fail loudly so the user notices, instead of silently producing
+        // bytes structured like a Timestamp into a misshapen target.
+        Ast.Document doc = Parser.parse("created = 2024-01-15T10:30:00Z");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.example.SomeOtherType");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals(true, e.getMessage().contains("requires com.google.protobuf.Timestamp"));
+        assertEquals(true, e.getMessage().contains("com.example.SomeOtherType"));
+    }
+
+    @Test
+    void duration_onWrongFqnTarget_throws() {
+        Ast.Document doc = Parser.parse("ttl = 1h");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "ttl", 1, "com.example.SomeOtherType");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals(true, e.getMessage().contains("requires com.google.protobuf.Duration"));
+    }
 }

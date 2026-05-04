@@ -258,4 +258,84 @@ final class LiteWireReaderTest {
         };
         assertRoundTrip("labels { \"env\": \"prod\" }", hostMeta);
     }
+
+    /**
+     * Builds a single-MESSAGE-field PxfMeta whose target is one of the
+     * recognized WKTs. Used by the round-trip tests below to keep the
+     * anonymous-class boilerplate down to one helper.
+     */
+    private static PxfMeta wktMeta(String fieldName, int num, String javaFqn, int wktKind) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return "test.Sample"; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of(fieldName, num); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(num, 11 /* MESSAGE */); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(num, javaFqn); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, Integer> wellKnownKinds()     { return Map.of(num, wktKind); }
+        };
+    }
+
+    @Test
+    void wkt_timestamp_roundTrip() {
+        assertRoundTrip("created = 2024-01-15T10:30:45Z",
+            wktMeta("created", 1, "com.google.protobuf.Timestamp", PxfMeta.WKT_TIMESTAMP));
+    }
+
+    @Test
+    void wkt_duration_roundTrip() {
+        assertRoundTrip("ttl = 1h30m",
+            wktMeta("ttl", 1, "com.google.protobuf.Duration", PxfMeta.WKT_DURATION));
+    }
+
+    @Test
+    void wkt_stringValue_roundTrip() {
+        assertRoundTrip("nickname = \"alice\"",
+            wktMeta("nickname", 1, "com.google.protobuf.StringValue", PxfMeta.WKT_STRING_VALUE));
+    }
+
+    @Test
+    void wkt_int32Value_roundTrip() {
+        assertRoundTrip("count = 42",
+            wktMeta("count", 1, "com.google.protobuf.Int32Value", PxfMeta.WKT_INT32_VALUE));
+    }
+
+    @Test
+    void wkt_boolValue_roundTrip() {
+        assertRoundTrip("flag = true",
+            wktMeta("flag", 1, "com.google.protobuf.BoolValue", PxfMeta.WKT_BOOL_VALUE));
+    }
+
+    @Test
+    void wkt_doubleValue_roundTrip() {
+        assertRoundTrip("ratio = 3.14",
+            wktMeta("ratio", 1, "com.google.protobuf.DoubleValue", PxfMeta.WKT_DOUBLE_VALUE));
+    }
+
+    @Test
+    void wkt_bigInt_roundTrip() {
+        // Value larger than long range — exercises BigInteger arbitrary-precision path.
+        assertRoundTrip("balance = 12345678901234567890123456789",
+            wktMeta("balance", 1, "org.protowire.proto.pxf.BigInt", PxfMeta.WKT_BIG_INT));
+    }
+
+    @Test
+    void wkt_decimal_roundTrip() {
+        assertRoundTrip("price = 19.95",
+            wktMeta("price", 1, "org.protowire.proto.pxf.Decimal", PxfMeta.WKT_DECIMAL));
+    }
+
+    @Test
+    void wkt_bigFloat_roundTrip() {
+        assertRoundTrip("measurement = 0.0001234567",
+            wktMeta("measurement", 1, "org.protowire.proto.pxf.BigFloat", PxfMeta.WKT_BIG_FLOAT));
+    }
 }

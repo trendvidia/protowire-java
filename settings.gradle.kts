@@ -12,6 +12,7 @@ include(
     ":pb",
     ":pxf-runtime",
     ":pxf",
+    ":pxf-android",
     ":sbe",
     ":envelope",
     ":dump-envelope",

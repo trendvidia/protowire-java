@@ -100,12 +100,12 @@ final class Encoder {
 
         if (WellKnown.isTimestamp(md)) {
             writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.formatRfc3339(WellKnown.readTimestamp(sub))).append('\n');
+            buf.append(fd.getName()).append(" = ").append(TimeFormats.formatRfc3339(WellKnown.readTimestamp(sub))).append('\n');
             return;
         }
         if (WellKnown.isDuration(md)) {
             writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.formatGoDuration(WellKnown.readDuration(sub))).append('\n');
+            buf.append(fd.getName()).append(" = ").append(TimeFormats.formatGoDuration(WellKnown.readDuration(sub))).append('\n');
             return;
         }
         if (WellKnown.isWrapper(md)) {
@@ -155,8 +155,8 @@ final class Encoder {
                 Message sub = (Message) elem;
                 Descriptor md = fd.getMessageType();
                 writeIndent(level + 1);
-                if (WellKnown.isTimestamp(md))      buf.append(WellKnown.formatRfc3339(WellKnown.readTimestamp(sub)));
-                else if (WellKnown.isDuration(md))  buf.append(WellKnown.formatGoDuration(WellKnown.readDuration(sub)));
+                if (WellKnown.isTimestamp(md))      buf.append(TimeFormats.formatRfc3339(WellKnown.readTimestamp(sub)));
+                else if (WellKnown.isDuration(md))  buf.append(TimeFormats.formatGoDuration(WellKnown.readDuration(sub)));
                 else if (WellKnown.isWrapper(md)) {
                     FieldDescriptor inner = md.findFieldByName("value");
                     writeScalar(inner, sub.getField(inner));

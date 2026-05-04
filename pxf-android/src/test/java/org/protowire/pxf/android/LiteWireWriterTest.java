@@ -3,6 +3,7 @@ package org.protowire.pxf.android;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
+import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
@@ -644,5 +645,169 @@ final class LiteWireWriterTest {
         assertEquals(
             "oneof 'figure' in test.Shape already has 'radius' set; cannot also set 'sides'",
             e.getMessage());
+    }
+
+    // --- maps -------------------------------------------------------------
+
+    /** PxfMeta for a synthetic map-entry submessage (key=1, value=2). */
+    private static PxfMeta mapEntryMeta(
+            String fullName,
+            int keyKind,
+            int valueKind,
+            Map<Integer, String> messageTypes,
+            Map<Integer, String> enumTypes,
+            Map<Integer, PxfMeta> nestedMetas,
+            Map<Integer, PxfEnum> enumMetas) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("key", 1, "value", 2); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, keyKind, 2, valueKind); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return messageTypes; }
+            @Override public Map<Integer, String>  enumTypes()          { return enumTypes; }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, PxfMeta> nestedMetas()        { return nestedMetas; }
+            @Override public Map<Integer, PxfEnum> enumMetas()          { return enumMetas; }
+        };
+    }
+
+    /** PxfMeta with overridable mapFields() + nestedMetas() for the parent of a map field. */
+    private static PxfMeta mapHostMeta(
+            String fullName,
+            Map<String, Integer> fieldNumbers,
+            Map<Integer, Integer> fieldKinds,
+            Set<Integer> repeated,
+            Map<Integer, String> messageTypes,
+            Map<Integer, PxfMeta> nestedMetas,
+            Set<Integer> mapFields) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return fieldNumbers; }
+            @Override public Map<Integer, Integer> fieldKinds()         { return fieldKinds; }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return repeated; }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return messageTypes; }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, PxfMeta> nestedMetas()        { return nestedMetas; }
+            @Override public Set<Integer>          mapFields()          { return mapFields; }
+        };
+    }
+
+    @Test
+    void map_stringToString_singleEntry() {
+        // map<string, string> labels = 1;  →  labels { "env": "prod" }
+        // Entry submessage: key (string,1) = "env", value (string,2) = "prod"
+        // Entry bytes: 0a 03 "env" 12 04 "prod"  →  0a 03 656e76 12 04 70726f64  (11 bytes)
+        // Outer record: tag(1, LEN) = 0x0a, len = 0x0b, payload
+        // Total: 0a 0b 0a 03 656e76 12 04 70726f64
+        Ast.Document doc = Parser.parse("labels { \"env\": \"prod\" }");
+
+        PxfMeta entry = mapEntryMeta("test.Sample.LabelsEntry",
+                9 /* STRING */, 9 /* STRING */,
+                Map.of(), Map.of(), Map.of(), Map.of());
+        PxfMeta host = mapHostMeta("test.Sample",
+                Map.of("labels", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Set.of(1),  // map fields are wire-repeated
+                Map.of(1, "test.Sample.LabelsEntry"),
+                Map.of(1, entry),
+                Set.of(1));
+
+        assertEquals("0a0b0a03656e76120470726f64", hex(LiteWireWriter.encode(doc, host)));
+    }
+
+    @Test
+    void map_intToString() {
+        // map<int32, string> codes = 1;  →  codes { 404: "not found" }
+        // Entry bytes: 08 94 03 (key field 1, varint 404 = 0x94 0x03) 12 09 "not found"
+        //   = 08 9403 12 09 6e6f7420666f756e64    (14 bytes)
+        // Outer: 0a 0e <14 bytes>
+        Ast.Document doc = Parser.parse("codes { 404: \"not found\" }");
+
+        PxfMeta entry = mapEntryMeta("test.Sample.CodesEntry",
+                5 /* INT32 */, 9 /* STRING */,
+                Map.of(), Map.of(), Map.of(), Map.of());
+        PxfMeta host = mapHostMeta("test.Sample",
+                Map.of("codes", 1),
+                Map.of(1, 11),
+                Set.of(1),
+                Map.of(1, "test.Sample.CodesEntry"),
+                Map.of(1, entry),
+                Set.of(1));
+
+        assertEquals("0a0e08940312096e6f7420666f756e64", hex(LiteWireWriter.encode(doc, host)));
+    }
+
+    @Test
+    void map_emptyBlock_emitsNoBytes() {
+        Ast.Document doc = Parser.parse("labels {}");
+
+        PxfMeta entry = mapEntryMeta("test.Sample.LabelsEntry",
+                9, 9, Map.of(), Map.of(), Map.of(), Map.of());
+        PxfMeta host = mapHostMeta("test.Sample",
+                Map.of("labels", 1),
+                Map.of(1, 11),
+                Set.of(1),
+                Map.of(1, "test.Sample.LabelsEntry"),
+                Map.of(1, entry),
+                Set.of(1));
+
+        // No entries → no records emitted.
+        assertEquals("", hex(LiteWireWriter.encode(doc, host)));
+    }
+
+    @Test
+    void map_twoEntries_emitsTwoRecords() {
+        Ast.Document doc = Parser.parse("labels { \"env\": \"prod\"\n\"team\": \"platform\" }");
+
+        PxfMeta entry = mapEntryMeta("test.Sample.LabelsEntry",
+                9, 9, Map.of(), Map.of(), Map.of(), Map.of());
+        PxfMeta host = mapHostMeta("test.Sample",
+                Map.of("labels", 1),
+                Map.of(1, 11),
+                Set.of(1),
+                Map.of(1, "test.Sample.LabelsEntry"),
+                Map.of(1, entry),
+                Set.of(1));
+
+        // Entry 1: 0a 03 "env" 12 04 "prod" (11 bytes) → outer: 0a 0b ...
+        // Entry 2: 0a 04 "team" 12 08 "platform" (16 bytes) → outer: 0a 10 ...
+        String entry1 = "0a0b0a03656e76120470726f64";
+        String entry2 = "0a100a047465616d12087" + "06c6174666f726d";
+        assertEquals(entry1 + entry2, hex(LiteWireWriter.encode(doc, host)));
+    }
+
+    @Test
+    void mapEntry_outsideMapBlock_throws() {
+        // The parser would normally only emit MapEntry inside a map Block.
+        // Manually construct an AST with a top-level MapEntry to verify the
+        // encoder rejects it with a clear message.
+        Ast.Document doc = new Ast.Document("",
+            List.of(new Ast.MapEntry(
+                Position.UNKNOWN, "k",
+                new Ast.StringVal(Position.UNKNOWN, "v"),
+                List.of(), "")),
+            List.of());
+
+        PxfMeta m = mapHostMeta("test.Sample",
+                Map.of(), Map.of(), Set.of(), Map.of(), Map.of(), Set.of());
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals(true, e.getMessage().contains("outside a map field block"));
     }
 }

@@ -101,4 +101,19 @@ public interface PxfMeta {
     default Map<Integer, PxfEnum> enumMetas() {
         return Map.of();
     }
+
+    /**
+     * Field numbers declared as {@code map<K, V>} in the source {@code .proto}.
+     * Wire-format-wise, a map field is {@code repeated MapEntry}, where the
+     * synthetic {@code MapEntry} sub-message has {@code key = 1} and
+     * {@code value = 2}. The runtime cannot distinguish a map field from a
+     * plain repeated submessage by its wire shape alone, so the codegen
+     * plugin records the distinction here at build time. Default empty;
+     * implementations that don't carry this distinction are interpreted as
+     * "no map fields", and {@code repeated MapEntry}-style blocks fall
+     * through to the regular nested-message path.
+     */
+    default Set<Integer> mapFields() {
+        return Set.of();
+    }
 }

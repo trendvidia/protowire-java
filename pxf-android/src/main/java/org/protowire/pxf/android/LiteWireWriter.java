@@ -1,5 +1,6 @@
 package org.protowire.pxf.android;
 
+import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
@@ -10,6 +11,8 @@ import org.protowire.pxf.PxfRegistry;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,11 +44,14 @@ import java.util.Set;
  * integer literals are also accepted, mirroring PXF's grammar).
  *
  * <p>Maps, oneof mutual-exclusion, {@code (pxf.required)} validation,
- * {@code (pxf.default)} application, the {@code google.protobuf.Timestamp}
- * / {@code Duration} well-known types, and the
- * {@code google.protobuf.{String,Bytes,Bool,Int32,Int64,UInt32,UInt64,Float,Double}Value}
- * scalar wrappers are all handled. Still queued: the protowire-specific
- * bignum types ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}).
+ * {@code (pxf.default)} application, and the well-known types are all
+ * handled — both Google's standard set
+ * ({@code Timestamp}, {@code Duration}, the {@code *Value} scalar
+ * wrappers) and the protowire-specific arbitrary-precision number types
+ * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}). The
+ * encoder is feature-complete for the lite tier as far as the marshal
+ * direction is concerned; the symmetric reader path / PXF text writer
+ * is still queued.
  *
  * <p>The PXF {@code null} sentinel ({@code field = null}) marks a field as
  * present for {@code (pxf.required)} validation purposes but emits no wire
@@ -357,15 +363,25 @@ public final class LiteWireWriter {
                 writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
                 return;
             }
-            // *Value wrapper fast path: a bare scalar at a MESSAGE field whose
-            // target Java type is one of the google.protobuf.{String,Int32,...}
-            // Value wrappers gets boxed into a {value=1: <scalar>} submessage.
-            // Falls through to the BlockVal/error path if the value is a block
-            // (user wrote `field = { value = "..." }` explicitly), which then
-            // requires a registry-supplied or codegen-emitted PxfMeta for the
-            // wrapper type.
+            // PXF bignum + Google *Value wrapper fast paths, all keyed on the
+            // field's target Java FQN. Bignums (BigInt / Decimal / BigFloat)
+            // accept bare integer or float literals; wrappers box a bare
+            // scalar into a {value=1: <scalar>} submessage.
+            String fqn = meta.messageTypes().get(num);
+            if ("org.protowire.proto.pxf.BigInt".equals(fqn)) {
+                writeBigInt(out, num, parseBigInteger(v, meta, num));
+                return;
+            }
+            if ("org.protowire.proto.pxf.Decimal".equals(fqn)) {
+                writeDecimal(out, num, parseBigDecimal(v, meta, num));
+                return;
+            }
+            if ("org.protowire.proto.pxf.BigFloat".equals(fqn)) {
+                writeBigFloat(out, num, parseBigDecimal(v, meta, num));
+                return;
+            }
             if (!(v instanceof Ast.BlockVal)) {
-                Integer wrapperKind = WRAPPER_INNER_KIND.get(meta.messageTypes().get(num));
+                Integer wrapperKind = WRAPPER_INNER_KIND.get(fqn);
                 if (wrapperKind != null) {
                     writeWellKnownValueWrapper(out, num, wrapperKind, v);
                     return;
@@ -793,5 +809,145 @@ public final class LiteWireWriter {
         if (v instanceof Ast.FloatVal f) return Double.parseDouble(f.raw());
         if (v instanceof Ast.IntVal   i) return Double.parseDouble(i.raw());
         throw new IllegalArgumentException("expected double, got " + v.getClass().getSimpleName());
+    }
+
+    // --- PXF bignum helpers -----------------------------------------------
+    //
+    // pxf.BigInt / pxf.Decimal / pxf.BigFloat all share the same encoding
+    // strategy: take an arbitrary-precision Java number, split into
+    // unsigned big-endian magnitude bytes (sign-trimmed) plus a separate
+    // negative flag, and emit alongside whatever per-type modifiers (scale,
+    // exponent, prec) the schema declares. The wire output mirrors what
+    // :pxf's WellKnown.set{BigInt,Decimal,BigFloat} produces in the full-
+    // runtime tier, so a value flowing JVM → wire → Android → wire round-
+    // trips byte-for-byte.
+
+    private static BigInteger parseBigInteger(Ast.Value v, PxfMeta meta, int num) {
+        if (v instanceof Ast.IntVal i) {
+            return new BigInteger(i.raw());
+        }
+        throw new IllegalArgumentException(
+            "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
+            " is pxf.BigInt; expected integer literal, got " + v.getClass().getSimpleName());
+    }
+
+    private static BigDecimal parseBigDecimal(Ast.Value v, PxfMeta meta, int num) {
+        if (v instanceof Ast.FloatVal f) return new BigDecimal(f.raw());
+        if (v instanceof Ast.IntVal   i) return new BigDecimal(i.raw());
+        throw new IllegalArgumentException(
+            "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
+            " requires a numeric literal; got " + v.getClass().getSimpleName());
+    }
+
+    /**
+     * Encodes a {@code pxf.BigInt} submessage at field {@code num}:
+     * {@code abs} (sign-trimmed unsigned big-endian bytes, field 1) plus
+     * {@code negative} (bool, field 2). Default-zero for either field is
+     * omitted per proto3 — so {@code BigInt(0)} produces an empty payload.
+     */
+    private static void writeBigInt(CodedOutputStream out, int num, BigInteger value) {
+        ByteArrayOutputStream payloadBuf = new ByteArrayOutputStream();
+        CodedOutputStream payloadOut = CodedOutputStream.newInstance(payloadBuf);
+        try {
+            byte[] absBytes = value.signum() == 0 ? new byte[0] : trimSign(value.abs().toByteArray());
+            if (absBytes.length > 0) {
+                payloadOut.writeBytes(1, ByteString.copyFrom(absBytes));
+            }
+            if (value.signum() < 0) {
+                payloadOut.writeBool(2, true);
+            }
+            payloadOut.flush();
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+        emitLengthDelimited(out, num, payloadBuf.toByteArray());
+    }
+
+    /**
+     * Encodes a {@code pxf.Decimal} submessage at field {@code num}:
+     * {@code unscaled} (sign-trimmed unsigned big-endian bytes of the
+     * unscaled magnitude, field 1), {@code scale} (int32 base-10 power,
+     * field 2), and {@code negative} (bool, field 3). Default-zero
+     * components omitted.
+     */
+    private static void writeDecimal(CodedOutputStream out, int num, BigDecimal value) {
+        ByteArrayOutputStream payloadBuf = new ByteArrayOutputStream();
+        CodedOutputStream payloadOut = CodedOutputStream.newInstance(payloadBuf);
+        try {
+            BigInteger unscaledAbs = value.unscaledValue().abs();
+            byte[] unscaledBytes = unscaledAbs.signum() == 0 ? new byte[0] : trimSign(unscaledAbs.toByteArray());
+            if (unscaledBytes.length > 0) {
+                payloadOut.writeBytes(1, ByteString.copyFrom(unscaledBytes));
+            }
+            if (value.scale() != 0) {
+                payloadOut.writeInt32(2, value.scale());
+            }
+            if (value.signum() < 0) {
+                payloadOut.writeBool(3, true);
+            }
+            payloadOut.flush();
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+        emitLengthDelimited(out, num, payloadBuf.toByteArray());
+    }
+
+    /**
+     * Encodes a {@code pxf.BigFloat} submessage at field {@code num}:
+     * {@code mantissa} (sign-trimmed unsigned big-endian, field 1),
+     * {@code exponent} (int32 base-10 power, field 2 — actually
+     * {@code -BigDecimal.scale()} since the Java port stores BigFloat as a
+     * decimal), {@code prec} (uint32 mantissa bit-length, field 3 —
+     * defaults to {@code 53} when the mantissa is zero, matching the JVM
+     * tier's behavior), and {@code negative} (bool, field 4). The
+     * always-emitted {@code prec} field means {@code BigFloat(0)} encodes
+     * to {@code 18 35} (prec=53), not an empty payload.
+     */
+    private static void writeBigFloat(CodedOutputStream out, int num, BigDecimal value) {
+        ByteArrayOutputStream payloadBuf = new ByteArrayOutputStream();
+        CodedOutputStream payloadOut = CodedOutputStream.newInstance(payloadBuf);
+        try {
+            BigInteger mantAbs = value.unscaledValue().abs();
+            byte[] mantBytes = mantAbs.signum() == 0 ? new byte[0] : trimSign(mantAbs.toByteArray());
+            int prec = mantAbs.bitLength();
+            if (prec == 0) {
+                prec = 53;
+            }
+            if (mantBytes.length > 0) {
+                payloadOut.writeBytes(1, ByteString.copyFrom(mantBytes));
+            }
+            if (-value.scale() != 0) {
+                payloadOut.writeInt32(2, -value.scale());
+            }
+            payloadOut.writeUInt32(3, prec);
+            if (value.signum() < 0) {
+                payloadOut.writeBool(4, true);
+            }
+            payloadOut.flush();
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+        emitLengthDelimited(out, num, payloadBuf.toByteArray());
+    }
+
+    /** Strip a leading 0x00 sign byte from {@link BigInteger#toByteArray()} output. */
+    private static byte[] trimSign(byte[] b) {
+        if (b.length > 1 && b[0] == 0) {
+            byte[] out = new byte[b.length - 1];
+            System.arraycopy(b, 1, out, 0, out.length);
+            return out;
+        }
+        return b;
+    }
+
+    /** Emits the length-delimited record header + payload bytes at field {@code num}. */
+    private static void emitLengthDelimited(CodedOutputStream out, int num, byte[] payload) {
+        try {
+            out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+            out.writeUInt32NoTag(payload.length);
+            out.writeRawBytes(payload);
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
     }
 }

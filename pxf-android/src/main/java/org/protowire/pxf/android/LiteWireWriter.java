@@ -2,6 +2,7 @@ package org.protowire.pxf.android;
 
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
+import org.protowire.pxf.Parser;
 import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
@@ -9,6 +10,10 @@ import org.protowire.pxf.PxfRegistry;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -115,7 +120,14 @@ public final class LiteWireWriter {
     public static byte[] encode(Ast.Document doc, PxfMeta meta, PxfRegistry registry) {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(buffer);
-        writeEntries(out, doc.entries(), meta, registry);
+        // Track which field numbers were set in the input + which oneof slots
+        // got claimed; needed for default application, oneof mutual-exclusion
+        // checks, and required-field validation.
+        Set<Integer> setFields = new HashSet<>();
+        Map<String, Integer> oneofSet = new HashMap<>();
+        writeEntries(out, doc.entries(), meta, registry, setFields, oneofSet);
+        applyDefaults(out, meta, registry, setFields, oneofSet);
+        validateRequired(meta, setFields);
         try {
             out.flush();
         } catch (IOException e) {
@@ -128,11 +140,14 @@ public final class LiteWireWriter {
             CodedOutputStream out,
             List<Ast.Entry> entries,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            Set<Integer> setFields,
+            Map<String, Integer> oneofSet) {
         Map<String, Integer> fieldNumbers = meta.fieldNumbers();
         Map<Integer, Integer> fieldKinds = meta.fieldKinds();
         Set<Integer> repeated = meta.repeatedFields();
         Set<Integer> packed = meta.packedFields();
+        Map<Integer, String> oneofOf = meta.oneofOf();
 
         for (Ast.Entry entry : entries) {
             switch (entry) {
@@ -141,18 +156,21 @@ public final class LiteWireWriter {
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + a.key());
                     }
+                    checkOneofCollision(num, a.key(), meta, oneofOf, oneofSet);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
                         writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
                     } else {
                         writeField(out, num, kind, a.value(), meta, registry);
                     }
+                    recordSet(num, oneofOf, setFields, oneofSet);
                 }
                 case Ast.Block b -> {
                     Integer num = fieldNumbers.get(b.name());
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + b.name());
                     }
+                    checkOneofCollision(num, b.name(), meta, oneofOf, oneofSet);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     if (kind != K_MESSAGE) {
                         throw new IllegalArgumentException(
@@ -160,10 +178,129 @@ public final class LiteWireWriter {
                             "' has kind " + kind);
                     }
                     writeNestedMessage(out, num, b.entries(), meta, registry);
+                    recordSet(num, oneofOf, setFields, oneofSet);
                 }
                 case Ast.MapEntry m -> throw new UnsupportedOperationException(
                     "map entry '" + m.key() + "' is not yet supported by the lite-runtime encoder");
             }
+        }
+    }
+
+    /** Records that field {@code num} was set; updates the oneof slot map if applicable. */
+    private static void recordSet(
+            int num,
+            Map<Integer, String> oneofOf,
+            Set<Integer> setFields,
+            Map<String, Integer> oneofSet) {
+        setFields.add(num);
+        String oneof = oneofOf.get(num);
+        if (oneof != null) {
+            oneofSet.put(oneof, num);
+        }
+    }
+
+    /**
+     * Detects a oneof mutual-exclusion violation: assigning to a field whose
+     * oneof slot already holds a different field number. Throws
+     * {@link IllegalArgumentException} with a message naming both fields and
+     * the containing message's full name.
+     */
+    private static void checkOneofCollision(
+            int num,
+            String fieldName,
+            PxfMeta meta,
+            Map<Integer, String> oneofOf,
+            Map<String, Integer> oneofSet) {
+        String oneof = oneofOf.get(num);
+        if (oneof == null) {
+            return;
+        }
+        Integer existing = oneofSet.get(oneof);
+        if (existing == null || existing.equals(num)) {
+            return;
+        }
+        throw new IllegalArgumentException(
+            "oneof '" + oneof + "' in " + meta.fullName() +
+            " already has '" + fieldNameFor(meta, existing) +
+            "' set; cannot also set '" + fieldName + "'");
+    }
+
+    /** Reverse-lookup of a field name from its number, for diagnostic messages. */
+    private static String fieldNameFor(PxfMeta meta, int num) {
+        for (Map.Entry<String, Integer> e : meta.fieldNumbers().entrySet()) {
+            if (e.getValue() == num) {
+                return e.getKey();
+            }
+        }
+        return "<field #" + num + ">";
+    }
+
+    /**
+     * Walks {@link PxfMeta#defaults()} and emits the default value for any
+     * field that wasn't set in the input. Skips fields whose oneof slot is
+     * already occupied (a oneof default can't override a sibling that was
+     * explicitly set). Defaults are themselves recorded as set so subsequent
+     * required-field validation accepts them.
+     *
+     * <p>Default literals are PXF text fragments (e.g. {@code "42"},
+     * {@code "STATUS_ACTIVE"}, {@code "\"hi\""}); we run them through the
+     * existing PXF parser by wrapping as a synthetic assignment, which is
+     * the minimum-friction way to reuse the lexer's literal handling.
+     */
+    private static void applyDefaults(
+            CodedOutputStream out,
+            PxfMeta meta,
+            PxfRegistry registry,
+            Set<Integer> setFields,
+            Map<String, Integer> oneofSet) {
+        Map<Integer, String> defaults = meta.defaults();
+        if (defaults.isEmpty()) {
+            return;
+        }
+        Map<Integer, Integer> fieldKinds = meta.fieldKinds();
+        Map<Integer, String> oneofOf = meta.oneofOf();
+        for (Map.Entry<Integer, String> e : defaults.entrySet()) {
+            int num = e.getKey();
+            if (setFields.contains(num)) {
+                continue;
+            }
+            String oneof = oneofOf.get(num);
+            if (oneof != null && oneofSet.containsKey(oneof)) {
+                continue;
+            }
+            Ast.Document parsed = Parser.parse("__default = " + e.getValue());
+            if (parsed.entries().isEmpty() || !(parsed.entries().get(0) instanceof Ast.Assignment def)) {
+                throw new IllegalStateException(
+                    "(pxf.default) for field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
+                    " did not parse as a value: " + e.getValue());
+            }
+            int kind = fieldKinds.getOrDefault(num, 0);
+            writeField(out, num, kind, def.value(), meta, registry);
+            recordSet(num, oneofOf, setFields, oneofSet);
+        }
+    }
+
+    /**
+     * Throws if any {@link PxfMeta#requiredFields()} entry isn't in
+     * {@code setFields} — must be called AFTER {@link #applyDefaults} so a
+     * default-bearing field counts as satisfied.
+     */
+    private static void validateRequired(PxfMeta meta, Set<Integer> setFields) {
+        Set<Integer> required = meta.requiredFields();
+        if (required.isEmpty()) {
+            return;
+        }
+        List<String> missing = new ArrayList<>();
+        for (Integer req : required) {
+            if (!setFields.contains(req)) {
+                missing.add(fieldNameFor(meta, req));
+            }
+        }
+        if (!missing.isEmpty()) {
+            Collections.sort(missing);
+            throw new IllegalArgumentException(
+                "required field(s) missing in " + meta.fullName() + ": " +
+                String.join(", ", missing));
         }
     }
 

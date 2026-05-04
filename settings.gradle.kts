@@ -15,7 +15,9 @@ include(
     ":pxf-android",
     ":sbe",
     ":envelope",
+    ":envelope-android",
     ":dump-envelope",
+    ":dump-envelope-android",
     ":bench-pxf",
     ":bench-sbe",
 )

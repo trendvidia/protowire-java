@@ -48,10 +48,11 @@ import java.util.Set;
  * handled — both Google's standard set
  * ({@code Timestamp}, {@code Duration}, the {@code *Value} scalar
  * wrappers) and the protowire-specific arbitrary-precision number types
- * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}). The
- * encoder is feature-complete for the lite tier as far as the marshal
- * direction is concerned; the symmetric reader path / PXF text writer
- * is still queued.
+ * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}). WKT
+ * dispatch is driven by {@link PxfMeta#wellKnownKinds()} — the codegen
+ * plugin populates that table at build time, and {@link LiteWireReader}
+ * uses the same constants for decoder fast paths, so the two directions
+ * stay in lockstep.
  *
  * <p>The PXF {@code null} sentinel ({@code field = null}) marks a field as
  * present for {@code (pxf.required)} validation purposes but emits no wire
@@ -349,40 +350,32 @@ public final class LiteWireWriter {
             return;
         }
         if (kind == K_MESSAGE) {
-            // Well-known type fast paths: when the user writes a bare timestamp
-            // or duration literal (`created = 2024-01-15T10:30:00Z`), the lexer
-            // produced a TimestampVal/DurationVal — we emit the well-known
-            // (seconds, nanos) submessage shape directly without recursing.
+            // Well-known type fast paths driven by PxfMeta.wellKnownKinds().
+            // Symmetric with LiteWireReader's decoder dispatch — both sides
+            // key off the same WKT_* int constants the codegen plugin emits.
+            int wkt = meta.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE);
+
             if (v instanceof Ast.TimestampVal tv) {
-                requireWellKnownTarget(num, meta, "com.google.protobuf.Timestamp", "timestamp");
+                requireWellKnownKind(num, wkt, PxfMeta.WKT_TIMESTAMP, meta, "timestamp");
                 writeWellKnownSecondsNanos(out, num, tv.value().getEpochSecond(), tv.value().getNano());
                 return;
             }
             if (v instanceof Ast.DurationVal dv) {
-                requireWellKnownTarget(num, meta, "com.google.protobuf.Duration", "duration");
+                requireWellKnownKind(num, wkt, PxfMeta.WKT_DURATION, meta, "duration");
                 writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
                 return;
             }
-            // PXF bignum + Google *Value wrapper fast paths, all keyed on the
-            // field's target Java FQN. Bignums (BigInt / Decimal / BigFloat)
-            // accept bare integer or float literals; wrappers box a bare
-            // scalar into a {value=1: <scalar>} submessage.
-            String fqn = meta.messageTypes().get(num);
-            if ("org.protowire.proto.pxf.BigInt".equals(fqn)) {
-                writeBigInt(out, num, parseBigInteger(v, meta, num));
-                return;
+
+            switch (wkt) {
+                case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
+                case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
+                case PxfMeta.WKT_BIG_FLOAT -> { writeBigFloat(out, num, parseBigDecimal(v, meta, num)); return; }
+                default -> { /* fall through */ }
             }
-            if ("org.protowire.proto.pxf.Decimal".equals(fqn)) {
-                writeDecimal(out, num, parseBigDecimal(v, meta, num));
-                return;
-            }
-            if ("org.protowire.proto.pxf.BigFloat".equals(fqn)) {
-                writeBigFloat(out, num, parseBigDecimal(v, meta, num));
-                return;
-            }
+
             if (!(v instanceof Ast.BlockVal)) {
-                Integer wrapperKind = WRAPPER_INNER_KIND.get(fqn);
-                if (wrapperKind != null) {
+                int wrapperKind = wrapperInnerKind(wkt);
+                if (wrapperKind != -1) {
                     writeWellKnownValueWrapper(out, num, wrapperKind, v);
                     return;
                 }
@@ -399,21 +392,24 @@ public final class LiteWireWriter {
     }
 
     /**
-     * Map from the Java FQN of each {@code google.protobuf.*Value} wrapper to
-     * the wire kind of its single {@code value} field at index 1. Drives the
-     * wrapper fast path in {@link #writeField}.
+     * Maps a {@code WKT_*Value} wrapper kind to the wire kind of its single
+     * {@code value} field at index 1, or {@code -1} if {@code wkt} isn't a
+     * scalar wrapper. Drives the wrapper fast path in {@link #writeField}.
      */
-    private static final Map<String, Integer> WRAPPER_INNER_KIND = Map.ofEntries(
-        Map.entry("com.google.protobuf.StringValue", K_STRING),
-        Map.entry("com.google.protobuf.BytesValue",  K_BYTES),
-        Map.entry("com.google.protobuf.BoolValue",   K_BOOL),
-        Map.entry("com.google.protobuf.Int32Value",  K_INT32),
-        Map.entry("com.google.protobuf.Int64Value",  K_INT64),
-        Map.entry("com.google.protobuf.UInt32Value", K_UINT32),
-        Map.entry("com.google.protobuf.UInt64Value", K_UINT64),
-        Map.entry("com.google.protobuf.FloatValue",  K_FLOAT),
-        Map.entry("com.google.protobuf.DoubleValue", K_DOUBLE)
-    );
+    private static int wrapperInnerKind(int wkt) {
+        return switch (wkt) {
+            case PxfMeta.WKT_STRING_VALUE -> K_STRING;
+            case PxfMeta.WKT_BYTES_VALUE  -> K_BYTES;
+            case PxfMeta.WKT_BOOL_VALUE   -> K_BOOL;
+            case PxfMeta.WKT_INT32_VALUE  -> K_INT32;
+            case PxfMeta.WKT_INT64_VALUE  -> K_INT64;
+            case PxfMeta.WKT_UINT32_VALUE -> K_UINT32;
+            case PxfMeta.WKT_UINT64_VALUE -> K_UINT64;
+            case PxfMeta.WKT_FLOAT_VALUE  -> K_FLOAT;
+            case PxfMeta.WKT_DOUBLE_VALUE -> K_DOUBLE;
+            default -> -1;
+        };
+    }
 
     /**
      * Wraps a bare scalar as a {@code google.protobuf.*Value} submessage at
@@ -470,22 +466,20 @@ public final class LiteWireWriter {
     }
 
     /**
-     * Confirms a TimestampVal / DurationVal landed on a field whose target
-     * Java type is the matching well-known wrapper. Catches user errors like
-     * sticking a timestamp literal into a hand-written submessage that
-     * happens to be MESSAGE-typed but isn't actually
-     * {@code google.protobuf.Timestamp} — without this check the encoder
-     * would silently produce wire bytes structured like a Timestamp into a
-     * field that expects something else entirely.
+     * Confirms a TimestampVal / DurationVal landed on a field whose
+     * {@link PxfMeta#wellKnownKinds()} entry matches the expected WKT kind.
+     * Catches user errors like sticking a timestamp literal into a
+     * MESSAGE-typed field that isn't actually {@code google.protobuf.Timestamp}
+     * — without this check the encoder would silently produce
+     * Timestamp-shaped bytes into a slot that expects something else entirely.
      */
-    private static void requireWellKnownTarget(
-            int num, PxfMeta meta, String expectedJavaFqn, String literalKind) {
-        String actual = meta.messageTypes().get(num);
-        if (!expectedJavaFqn.equals(actual)) {
+    private static void requireWellKnownKind(
+            int num, int actualWkt, int expectedWkt, PxfMeta meta, String literalKind) {
+        if (actualWkt != expectedWkt) {
             throw new IllegalArgumentException(
                 literalKind + " literal at field " + num + " of " + meta.fullName() +
-                " requires " + expectedJavaFqn + "; messageTypes() reports " +
-                (actual == null ? "<unset>" : actual));
+                " requires WKT kind " + expectedWkt + "; wellKnownKinds() reports " +
+                (actualWkt == PxfMeta.WKT_NONE ? "<unset>" : actualWkt));
         }
     }
 

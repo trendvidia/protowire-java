@@ -814,12 +814,15 @@ final class LiteWireWriterTest {
     // --- well-known types: Timestamp + Duration ---------------------------
 
     /**
-     * PxfMeta with a single MESSAGE-typed field whose target is configured
-     * via messageTypes — used to check the well-known FQN dispatch for
-     * Timestamp/Duration fields.
+     * PxfMeta with a single MESSAGE-typed field whose target is one of the
+     * recognized WKTs. Populates both {@code messageTypes()} (for parity with
+     * codegen-emitted shape) and {@code wellKnownKinds()} (the load-bearing
+     * field — the encoder dispatches off this since the FQN-based path was
+     * retired alongside the decoder migration).
      */
     private static PxfMeta wellKnownHostMeta(
             String fullName, String fieldName, int fieldNumber, String javaTargetFqn) {
+        int wktKind = wktKindFromJavaFqn(javaTargetFqn);
         return new PxfMeta() {
             @Override public String                fullName()           { return fullName; }
             @Override public Map<String, Integer>  fieldNumbers()       { return Map.of(fieldName, fieldNumber); }
@@ -835,6 +838,28 @@ final class LiteWireWriterTest {
             @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
             @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
             @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, Integer> wellKnownKinds()     { return Map.of(fieldNumber, wktKind); }
+        };
+    }
+
+    /** Look up the WKT_* kind for one of the recognized WKT Java FQNs (test-only). */
+    private static int wktKindFromJavaFqn(String fqn) {
+        return switch (fqn) {
+            case "com.google.protobuf.Timestamp"     -> PxfMeta.WKT_TIMESTAMP;
+            case "com.google.protobuf.Duration"      -> PxfMeta.WKT_DURATION;
+            case "com.google.protobuf.StringValue"   -> PxfMeta.WKT_STRING_VALUE;
+            case "com.google.protobuf.BytesValue"    -> PxfMeta.WKT_BYTES_VALUE;
+            case "com.google.protobuf.BoolValue"     -> PxfMeta.WKT_BOOL_VALUE;
+            case "com.google.protobuf.Int32Value"    -> PxfMeta.WKT_INT32_VALUE;
+            case "com.google.protobuf.Int64Value"    -> PxfMeta.WKT_INT64_VALUE;
+            case "com.google.protobuf.UInt32Value"   -> PxfMeta.WKT_UINT32_VALUE;
+            case "com.google.protobuf.UInt64Value"   -> PxfMeta.WKT_UINT64_VALUE;
+            case "com.google.protobuf.FloatValue"    -> PxfMeta.WKT_FLOAT_VALUE;
+            case "com.google.protobuf.DoubleValue"   -> PxfMeta.WKT_DOUBLE_VALUE;
+            case "org.protowire.proto.pxf.BigInt"    -> PxfMeta.WKT_BIG_INT;
+            case "org.protowire.proto.pxf.Decimal"   -> PxfMeta.WKT_DECIMAL;
+            case "org.protowire.proto.pxf.BigFloat"  -> PxfMeta.WKT_BIG_FLOAT;
+            default -> PxfMeta.WKT_NONE;
         };
     }
 
@@ -900,17 +925,18 @@ final class LiteWireWriterTest {
 
     @Test
     void timestamp_onWrongFqnTarget_throws() {
-        // Field is MESSAGE-typed but targets some random submessage, NOT
-        // google.protobuf.Timestamp. Encoding a TimestampVal at it should
-        // fail loudly so the user notices, instead of silently producing
-        // bytes structured like a Timestamp into a misshapen target.
+        // Field is MESSAGE-typed but its wellKnownKinds() entry isn't TIMESTAMP
+        // (here: WKT_NONE because the meta's javaTargetFqn doesn't map to a WKT).
+        // Encoding a TimestampVal at it should fail loudly so the user notices,
+        // instead of silently producing Timestamp-shaped bytes into a misshapen
+        // target.
         Ast.Document doc = Parser.parse("created = 2024-01-15T10:30:00Z");
         PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.example.SomeOtherType");
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires com.google.protobuf.Timestamp"));
-        assertEquals(true, e.getMessage().contains("com.example.SomeOtherType"));
+        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_TIMESTAMP));
+        assertEquals(true, e.getMessage().contains("<unset>"));
     }
 
     @Test
@@ -920,7 +946,7 @@ final class LiteWireWriterTest {
 
         IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
                 () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires com.google.protobuf.Duration"));
+        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_DURATION));
     }
 
     // --- well-known *Value wrappers + null sentinel -----------------------

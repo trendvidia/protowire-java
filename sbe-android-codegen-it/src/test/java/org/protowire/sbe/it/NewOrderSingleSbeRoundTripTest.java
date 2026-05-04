@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 final class NewOrderSingleSbeRoundTripTest {
 
     @Test
-    void roundTrip_scalarsAndGroup() {
+    void roundTrip_scalarsGroupAndComposite() {
         NewOrderSingle original = NewOrderSingle.newBuilder()
             .setOrderId(123456789L)
             .setSymbol("AAPL")
@@ -51,11 +51,17 @@ final class NewOrderSingleSbeRoundTripTest {
                 .setFillQty(20)
                 .setFillId(3L)
                 .build())
+            // Composite: lays out flat into the root block (8 + 4 = 12 bytes).
+            .setLimitPrice(NewOrderSingle.Decimal.newBuilder()
+                .setMantissa(155000L)
+                .setScale(2)
+                .build())
             .build();
 
         byte[] wire = NewOrderSingleSbeCodec.marshal(original);
-        // Header (8 bytes) + root block (29 bytes) + group header (4 bytes) + 3 entries × 20 bytes.
-        assertEquals(8 + 29 + 4 + 3 * 20, wire.length,
+        // Header (8) + root block (41 = 29 scalars + 12 composite) + group
+        // header (4) + 3 entries × 20.
+        assertEquals(8 + 41 + 4 + 3 * 20, wire.length,
             "wire size disagrees with codegen-emitted layout");
 
         NewOrderSingle decoded = NewOrderSingleSbeCodec.unmarshal(wire);
@@ -64,6 +70,8 @@ final class NewOrderSingleSbeRoundTripTest {
         assertEquals(original.getPrice(), decoded.getPrice());
         assertEquals(original.getQuantity(), decoded.getQuantity());
         assertEquals(original.getSide(), decoded.getSide());
+        assertEquals(original.getLimitPrice().getMantissa(), decoded.getLimitPrice().getMantissa());
+        assertEquals(original.getLimitPrice().getScale(),    decoded.getLimitPrice().getScale());
         assertEquals(original.getFillsCount(), decoded.getFillsCount());
         for (int i = 0; i < original.getFillsCount(); i++) {
             assertEquals(original.getFills(i).getFillPrice(), decoded.getFills(i).getFillPrice());
@@ -79,7 +87,10 @@ final class NewOrderSingleSbeRoundTripTest {
     }
 
     @Test
-    void roundTrip_emptyGroup() {
+    void roundTrip_emptyGroupAndDefaultComposite() {
+        // No fills, no limit_price set — composite lays out as 12 zero
+        // bytes. SBE has no presence-tracking inside the root block; an
+        // unset composite encodes as default-zero.
         NewOrderSingle original = NewOrderSingle.newBuilder()
             .setOrderId(42L)
             .setSymbol("ZZZZ")
@@ -89,11 +100,13 @@ final class NewOrderSingleSbeRoundTripTest {
             .build();
 
         byte[] wire = NewOrderSingleSbeCodec.marshal(original);
-        // No group entries → 8 + 29 + 4 (group header for count=0).
-        assertEquals(8 + 29 + 4, wire.length);
+        // 8 + 41 (scalars + zero composite) + 4 (group header for count=0).
+        assertEquals(8 + 41 + 4, wire.length);
 
         NewOrderSingle decoded = NewOrderSingleSbeCodec.unmarshal(wire);
         assertEquals(0, decoded.getFillsCount());
         assertEquals(42L, decoded.getOrderId());
+        assertEquals(0L, decoded.getLimitPrice().getMantissa());
+        assertEquals(0, decoded.getLimitPrice().getScale());
     }
 }

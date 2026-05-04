@@ -1032,4 +1032,152 @@ final class LiteWireWriterTest {
         // Should NOT throw — null counts as present per the (pxf.required) Javadoc.
         assertEquals("", hex(LiteWireWriter.encode(doc, m)));
     }
+
+    // --- pxf.BigInt / pxf.Decimal / pxf.BigFloat --------------------------
+
+    @Test
+    void bigInt_positiveSmall() {
+        // n = 42 for pxf.BigInt
+        // abs = sign-trimmed BigInteger(42).toByteArray() = [0x2a]
+        // negative omitted (signum > 0)
+        // Inner: tag(1, LEN) + len 1 + 0x2a = 0a 01 2a (3 bytes)
+        // Outer: 0a 03 0a 01 2a
+        Ast.Document doc = Parser.parse("n = 42");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        assertEquals("0a030a012a", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigInt_negative() {
+        // n = -42 → abs = [0x2a], negative = true
+        // Inner: 0a 01 2a (abs) + 10 01 (negative=true) = 5 bytes
+        // Outer: 0a 05 0a 01 2a 10 01
+        Ast.Document doc = Parser.parse("n = -42");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        assertEquals("0a050a012a1001", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigInt_zero_emitsEmptyPayload() {
+        // n = 0 → abs empty + negative omitted → empty payload
+        // Outer: 0a 00
+        Ast.Document doc = Parser.parse("n = 0");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        assertEquals("0a00", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigInt_largeCrossingSignByteBoundary() {
+        // n = 256 → BigInteger(256).toByteArray() = [0x01, 0x00] (high bit clear → no sign byte to trim)
+        // abs = [0x01, 0x00]
+        // Inner: 0a 02 01 00 (4 bytes)
+        // Outer: 0a 04 0a 02 01 00
+        Ast.Document doc = Parser.parse("n = 256");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        assertEquals("0a040a020100", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigInt_signByteIsTrimmed() {
+        // n = 129 → BigInteger(129).toByteArray() = [0x00, 0x81] (sign-bit padding)
+        // After trimSign: [0x81]
+        // Inner: 0a 01 81 (3 bytes)
+        // Outer: 0a 03 0a 01 81
+        Ast.Document doc = Parser.parse("n = 129");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        assertEquals("0a030a0181", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void decimal_withScale() {
+        // d = 1.50 → BigDecimal("1.50") has unscaledValue=150, scale=2.
+        // 150 = 0x96; BigInteger(150).toByteArray() = [0x00, 0x96], trimmed = [0x96].
+        // Inner: 0a 01 96 (unscaled, 3 bytes) + 10 02 (scale, 2 bytes) = 5 bytes
+        // Outer: 0a 05 0a 01 96 10 02
+        Ast.Document doc = Parser.parse("d = 1.50");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "d", 1, "org.protowire.proto.pxf.Decimal");
+
+        assertEquals("0a050a01961002", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void decimal_negative() {
+        // d = -1.5 → unscaledValue=15, scale=1, negative=true
+        // 15 = 0x0f; toByteArray = [0x0f], no trim needed.
+        // Inner: 0a 01 0f + 10 01 + 18 01 = 7 bytes
+        // Outer: 0a 07 0a 01 0f 10 01 18 01
+        Ast.Document doc = Parser.parse("d = -1.5");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "d", 1, "org.protowire.proto.pxf.Decimal");
+
+        assertEquals("0a070a010f10011801", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void decimal_zero_emitsEmptyPayload() {
+        // d = 0 → unscaled empty + scale 0 omitted + negative omitted
+        // Outer: 0a 00
+        Ast.Document doc = Parser.parse("d = 0");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "d", 1, "org.protowire.proto.pxf.Decimal");
+
+        assertEquals("0a00", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigFloat_integer() {
+        // bf = 100 → BigDecimal("100") has unscaledValue=100, scale=0.
+        // mantissa = trimSign([0x64]) = [0x64]; exponent = -scale = 0 (omitted);
+        // prec = bitLength(100) = 7; negative omitted.
+        // Inner: 0a 01 64 + 18 07 = 5 bytes
+        // Outer: 0a 05 0a 01 64 18 07
+        Ast.Document doc = Parser.parse("bf = 100");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
+
+        assertEquals("0a050a01641807", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigFloat_fractional_negativeExponentVarint() {
+        // bf = 1.5 → BigDecimal("1.5") has unscaledValue=15, scale=1.
+        // mantissa = [0x0f]; exponent = -scale = -1; prec = bitLength(15) = 4.
+        // -1 as int32 protobuf-varint takes 10 bytes (sign-extended to int64):
+        //   ff ff ff ff ff ff ff ff ff 01
+        // Inner: 0a 01 0f (3) + 10 + 10-byte exponent (11) + 18 04 (2) = 16 bytes
+        // Outer: 0a 10 0a 01 0f 10 ff ff ff ff ff ff ff ff ff 01 18 04
+        Ast.Document doc = Parser.parse("bf = 1.5");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
+
+        assertEquals("0a100a010f10ffffffffffffffffff011804",
+                hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigFloat_zero_emitsPrecOnly() {
+        // bf = 0 → mantissa empty, exponent omitted, prec defaults to 53,
+        // negative omitted. The always-emitted prec field means even a
+        // zero BigFloat has wire bytes — matches the JVM tier's behavior.
+        // Inner: 18 35 (prec=53, 2 bytes)
+        // Outer: 0a 02 18 35
+        Ast.Document doc = Parser.parse("bf = 0");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
+
+        assertEquals("0a021835", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bigInt_floatLiteral_throws() {
+        // BigInt requires an integer literal; a float should error clearly
+        // rather than silently truncating.
+        Ast.Document doc = Parser.parse("n = 3.14");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals(true, e.getMessage().contains("pxf.BigInt"));
+        assertEquals(true, e.getMessage().contains("integer literal"));
+    }
 }

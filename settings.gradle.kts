@@ -25,4 +25,5 @@ include(
     ":bench-pxf",
     ":bench-pxf-android",
     ":bench-sbe",
+    ":bench-sbe-android",
 )

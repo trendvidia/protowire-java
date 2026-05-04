@@ -509,4 +509,140 @@ final class LiteWireWriterTest {
 
         assertEquals("0a040a026869", hex(LiteWireWriter.encode(doc, outerMeta, registry)));
     }
+
+    // --- required / default / oneof semantics ------------------------------
+
+    /** PxfMeta with overridable required / defaults / oneofOf for the semantics tests. */
+    private static PxfMeta semanticMeta(
+            String fullName,
+            Map<String, Integer> fieldNumbers,
+            Map<Integer, Integer> fieldKinds,
+            Set<Integer> requiredFields,
+            Map<Integer, String> defaults,
+            Map<Integer, String> oneofOf) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return fullName; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return fieldNumbers; }
+            @Override public Map<Integer, Integer> fieldKinds()         { return fieldKinds; }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return requiredFields; }
+            @Override public Map<Integer, String>  defaults()           { return defaults; }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return oneofOf; }
+        };
+    }
+
+    @Test
+    void requiredField_set_succeeds() {
+        Ast.Document doc = Parser.parse("name = \"Alice\"");
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("name", 1),
+                Map.of(1, 9),
+                Set.of(1),
+                Map.of(),
+                Map.of());
+
+        // Encodes cleanly because the required field is set.
+        assertEquals("0a05416c696365", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void requiredField_absent_throws() {
+        Ast.Document doc = Parser.parse("");  // nothing set
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("name", 1, "age", 2),
+                Map.of(1, 9, 2, 5),
+                Set.of(1),  // name is required
+                Map.of(),
+                Map.of());
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals("required field(s) missing in test.Sample: name", e.getMessage());
+    }
+
+    @Test
+    void requiredField_satisfiedByDefault() {
+        // A required field with a default is unusual but valid: the default
+        // satisfies the required check.
+        Ast.Document doc = Parser.parse("");
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("status", 1),
+                Map.of(1, 5 /* INT32 */),
+                Set.of(1),
+                Map.of(1, "42"),
+                Map.of());
+
+        // Default fires → field is set → required check passes.
+        // Wire bytes: tag 0x08 (field 1, varint), value 42 → 08 2a
+        assertEquals("082a", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void default_appliedWhenAbsent() {
+        Ast.Document doc = Parser.parse("");  // age not set
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("age", 1),
+                Map.of(1, 5 /* INT32 */),
+                Set.of(),
+                Map.of(1, "30"),
+                Map.of());
+
+        // Default 30 → tag 0x08, varint 0x1e
+        assertEquals("081e", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void default_skippedWhenSet() {
+        Ast.Document doc = Parser.parse("age = 100");  // user-set
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("age", 1),
+                Map.of(1, 5 /* INT32 */),
+                Set.of(),
+                Map.of(1, "30"),  // default would be 30
+                Map.of());
+
+        // User-set 100 wins; default 30 NOT applied → tag 0x08, varint 0x64
+        assertEquals("0864", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void default_skippedWhenOneofSiblingSet() {
+        // figure { radius = 1.0 }  →  radius set; sides also has a default
+        // but since they share the oneof "figure", the default for sides
+        // must NOT apply.
+        Ast.Document doc = Parser.parse("radius = 1.0");
+        PxfMeta m = semanticMeta("test.Shape",
+                Map.of("radius", 2, "sides", 3),
+                Map.of(2, 1 /* DOUBLE */, 3, 5 /* INT32 */),
+                Set.of(),
+                Map.of(3, "4"),   // sides defaults to 4 — should NOT fire here
+                Map.of(2, "figure", 3, "figure"));
+
+        // Only radius=1.0 in output: tag 0x11 (field 2, fixed64), 1.0 IEEE-754
+        assertEquals("11000000000000f03f", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void oneofCollision_throws() {
+        Ast.Document doc = Parser.parse("radius = 1.0\nsides = 4");
+        PxfMeta m = semanticMeta("test.Shape",
+                Map.of("radius", 2, "sides", 3),
+                Map.of(2, 1, 3, 5),
+                Set.of(),
+                Map.of(),
+                Map.of(2, "figure", 3, "figure"));
+
+        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+                () -> LiteWireWriter.encode(doc, m));
+        assertEquals(
+            "oneof 'figure' in test.Shape already has 'radius' set; cannot also set 'sides'",
+            e.getMessage());
+    }
 }

@@ -112,12 +112,12 @@ public final class Parser {
                 advance(); yield v;
             }
             case TIMESTAMP -> {
-                var t = WellKnown.parseRfc3339(current.value());
+                var t = TimeFormats.parseRfc3339(current.value());
                 var v = new Ast.TimestampVal(pp, t, current.value());
                 advance(); yield v;
             }
             case DURATION -> {
-                var d = WellKnown.parseGoDuration(current.value());
+                var d = TimeFormats.parseGoDuration(current.value());
                 var v = new Ast.DurationVal(pp, d, current.value());
                 advance(); yield v;
             }

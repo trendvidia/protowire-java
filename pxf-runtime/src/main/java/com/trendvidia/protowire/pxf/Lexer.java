@@ -358,7 +358,7 @@ final class Lexer {
         }
         String raw = slice(start, pos);
         try {
-            WellKnown.parseRfc3339(raw);
+            TimeFormats.parseRfc3339(raw);
         } catch (RuntimeException e) {
             return new Token(TokenKind.ILLEGAL, "invalid timestamp: " + raw, pp);
         }
@@ -369,7 +369,7 @@ final class Lexer {
         while (pos < input.length && (isDigit(peek()) || isLowerAlpha(peek()))) advance();
         String raw = slice(start, pos);
         try {
-            WellKnown.parseGoDuration(raw);
+            TimeFormats.parseGoDuration(raw);
         } catch (RuntimeException e) {
             return new Token(TokenKind.ILLEGAL, "invalid duration: " + raw, pp);
         }

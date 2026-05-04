@@ -159,7 +159,7 @@ final class FastDecoder {
         Descriptor md = fd.getMessageType();
 
         if (WellKnown.isTimestamp(md) && current.kind() == TokenKind.TIMESTAMP) {
-            Instant t = WellKnown.parseRfc3339(current.value());
+            Instant t = TimeFormats.parseRfc3339(current.value());
             Message.Builder sub = b.newBuilderForField(fd);
             WellKnown.setTimestamp(sub, t);
             b.setField(fd, sub.build());
@@ -167,7 +167,7 @@ final class FastDecoder {
             return;
         }
         if (WellKnown.isDuration(md) && current.kind() == TokenKind.DURATION) {
-            Duration d = WellKnown.parseGoDuration(current.value());
+            Duration d = TimeFormats.parseGoDuration(current.value());
             Message.Builder sub = b.newBuilderForField(fd);
             WellKnown.setDuration(sub, d);
             b.setField(fd, sub.build());
@@ -280,14 +280,14 @@ final class FastDecoder {
     private Object consumeListMsg(Message.Builder parent, FieldDescriptor fd) {
         Descriptor md = fd.getMessageType();
         if (WellKnown.isTimestamp(md) && current.kind() == TokenKind.TIMESTAMP) {
-            Instant t = WellKnown.parseRfc3339(current.value());
+            Instant t = TimeFormats.parseRfc3339(current.value());
             Message.Builder sub = parent.newBuilderForField(fd);
             WellKnown.setTimestamp(sub, t);
             advance();
             return sub.build();
         }
         if (WellKnown.isDuration(md) && current.kind() == TokenKind.DURATION) {
-            Duration d = WellKnown.parseGoDuration(current.value());
+            Duration d = TimeFormats.parseGoDuration(current.value());
             Message.Builder sub = parent.newBuilderForField(fd);
             WellKnown.setDuration(sub, d);
             advance();
@@ -542,9 +542,9 @@ final class FastDecoder {
         Descriptor md = fd.getMessageType();
         Message.Builder sub = b.newBuilderForField(fd);
         if (WellKnown.isTimestamp(md)) {
-            WellKnown.setTimestamp(sub, WellKnown.parseRfc3339(def));
+            WellKnown.setTimestamp(sub, TimeFormats.parseRfc3339(def));
         } else if (WellKnown.isDuration(md)) {
-            WellKnown.setDuration(sub, WellKnown.parseGoDuration(def));
+            WellKnown.setDuration(sub, TimeFormats.parseGoDuration(def));
         } else if (WellKnown.isWrapper(md)) {
             FieldDescriptor inner = md.findFieldByName("value");
             sub.setField(inner, parseScalarDefault(inner, def));

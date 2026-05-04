@@ -25,4 +25,14 @@ message NewOrderSingle {
     uint64 fill_id = 3;
   }
   repeated Fill fills = 6;
+
+  // Composite (non-repeated MESSAGE) field. Its inner fields lay out flat
+  // into NewOrderSingle's root block — the wire codec walks ft.composite
+  // recursively. Exercises the codegen-emitted CompositeReader_Decimal /
+  // CompositeWriter_Decimal classes.
+  message Decimal {
+    int64 mantissa = 1;
+    int32 scale = 2;
+  }
+  Decimal limit_price = 7;
 }

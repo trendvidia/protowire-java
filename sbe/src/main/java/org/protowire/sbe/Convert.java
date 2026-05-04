@@ -6,6 +6,8 @@ import com.google.protobuf.Descriptors.EnumValueDescriptor;
 import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 
+import org.protowire.sbe.runtime.XmlSchema;
+
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;

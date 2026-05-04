@@ -1,4 +1,4 @@
-package org.protowire.sbe;
+package org.protowire.sbe.runtime;
 
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;

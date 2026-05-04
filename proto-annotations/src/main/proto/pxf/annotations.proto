@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package pxf;
 
-option java_package = "com.trendvidia.protowire.proto.pxf";
+option java_package = "org.protowire.proto.pxf";
 option java_multiple_files = true;
 
 import "google/protobuf/descriptor.proto";

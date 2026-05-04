@@ -4,7 +4,7 @@ plugins {
 }
 
 allprojects {
-    group = "com.trendvidia.protowire"
+    group = "org.protowire"
     version = "0.70.0"
 
     repositories {

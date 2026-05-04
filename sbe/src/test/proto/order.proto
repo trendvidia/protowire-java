@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package sbe.test;
 
-option java_package = "com.trendvidia.protowire.sbe.testproto";
+option java_package = "org.protowire.sbe.testproto";
 option java_multiple_files = true;
 
 import "sbe/annotations.proto";

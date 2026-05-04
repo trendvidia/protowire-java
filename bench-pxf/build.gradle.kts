@@ -9,6 +9,6 @@ dependencies {
 }
 
 application {
-    mainClass.set("com.trendvidia.protowire.bench.BenchPxf")
+    mainClass.set("org.protowire.bench.BenchPxf")
     applicationName = "bench-pxf"
 }

@@ -3,6 +3,7 @@ package org.protowire.pxf.android;
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
+import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
@@ -172,16 +173,20 @@ public final class LiteWireWriter {
                     }
                     checkOneofCollision(num, b.name(), meta, oneofOf, oneofSet);
                     int kind = fieldKinds.getOrDefault(num, 0);
-                    if (kind != K_MESSAGE) {
+                    if (meta.mapFields().contains(num)) {
+                        writeMap(out, num, b.entries(), meta, registry);
+                    } else if (kind == K_MESSAGE) {
+                        writeNestedMessage(out, num, b.entries(), meta, registry);
+                    } else {
                         throw new IllegalArgumentException(
                             "block syntax requires a message-typed field; '" + b.name() +
                             "' has kind " + kind);
                     }
-                    writeNestedMessage(out, num, b.entries(), meta, registry);
                     recordSet(num, oneofOf, setFields, oneofSet);
                 }
-                case Ast.MapEntry m -> throw new UnsupportedOperationException(
-                    "map entry '" + m.key() + "' is not yet supported by the lite-runtime encoder");
+                case Ast.MapEntry m -> throw new IllegalArgumentException(
+                    "map entry '" + m.key() + "' appears outside a map field block in " +
+                    meta.fullName());
             }
         }
     }
@@ -365,6 +370,83 @@ public final class LiteWireWriter {
         } catch (IOException e) {
             throw new IllegalStateException("CodedOutputStream write failed", e);
         }
+    }
+
+    /**
+     * Encodes a {@code map<K, V>} field. Each {@link Ast.MapEntry} produces
+     * a length-delimited record on the wire: the same field number repeated
+     * once per entry, with each payload being a synthetic 2-field message
+     * carrying {@code key = 1} and {@code value = 2}.
+     *
+     * <p>Reuses {@link #encode(Ast.Document, PxfMeta, PxfRegistry)} for the
+     * per-entry encoding by building a synthetic {@link Ast.Document}
+     * containing the key + value as ordinary assignments. That keeps the
+     * map path free of duplicated scalar/message/enum dispatch logic — the
+     * recursive call lands back in {@code writeEntries} against the entry
+     * sub-message's PxfMeta.
+     */
+    private static void writeMap(
+            CodedOutputStream out,
+            int num,
+            List<Ast.Entry> entries,
+            PxfMeta meta,
+            PxfRegistry registry) {
+        PxfMeta entryMeta = meta.nestedMetas().get(num);
+        if (entryMeta == null) {
+            String typeFqn = meta.messageTypes().get(num);
+            if (typeFqn != null) {
+                entryMeta = registry.lookupMessage(typeFqn);
+            }
+            if (entryMeta == null) {
+                throw new IllegalArgumentException(
+                    "no PxfMeta available for map entry of field " + num +
+                    " in " + meta.fullName() + " (looked in nestedMetas + registry)");
+            }
+        }
+        int keyKind = entryMeta.fieldKinds().getOrDefault(1, K_STRING);
+
+        for (Ast.Entry entry : entries) {
+            if (!(entry instanceof Ast.MapEntry me)) {
+                throw new IllegalArgumentException(
+                    "expected `key: value` map entry, got " + entry.getClass().getSimpleName() +
+                    " in map field of " + meta.fullName());
+            }
+            Ast.Value keyVal = mapKeyValue(me.key(), keyKind, me.pos());
+            Ast.Document entryDoc = new Ast.Document("",
+                List.of(
+                    new Ast.Assignment(me.pos(), "key", keyVal, List.of(), ""),
+                    new Ast.Assignment(me.pos(), "value", me.value(), List.of(), "")
+                ),
+                List.of()
+            );
+            byte[] entryBytes = encode(entryDoc, entryMeta, registry);
+            try {
+                out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+                out.writeUInt32NoTag(entryBytes.length);
+                out.writeRawBytes(entryBytes);
+            } catch (IOException e) {
+                throw new IllegalStateException("CodedOutputStream write failed", e);
+            }
+        }
+    }
+
+    /**
+     * Wraps a map-key string (as the parser stored it — unquoted for STRING,
+     * digit-form for INT-family, "true"/"false" for BOOL) as the appropriate
+     * {@link Ast.Value} for the synthetic entry document. Mirrors the
+     * full-runtime decoder's {@code decodeMapKey} contract.
+     */
+    private static Ast.Value mapKeyValue(String key, int keyKind, Position pos) {
+        return switch (keyKind) {
+            case K_STRING -> new Ast.StringVal(pos, key);
+            case K_INT32, K_INT64, K_UINT32, K_UINT64,
+                 K_SINT32, K_SINT64,
+                 K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> new Ast.IntVal(pos, key);
+            case K_BOOL -> new Ast.BoolVal(pos, Boolean.parseBoolean(key));
+            default -> throw new IllegalArgumentException(
+                "unsupported map key kind: " + keyKind +
+                " (proto restricts map keys to integral, bool, or string types)");
+        };
     }
 
     private static void writeEnum(

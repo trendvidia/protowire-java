@@ -1,5 +1,6 @@
 package org.protowire.sbe;
 
+import org.protowire.sbe.runtime.View;
 import org.protowire.sbe.testproto.NewOrderSingle;
 import org.protowire.sbe.testproto.NewOrderSingle.Fill;
 import org.junit.jupiter.api.Test;

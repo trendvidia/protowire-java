@@ -14,6 +14,7 @@ include(
     ":pxf",
     ":pxf-android",
     ":pxf-android-codegen-it",
+    ":sbe-runtime",
     ":sbe",
     ":envelope",
     ":envelope-android",

@@ -1,16 +1,18 @@
 package org.protowire.sbe;
 
 import com.google.protobuf.Descriptors.Descriptor;
-import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
+
+import org.protowire.sbe.runtime.MessageTemplate;
+import org.protowire.sbe.runtime.SbeConstants;
+import org.protowire.sbe.runtime.SbeWireCodec;
+import org.protowire.sbe.runtime.View;
 
 /**
  * SBE codec. Construct from one or more {@link FileDescriptor}s; pre-computes templates for
@@ -18,16 +20,13 @@ import java.util.Map;
  *
  * <p>Wire format follows FIX SBE: little-endian, 8-byte message header, fixed-size root block,
  * repeating groups appended after the root block.
+ *
+ * <p>The wire codec lives in {@code :sbe-runtime}'s {@link SbeWireCodec};
+ * this class is the descriptor-driven adapter on top of it. {@link MessageReader}
+ * / {@link MessageWriter} bridge {@link Message} / {@link Message.Builder} into
+ * the runtime's abstract field accessors.
  */
 public final class Codec {
-    static final int HEADER_SIZE = 8;
-    static final int GROUP_HEADER_SIZE = 4;
-    static final ByteOrder ORDER = ByteOrder.LITTLE_ENDIAN;
-
-    static final String ENC_INT8="int8", ENC_INT16="int16", ENC_INT32="int32", ENC_INT64="int64",
-            ENC_UINT8="uint8", ENC_UINT16="uint16", ENC_UINT32="uint32", ENC_UINT64="uint64",
-            ENC_FLOAT="float", ENC_DOUBLE="double", ENC_CHAR="char";
-
     final Map<String, MessageTemplate> byName = new HashMap<>();
     final Map<Integer, MessageTemplate> byId = new HashMap<>();
 
@@ -58,31 +57,31 @@ public final class Codec {
     public byte[] marshal(Message msg) {
         MessageTemplate t = byName.get(msg.getDescriptorForType().getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + msg.getDescriptorForType().getFullName());
-        return SbeMarshal.marshal(msg, t);
+        return SbeWireCodec.marshal(new MessageReader(msg), t);
     }
 
     public void unmarshal(byte[] data, Message.Builder b) {
         MessageTemplate t = byName.get(b.getDescriptorForType().getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + b.getDescriptorForType().getFullName());
-        SbeUnmarshal.unmarshal(data, b, t);
+        SbeWireCodec.unmarshal(data, new MessageWriter(b), t);
     }
 
     public DynamicMessage unmarshalDescriptor(byte[] data, Descriptor desc) {
         MessageTemplate t = byName.get(desc.getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + desc.getFullName());
         DynamicMessage.Builder b = DynamicMessage.newBuilder(desc);
-        SbeUnmarshal.unmarshal(data, b, t);
+        SbeWireCodec.unmarshal(data, new MessageWriter(b), t);
         return b.build();
     }
 
     public View view(byte[] data) {
-        if (data.length < HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
-        ByteBuffer bb = ByteBuffer.wrap(data).order(ORDER);
+        if (data.length < SbeConstants.HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
+        ByteBuffer bb = ByteBuffer.wrap(data).order(SbeConstants.ORDER);
         int blockLength = Short.toUnsignedInt(bb.getShort(0));
         int templateId = Short.toUnsignedInt(bb.getShort(2));
         MessageTemplate t = byId.get(templateId);
         if (t == null) throw new IllegalArgumentException("sbe: unknown template id " + templateId);
-        if (data.length < HEADER_SIZE + blockLength) throw new IllegalArgumentException("sbe: data too short for root block");
-        return new View(data, HEADER_SIZE, blockLength, t.viewSchema);
+        if (data.length < SbeConstants.HEADER_SIZE + blockLength) throw new IllegalArgumentException("sbe: data too short for root block");
+        return new View(data, SbeConstants.HEADER_SIZE, blockLength, t.viewSchema);
     }
 }

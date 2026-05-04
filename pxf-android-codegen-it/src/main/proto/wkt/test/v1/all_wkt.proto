@@ -1,0 +1,26 @@
+syntax = "proto3";
+package wkt.test.v1;
+
+option java_package = "wkt.test.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/wrappers.proto";
+import "pxf/bignum.proto";
+
+// Smoke fixture for the full lite codegen chain — every recognized
+// well-known type appears as a field, so the emitted AllWktPxfMeta exercises
+// each WELL_KNOWN_KINDS branch and the AllWktPxfCodec.{marshal,unmarshal}
+// pair drives both directions of the round-trip.
+message AllWkt {
+  google.protobuf.Timestamp ts = 1;
+  google.protobuf.Duration dur = 2;
+  google.protobuf.StringValue str_w = 3;
+  google.protobuf.Int32Value i32_w = 4;
+  google.protobuf.BoolValue bool_w = 5;
+  google.protobuf.DoubleValue dbl_w = 6;
+  pxf.BigInt big_int = 7;
+  pxf.Decimal dec = 8;
+  pxf.BigFloat big_float = 9;
+}

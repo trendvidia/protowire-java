@@ -922,4 +922,114 @@ final class LiteWireWriterTest {
                 () -> LiteWireWriter.encode(doc, m));
         assertEquals(true, e.getMessage().contains("requires com.google.protobuf.Duration"));
     }
+
+    // --- well-known *Value wrappers + null sentinel -----------------------
+
+    @Test
+    void wrapper_stringValue_emitsValueField() {
+        // name = "Alice" for StringValue
+        // Inner: tag(1, LEN) + len 5 + "Alice" = 0a 05 41 6c 69 63 65 (7 bytes)
+        // Outer: tag(1, LEN) + len 7 + inner
+        Ast.Document doc = Parser.parse("name = \"Alice\"");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "name", 1, "com.google.protobuf.StringValue");
+
+        assertEquals("0a070a05416c696365", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_int32Value_zero_emitsEmptyPayload() {
+        // count = 0 for Int32Value → proto3 omits default-zero scalars
+        // Inner: <empty>; Outer: 0a 00
+        Ast.Document doc = Parser.parse("count = 0");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "count", 1, "com.google.protobuf.Int32Value");
+
+        assertEquals("0a00", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_int32Value_nonZero() {
+        // count = 42 for Int32Value: inner tag(1, varint) + 42 = 08 2a
+        // Outer: 0a 02 08 2a
+        Ast.Document doc = Parser.parse("count = 42");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "count", 1, "com.google.protobuf.Int32Value");
+
+        assertEquals("0a02082a", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_boolValue_true() {
+        // flag = true for BoolValue: inner tag(1, varint) + 1 = 08 01
+        // Outer: 0a 02 08 01
+        Ast.Document doc = Parser.parse("flag = true");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "flag", 1, "com.google.protobuf.BoolValue");
+
+        assertEquals("0a020801", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_doubleValue() {
+        // pi = 1.0 for DoubleValue
+        // Inner: tag(1, I64) 0x09 + IEEE-754 1.0 = 09 00 00 00 00 00 00 f0 3f (9 bytes)
+        // Outer: 0a 09 09 00 00 00 00 00 00 f0 3f
+        Ast.Document doc = Parser.parse("pi = 1.0");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "pi", 1, "com.google.protobuf.DoubleValue");
+
+        assertEquals("0a0909000000000000f03f", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_bytesValue() {
+        // data = b"AQID" (base64 → 01 02 03) for BytesValue
+        // Inner: tag(1, LEN) + len 3 + 01 02 03 = 0a 03 01 02 03 (5 bytes)
+        // Outer: 0a 05 0a 03 01 02 03
+        Ast.Document doc = Parser.parse("data = b\"AQID\"");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "data", 1, "com.google.protobuf.BytesValue");
+
+        assertEquals("0a050a03010203", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void wrapper_emptyString_emitsEmptyPayload() {
+        // name = "" for StringValue → inner omitted (empty string is the default)
+        // Outer: 0a 00
+        Ast.Document doc = Parser.parse("name = \"\"");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "name", 1, "com.google.protobuf.StringValue");
+
+        assertEquals("0a00", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void null_emitsNoBytes_onWrapperField() {
+        // name = null → PXF null sentinel: present for required validation,
+        // but no wire bytes emitted.
+        Ast.Document doc = Parser.parse("name = null");
+        PxfMeta m = wellKnownHostMeta("test.Sample", "name", 1, "com.google.protobuf.StringValue");
+
+        assertEquals("", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void null_satisfiesRequired() {
+        // required field set to null → required validation passes, no bytes.
+        Ast.Document doc = Parser.parse("name = null");
+        PxfMeta m = new PxfMeta() {
+            @Override public String                fullName()           { return "test.Sample"; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("name", 1); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, 11 /* MESSAGE */); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(1, "com.google.protobuf.StringValue"); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(1); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        };
+
+        // Should NOT throw — null counts as present per the (pxf.required) Javadoc.
+        assertEquals("", hex(LiteWireWriter.encode(doc, m)));
+    }
 }

@@ -41,11 +41,16 @@ import java.util.Set;
  * integer literals are also accepted, mirroring PXF's grammar).
  *
  * <p>Maps, oneof mutual-exclusion, {@code (pxf.required)} validation,
- * {@code (pxf.default)} application, and the {@code google.protobuf.Timestamp}
- * / {@code Duration} well-known types are all handled. Still queued: the
- * single-value wrapper types ({@code StringValue}, {@code Int32Value},
- * {@code BoolValue}, etc.) and the protowire-specific bignum types
- * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}).
+ * {@code (pxf.default)} application, the {@code google.protobuf.Timestamp}
+ * / {@code Duration} well-known types, and the
+ * {@code google.protobuf.{String,Bytes,Bool,Int32,Int64,UInt32,UInt64,Float,Double}Value}
+ * scalar wrappers are all handled. Still queued: the protowire-specific
+ * bignum types ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}).
+ *
+ * <p>The PXF {@code null} sentinel ({@code field = null}) marks a field as
+ * present for {@code (pxf.required)} validation purposes but emits no wire
+ * bytes — the canonical way to "explicitly absent" a wrapper or proto3
+ * optional field in PXF text.
  *
  * <p>Two encode overloads, plus an embedded-lookup fast path:
  * <ul>
@@ -162,6 +167,15 @@ public final class LiteWireWriter {
                     }
                     checkOneofCollision(num, a.key(), meta, oneofOf, oneofSet);
                     int kind = fieldKinds.getOrDefault(num, 0);
+                    // PXF `field = null` sentinel: the field counts as present
+                    // for (pxf.required) validation per the annotation's
+                    // Javadoc, but no wire bytes are emitted. This is the
+                    // canonical way to "explicitly absent" a wrapper or
+                    // proto3 optional field in PXF.
+                    if (a.value() instanceof Ast.NullVal) {
+                        recordSet(num, oneofOf, setFields, oneofSet);
+                        break;
+                    }
                     if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
                         writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
                     } else {
@@ -343,6 +357,20 @@ public final class LiteWireWriter {
                 writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
                 return;
             }
+            // *Value wrapper fast path: a bare scalar at a MESSAGE field whose
+            // target Java type is one of the google.protobuf.{String,Int32,...}
+            // Value wrappers gets boxed into a {value=1: <scalar>} submessage.
+            // Falls through to the BlockVal/error path if the value is a block
+            // (user wrote `field = { value = "..." }` explicitly), which then
+            // requires a registry-supplied or codegen-emitted PxfMeta for the
+            // wrapper type.
+            if (!(v instanceof Ast.BlockVal)) {
+                Integer wrapperKind = WRAPPER_INNER_KIND.get(meta.messageTypes().get(num));
+                if (wrapperKind != null) {
+                    writeWellKnownValueWrapper(out, num, wrapperKind, v);
+                    return;
+                }
+            }
             // PXF allows `field = { ... }` (BlockVal) as an alternative to the bare-block form.
             if (v instanceof Ast.BlockVal bv) {
                 writeNestedMessage(out, num, bv.entries(), meta, registry);
@@ -352,6 +380,77 @@ public final class LiteWireWriter {
                 "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
         }
         writeScalar(out, num, kind, v);
+    }
+
+    /**
+     * Map from the Java FQN of each {@code google.protobuf.*Value} wrapper to
+     * the wire kind of its single {@code value} field at index 1. Drives the
+     * wrapper fast path in {@link #writeField}.
+     */
+    private static final Map<String, Integer> WRAPPER_INNER_KIND = Map.ofEntries(
+        Map.entry("com.google.protobuf.StringValue", K_STRING),
+        Map.entry("com.google.protobuf.BytesValue",  K_BYTES),
+        Map.entry("com.google.protobuf.BoolValue",   K_BOOL),
+        Map.entry("com.google.protobuf.Int32Value",  K_INT32),
+        Map.entry("com.google.protobuf.Int64Value",  K_INT64),
+        Map.entry("com.google.protobuf.UInt32Value", K_UINT32),
+        Map.entry("com.google.protobuf.UInt64Value", K_UINT64),
+        Map.entry("com.google.protobuf.FloatValue",  K_FLOAT),
+        Map.entry("com.google.protobuf.DoubleValue", K_DOUBLE)
+    );
+
+    /**
+     * Wraps a bare scalar as a {@code google.protobuf.*Value} submessage at
+     * field {@code num}. The wrapper has a single {@code value} field at
+     * index 1 with kind {@code innerKind}; we delegate to {@link #writeScalar}
+     * via a temp {@link ByteArrayOutputStream} so we know the payload length
+     * before emitting the outer length-delimited record. Default-zero scalars
+     * encode as an empty payload (e.g. {@code Int32Value} for {@code 0}
+     * produces {@code 0a 00}), matching protobuf's standard wrapper semantics.
+     */
+    private static void writeWellKnownValueWrapper(
+            CodedOutputStream out, int num, int innerKind, Ast.Value v) {
+        ByteArrayOutputStream payloadBuf = new ByteArrayOutputStream();
+        CodedOutputStream payloadOut = CodedOutputStream.newInstance(payloadBuf);
+        // Proto3 wraps default-value scalars by omitting the inner field —
+        // Int32Value(0) serializes to empty payload bytes, not `08 00`. Match
+        // that so wire output stays equivalent to what protobuf-java's
+        // generated MessageLite.toByteArray() would produce.
+        if (!isDefaultScalar(innerKind, v)) {
+            writeScalar(payloadOut, 1, innerKind, v);
+        }
+        try {
+            payloadOut.flush();
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream flush failed", e);
+        }
+        byte[] payload = payloadBuf.toByteArray();
+        try {
+            out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+            out.writeUInt32NoTag(payload.length);
+            out.writeRawBytes(payload);
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+    }
+
+    /**
+     * Detects whether a value is the proto3 default for the given scalar kind
+     * — used by the wrapper encoder to omit default-zero inner fields, since
+     * proto3 doesn't emit default-valued scalars on the wire.
+     */
+    private static boolean isDefaultScalar(int kind, Ast.Value v) {
+        return switch (kind) {
+            case K_BOOL -> !asBool(v);
+            case K_INT32, K_INT64, K_UINT32, K_UINT64,
+                 K_SINT32, K_SINT64,
+                 K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> asLong(v) == 0L;
+            case K_FLOAT  -> asFloat(v) == 0.0f;
+            case K_DOUBLE -> asDouble(v) == 0.0;
+            case K_STRING -> asString(v).isEmpty();
+            case K_BYTES  -> asBytes(v).length == 0;
+            default -> false;
+        };
     }
 
     /**

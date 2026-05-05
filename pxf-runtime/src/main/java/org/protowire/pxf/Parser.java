@@ -10,8 +10,16 @@ import java.util.List;
  * collected into pending comments and attached to the next entry.
  */
 public final class Parser {
+    /**
+     * Maximum nesting depth permitted for {@code {...}} blocks and {@code [...]}
+     * lists. Mirrors HARDENING.md §Recursion ({@code MaxNestingDepth = 100}) —
+     * bounds native call-stack growth on adversarial input.
+     */
+    static final int MAX_NESTING_DEPTH = 100;
+
     private final Lexer lex;
     private Token current;
+    private int depth;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
 
     private Parser(byte[] input) {
@@ -131,17 +139,22 @@ public final class Parser {
 
     private Ast.Value parseList() {
         Position pp = current.pos();
-        advance();
-        List<Ast.Value> elems = new ArrayList<>();
-        while (current.kind() != TokenKind.RBRACKET && current.kind() != TokenKind.EOF) {
-            elems.add(parseValue());
-            if (current.kind() == TokenKind.COMMA) advance();
+        enterNesting(pp);
+        try {
+            advance();
+            List<Ast.Value> elems = new ArrayList<>();
+            while (current.kind() != TokenKind.RBRACKET && current.kind() != TokenKind.EOF) {
+                elems.add(parseValue());
+                if (current.kind() == TokenKind.COMMA) advance();
+            }
+            if (current.kind() != TokenKind.RBRACKET) {
+                throw new PxfException(current.pos(), "expected ']', got " + current.kind());
+            }
+            advance();
+            return new Ast.ListVal(pp, List.copyOf(elems));
+        } finally {
+            depth--;
         }
-        if (current.kind() != TokenKind.RBRACKET) {
-            throw new PxfException(current.pos(), "expected ']', got " + current.kind());
-        }
-        advance();
-        return new Ast.ListVal(pp, List.copyOf(elems));
     }
 
     private Ast.Value parseBlockVal() {
@@ -152,14 +165,26 @@ public final class Parser {
     }
 
     private List<Ast.Entry> parseBody() {
-        List<Ast.Entry> entries = new ArrayList<>();
-        while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
-            entries.add(parseEntry());
+        enterNesting(current.pos());
+        try {
+            List<Ast.Entry> entries = new ArrayList<>();
+            while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
+                entries.add(parseEntry());
+            }
+            if (current.kind() != TokenKind.RBRACE) {
+                throw new PxfException(current.pos(), "expected '}', got " + current.kind());
+            }
+            advance();
+            return List.copyOf(entries);
+        } finally {
+            depth--;
         }
-        if (current.kind() != TokenKind.RBRACE) {
-            throw new PxfException(current.pos(), "expected '}', got " + current.kind());
+    }
+
+    private void enterNesting(Position pp) {
+        if (++depth > MAX_NESTING_DEPTH) {
+            throw new PxfException(pp,
+                    "max nesting depth (" + MAX_NESTING_DEPTH + ") exceeded");
         }
-        advance();
-        return List.copyOf(entries);
     }
 }

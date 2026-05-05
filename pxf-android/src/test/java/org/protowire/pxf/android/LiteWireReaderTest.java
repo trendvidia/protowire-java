@@ -14,6 +14,8 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Round-trip checks for {@link LiteWireReader}. Each test follows the
@@ -337,5 +339,85 @@ final class LiteWireReaderTest {
     void wkt_bigFloat_roundTrip() {
         assertRoundTrip("measurement = 0.0001234567",
             wktMeta("measurement", 1, "org.protowire.proto.pxf.BigFloat", PxfMeta.WKT_BIG_FLOAT));
+    }
+
+    // -- HARDENING.md §Recursion -------------------------------------------
+
+    /**
+     * Self-referential meta — field 1 is a MESSAGE whose nestedMetas resolves
+     * back to itself. Mirrors the {@code adversarial.v1.Tree} shape.
+     */
+    private static PxfMeta selfReferentialTree() {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return "test.Tree"; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("child", 1); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, 11 /* MESSAGE */); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(1, "test.Tree"); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Map<Integer, PxfMeta> nestedMetas()        { return Map.of(1, this); }
+        };
+    }
+
+    /** Builds the wire bytes for a Tree nested {@code depth} times: child{child{...{}}}. */
+    private static byte[] nestedTreeBytes(int depth) {
+        // tag for field 1, length-delimited = (1 << 3) | 2 = 0x0A.
+        // depth 0: empty payload
+        // depth N: 0x0A, len(payload_{N-1}), payload_{N-1}
+        byte[] payload = new byte[0];
+        for (int i = 0; i < depth; i++) {
+            // assumes payload.length < 128 (fits in one varint byte) — true through depth ~127.
+            // Beyond that, the varint length needs more bytes; encode properly.
+            byte[] lenBytes = encodeVarint32(payload.length);
+            byte[] next = new byte[1 + lenBytes.length + payload.length];
+            next[0] = 0x0A;
+            System.arraycopy(lenBytes, 0, next, 1, lenBytes.length);
+            System.arraycopy(payload, 0, next, 1 + lenBytes.length, payload.length);
+            payload = next;
+        }
+        return payload;
+    }
+
+    private static byte[] encodeVarint32(int v) {
+        // CodedOutputStream-compatible varint.
+        byte[] buf = new byte[5];
+        int i = 0;
+        while ((v & ~0x7F) != 0) {
+            buf[i++] = (byte) ((v & 0x7F) | 0x80);
+            v >>>= 7;
+        }
+        buf[i++] = (byte) v;
+        byte[] out = new byte[i];
+        System.arraycopy(buf, 0, out, 0, i);
+        return out;
+    }
+
+    @Test
+    void liteWire_acceptsAtMaxNestedDepth() {
+        // 100 nested submessages — at the limit but allowed.
+        byte[] wire = nestedTreeBytes(100);
+        Ast.Document doc = LiteWireReader.toAst(wire, selfReferentialTree());
+        assertEquals(1, doc.entries().size());
+    }
+
+    @Test
+    void liteWire_rejectsBeyondMaxNestedDepth() {
+        // 200 nested submessages — must reject. Mirrors the
+        // pb/deep-submessage-200.binpb adversarial input shape.
+        byte[] wire = nestedTreeBytes(200);
+        IllegalStateException ex = assertThrows(IllegalStateException.class,
+            () -> LiteWireReader.toAst(wire, selfReferentialTree()));
+        // toAst wraps IOException in IllegalStateException.
+        Throwable root = ex.getCause() == null ? ex : ex.getCause();
+        assertTrue(root.getMessage() != null && root.getMessage().contains("max nesting depth"),
+            "expected depth-limit error, got: " + root.getMessage());
     }
 }

@@ -14,6 +14,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PbTest {
@@ -152,5 +153,48 @@ class PbTest {
         assertEquals("", got.tags.get(""));
         assertEquals("", got.tags.get("k"));
         assertEquals(2, got.tags.size());
+    }
+
+    // -- HARDENING.md §Recursion -------------------------------------------
+
+    /** Self-referential message — mirrors {@code adversarial.v1.Tree}. */
+    public static class Tree {
+        @ProtoField(1) Tree child;
+        @ProtoField(2) String label = "";
+        public Tree() {}
+    }
+
+    /**
+     * Encodes a tree of the requested depth. Each level is a length-delimited
+     * submessage at field number 1 — the same shape as
+     * {@code testdata/adversarial/pb/deep-submessage-200.binpb}.
+     */
+    private static byte[] encodeNestedTree(int depth) throws IOException {
+        Tree root = new Tree();
+        Tree cur = root;
+        for (int i = 0; i < depth; i++) {
+            cur.child = new Tree();
+            cur = cur.child;
+        }
+        return Pb.marshal(root);
+    }
+
+    @Test
+    void unmarshal_acceptsAtMaxNestedDepth() throws IOException {
+        // 100 nested levels — the limit; should still decode.
+        byte[] bytes = encodeNestedTree(100);
+        Tree decoded = Pb.unmarshal(bytes, Tree.class);
+        Tree cur = decoded;
+        int seen = 0;
+        while (cur.child != null) { cur = cur.child; seen++; }
+        assertEquals(100, seen);
+    }
+
+    @Test
+    void unmarshal_rejectsBeyondMaxNestedDepth() throws IOException {
+        byte[] bytes = encodeNestedTree(200);
+        IOException ex = assertThrows(IOException.class, () -> Pb.unmarshal(bytes, Tree.class));
+        assertTrue(ex.getMessage().contains("max nesting depth"),
+                "expected depth-limit error, got: " + ex.getMessage());
     }
 }

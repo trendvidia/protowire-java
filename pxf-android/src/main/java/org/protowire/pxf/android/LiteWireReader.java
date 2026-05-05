@@ -60,6 +60,24 @@ import java.util.Set;
 public final class LiteWireReader {
     private LiteWireReader() {}
 
+    /**
+     * Maximum nested-message depth permitted on decode. Mirrors HARDENING.md
+     * §Recursion ({@code MaxNestingDepth = 100}) — bounds native call-stack
+     * growth on adversarial input. Threaded through {@code readEntries} /
+     * {@code readNestedMessage} / {@code readMapEntry} so the limit holds
+     * even when nested submessages are decoded through pushLimit/popLimit
+     * subreads or fresh sub-streams.
+     */
+    static final int MAX_NESTING_DEPTH = 100;
+
+    /**
+     * Maximum total wire-bytes permitted on a single decode call. Mirrors
+     * HARDENING.md ({@code MaxMessageSize = 64 MiB}). Set explicitly via
+     * {@link CodedInputStream#setSizeLimit(int)} so the same cap applies
+     * regardless of the host's javalite default.
+     */
+    static final int MAX_MESSAGE_SIZE = 64 * 1024 * 1024;
+
     // FieldDescriptorProto.Type integers — same constants as LiteWireWriter.
     private static final int K_DOUBLE   = 1;
     private static final int K_FLOAT    = 2;
@@ -99,7 +117,12 @@ public final class LiteWireReader {
 
     public static Ast.Document toAst(byte[] wire, PxfMeta meta, PxfRegistry registry) {
         try {
-            List<Ast.Entry> entries = readEntries(CodedInputStream.newInstance(wire), meta, registry);
+            CodedInputStream in = CodedInputStream.newInstance(wire);
+            // HARDENING.md: cap recursion + total message size explicitly so
+            // the lite path doesn't rely on javalite's host-default limits.
+            in.setRecursionLimit(MAX_NESTING_DEPTH);
+            in.setSizeLimit(MAX_MESSAGE_SIZE);
+            List<Ast.Entry> entries = readEntries(in, meta, registry, 0);
             return new Ast.Document("", entries, List.of());
         } catch (IOException e) {
             throw new IllegalStateException("CodedInputStream read failed", e);
@@ -112,7 +135,11 @@ public final class LiteWireReader {
      * order.
      */
     private static List<Ast.Entry> readEntries(
-            CodedInputStream in, PxfMeta meta, PxfRegistry registry) throws IOException {
+            CodedInputStream in, PxfMeta meta, PxfRegistry registry, int depth) throws IOException {
+        if (depth > MAX_NESTING_DEPTH) {
+            throw new IOException(
+                "lite-wire: max nesting depth (" + MAX_NESTING_DEPTH + ") exceeded at " + meta.fullName());
+        }
         Map<Integer, String>  fieldNames = invert(meta.fieldNumbers());
         Map<Integer, Integer> fieldKinds = meta.fieldKinds();
         Set<Integer>          repeated   = meta.repeatedFields();
@@ -138,7 +165,7 @@ public final class LiteWireReader {
             int kind = fieldKinds.getOrDefault(fieldNum, 0);
 
             if (mapFields.contains(fieldNum)) {
-                Ast.MapEntry entry = readMapEntry(in, fieldNum, meta, registry);
+                Ast.MapEntry entry = readMapEntry(in, fieldNum, meta, registry, depth);
                 mapAcc.computeIfAbsent(fieldNum, k -> new ArrayList<>()).add(entry);
                 continue;
             }
@@ -154,13 +181,13 @@ public final class LiteWireReader {
                     }
                     in.popLimit(oldLimit);
                 } else {
-                    Ast.Value v = readSingle(in, wireType, kind, fieldNum, meta, registry);
+                    Ast.Value v = readSingle(in, wireType, kind, fieldNum, meta, registry, depth);
                     repeatedAcc.computeIfAbsent(fieldNum, k -> new ArrayList<>()).add(v);
                 }
                 continue;
             }
 
-            singles.put(fieldNum, readSingle(in, wireType, kind, fieldNum, meta, registry));
+            singles.put(fieldNum, readSingle(in, wireType, kind, fieldNum, meta, registry, depth));
         }
 
         // Emit in field-number order. Stable + matches protobuf's tag ordering.
@@ -192,7 +219,7 @@ public final class LiteWireReader {
     /** Reads a single value (non-packed, non-map) and returns the Ast.Value. */
     private static Ast.Value readSingle(
             CodedInputStream in, int wireType, int kind, int fieldNum,
-            PxfMeta meta, PxfRegistry registry) throws IOException {
+            PxfMeta meta, PxfRegistry registry, int depth) throws IOException {
         return switch (kind) {
             case K_BOOL                                       -> new Ast.BoolVal(Position.UNKNOWN, in.readBool());
             case K_INT32                                      -> intVal(in.readInt32());
@@ -210,7 +237,7 @@ public final class LiteWireReader {
             case K_STRING                                     -> new Ast.StringVal(Position.UNKNOWN, in.readString());
             case K_BYTES                                      -> new Ast.BytesVal(Position.UNKNOWN, in.readByteArray());
             case K_ENUM                                       -> readEnum(in, fieldNum, meta, registry);
-            case K_MESSAGE                                    -> readNestedMessage(in, fieldNum, meta, registry);
+            case K_MESSAGE                                    -> readNestedMessage(in, fieldNum, meta, registry, depth);
             default -> throw new UnsupportedOperationException(
                 "unsupported field kind " + kind + " at field " + fieldNum + " in " + meta.fullName());
         };
@@ -259,7 +286,7 @@ public final class LiteWireReader {
     }
 
     private static Ast.Value readNestedMessage(
-            CodedInputStream in, int fieldNum, PxfMeta meta, PxfRegistry registry) throws IOException {
+            CodedInputStream in, int fieldNum, PxfMeta meta, PxfRegistry registry, int depth) throws IOException {
         // WKT fast path: when the host PxfMeta marks this field as a recognized
         // well-known type, peel off the submessage's length-delimited record
         // and synthesize the canonical bare literal (Timestamp string,
@@ -287,7 +314,7 @@ public final class LiteWireReader {
         }
         int len = in.readRawVarint32();
         int oldLimit = in.pushLimit(len);
-        List<Ast.Entry> entries = readEntries(in, nested, registry);
+        List<Ast.Entry> entries = readEntries(in, nested, registry, depth + 1);
         in.popLimit(oldLimit);
         return new Ast.BlockVal(Position.UNKNOWN, entries);
     }
@@ -527,7 +554,7 @@ public final class LiteWireReader {
      * strings in the AST regardless of underlying kind).
      */
     private static Ast.MapEntry readMapEntry(
-            CodedInputStream in, int mapFieldNum, PxfMeta hostMeta, PxfRegistry registry) throws IOException {
+            CodedInputStream in, int mapFieldNum, PxfMeta hostMeta, PxfRegistry registry, int depth) throws IOException {
         PxfMeta entryMeta = hostMeta.nestedMetas().get(mapFieldNum);
         if (entryMeta == null) {
             String fqn = hostMeta.messageTypes().get(mapFieldNum);
@@ -545,7 +572,7 @@ public final class LiteWireReader {
         // Decode the entry's two fields by walking its sub-bytes via a recursive
         // readEntries call. The result is a list with up to two assignments
         // (key and/or value); proto3 default-omission may drop one or both.
-        List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry);
+        List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry, depth + 1);
         in.popLimit(oldLimit);
 
         String  keyStr = "";

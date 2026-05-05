@@ -19,6 +19,13 @@ import java.util.Map;
  * a {@link Message.Builder} without allocating an AST.
  */
 final class FastDecoder {
+    /**
+     * Maximum nesting depth permitted for {@code {...}} blocks and {@code [...]}
+     * lists. Mirrors HARDENING.md §Recursion ({@code MaxNestingDepth = 100}) —
+     * bounds native call-stack growth on adversarial input.
+     */
+    static final int MAX_NESTING_DEPTH = 100;
+
     private final Lexer lex;
     private Token current;
     private final UnmarshalOptions opts;
@@ -27,6 +34,7 @@ final class FastDecoder {
     private Message.Builder rootBuilder;
     private FieldDescriptor nullMaskFd;
     private String pathPrefix = "";
+    private int depth;
 
     FastDecoder(byte[] data, UnmarshalOptions opts, boolean trackPresence) {
         this.lex = new Lexer(data);
@@ -65,6 +73,15 @@ final class FastDecoder {
     // -- core --------------------------------------------------------------
 
     private void decodeFields(Message.Builder b, boolean inBlock) {
+        if (inBlock) enterNesting(current.pos());
+        try {
+            decodeFieldsBody(b, inBlock);
+        } finally {
+            if (inBlock) depth--;
+        }
+    }
+
+    private void decodeFieldsBody(Message.Builder b, boolean inBlock) {
         Descriptor desc = b.getDescriptorForType();
         Map<String, String> setOneofs = null;
 
@@ -256,6 +273,15 @@ final class FastDecoder {
         if (current.kind() != TokenKind.LBRACKET) {
             throw new PxfException(current.pos(), "expected '[' for repeated field \"" + fd.getName() + "\"");
         }
+        enterNesting(current.pos());
+        try {
+            decodeListBody(b, fd);
+        } finally {
+            depth--;
+        }
+    }
+
+    private void decodeListBody(Message.Builder b, FieldDescriptor fd) {
         advance();
         while (current.kind() != TokenKind.RBRACKET && current.kind() != TokenKind.EOF) {
             if (current.kind() == TokenKind.NULL) {
@@ -335,6 +361,15 @@ final class FastDecoder {
         if (current.kind() != TokenKind.LBRACE) {
             throw new PxfException(current.pos(), "expected '{' for map field \"" + fd.getName() + "\"");
         }
+        enterNesting(current.pos());
+        try {
+            decodeMapBody(b, fd);
+        } finally {
+            depth--;
+        }
+    }
+
+    private void decodeMapBody(Message.Builder b, FieldDescriptor fd) {
         advance();
         Descriptor entryType = fd.getMessageType();
         FieldDescriptor keyFd = entryType.findFieldByName("key");
@@ -450,6 +485,13 @@ final class FastDecoder {
                 return ev;
             }
             default -> throw new PxfException(pos, "expected enum name or number for field \"" + fd.getName() + "\"");
+        }
+    }
+
+    private void enterNesting(Position pp) {
+        if (++depth > MAX_NESTING_DEPTH) {
+            throw new PxfException(pp,
+                    "max nesting depth (" + MAX_NESTING_DEPTH + ") exceeded");
         }
     }
 

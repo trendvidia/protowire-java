@@ -1,6 +1,9 @@
 package org.protowire.pxf;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
@@ -102,12 +105,20 @@ final class Lexer {
         // Accumulate bytes, then UTF-8-decode at the end. This mirrors the
         // Go lexer's byte-oriented accumulator so literal multi-byte UTF-8
         // round-trips correctly and \\u / \\U escapes are encoded as UTF-8
-        // bytes that decode to the right Java String.
+        // bytes that decode to the right Java String. Decoding is strict —
+        // HARDENING.md §UTF-8 forbids lossy U+FFFD substitution on
+        // string-typed fields, so \xHH/\NNN escapes producing invalid UTF-8
+        // surface as ILLEGAL here.
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         while (pos < input.length) {
             int ch = advance() & 0xff;
             if (ch == '"') {
-                return new Token(TokenKind.STRING, out.toString(StandardCharsets.UTF_8), pp);
+                try {
+                    return new Token(TokenKind.STRING, strictUtf8(out.toByteArray()), pp);
+                } catch (CharacterCodingException e) {
+                    return new Token(TokenKind.ILLEGAL,
+                            "invalid UTF-8 in string literal: " + e.getMessage(), pp);
+                }
             }
             if (ch != '\\') {
                 out.write(ch);
@@ -237,13 +248,34 @@ final class Lexer {
         int start = pos;
         while (pos + 2 < input.length) {
             if (input[pos] == '"' && input[pos + 1] == '"' && input[pos + 2] == '"') {
-                String raw = new String(input, start, pos - start, StandardCharsets.UTF_8);
+                byte[] payload = new byte[pos - start];
+                System.arraycopy(input, start, payload, 0, payload.length);
                 advance(); advance(); advance();
+                String raw;
+                try {
+                    raw = strictUtf8(payload);
+                } catch (CharacterCodingException e) {
+                    return new Token(TokenKind.ILLEGAL,
+                            "invalid UTF-8 in triple-quoted string: " + e.getMessage(), pp);
+                }
                 return new Token(TokenKind.STRING, dedent(raw), pp);
             }
             advance();
         }
         return new Token(TokenKind.ILLEGAL, "unterminated triple-quoted string", pp);
+    }
+
+    /**
+     * Strict UTF-8 decode — throws {@link CharacterCodingException} on any
+     * malformed sequence. proto3 {@code string} fields require valid UTF-8,
+     * so the lexer rejects rather than silently substituting U+FFFD.
+     */
+    private static String strictUtf8(byte[] bytes) throws CharacterCodingException {
+        return StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT)
+                .decode(ByteBuffer.wrap(bytes))
+                .toString();
     }
 
     static String dedent(String s) {

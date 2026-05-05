@@ -28,4 +28,5 @@ include(
     ":bench-pxf-android",
     ":bench-sbe",
     ":bench-sbe-android",
+    ":check-decode",
 )

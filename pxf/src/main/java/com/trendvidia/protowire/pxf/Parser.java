@@ -60,32 +60,63 @@ public final class Parser {
         }
         List<Ast.Entry> entries = new ArrayList<>();
         while (current.kind() != TokenKind.EOF) {
-            entries.add(parseEntry());
+            // Top-level: only field_entry is allowed. The document represents
+            // a proto message, never a map<K,V>; map_entry (`:` form) is
+            // reserved for the inside of a `{ ... }` block.
+            entries.add(parseEntry(false));
         }
         return new Ast.Document(typeUrl, List.copyOf(entries), leading);
     }
 
     private Ast.Entry parseEntry() {
+        return parseEntry(true);
+    }
+
+    private Ast.Entry parseEntry(boolean allowMapEntry) {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
         if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
             throw new PxfException(pp, "expected identifier, string, or integer, got " + current.kind() + " (\"" + current.value() + "\")");
         }
+        TokenKind keyKind = current.kind();
         String key = current.value();
         advance();
 
         return switch (current.kind()) {
             case EQUALS -> {
+                // `=` denotes a field assignment on a proto message; the key
+                // must be an identifier (= proto field name). Map-style keys
+                // (string/integer) are only valid with `:`. See
+                // docs/grammar.ebnf → field_entry.
+                if (keyKind != TokenKind.IDENT) {
+                    throw new PxfException(pp,
+                            "field assignment with '=' requires an identifier key, got " + keyKind
+                                    + " (\"" + key + "\"); use ':' for map entries");
+                }
                 advance();
                 Ast.Value v = parseValue();
                 yield new Ast.Assignment(pp, key, v, leading, "");
             }
             case COLON -> {
+                // Map entry. Only allowed inside a `{ ... }` block, never at
+                // document top level. See docs/grammar.ebnf → document.
+                if (!allowMapEntry) {
+                    throw new PxfException(pp,
+                            "map entry (':' form) is only allowed inside a '{ … }' block; "
+                                    + "use '=' for top-level field assignments");
+                }
                 advance();
                 Ast.Value v = parseValue();
                 yield new Ast.MapEntry(pp, key, v, leading, "");
             }
             case LBRACE -> {
+                // `{ ... }` denotes a submessage field; same identifier-only
+                // rule as `=` applies. See docs/grammar.ebnf → field_entry.
+                if (keyKind != TokenKind.IDENT) {
+                    throw new PxfException(pp,
+                            "submessage block requires an identifier key, got " + keyKind
+                                    + " (\"" + key + "\")");
+                }
                 advance();
                 List<Ast.Entry> body = parseBody();
                 yield new Ast.Block(pp, key, body, leading, "");

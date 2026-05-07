@@ -7,7 +7,7 @@ pluginManagement {
     }
 }
 
-rootProject.name = "protowire4java"
+rootProject.name = "protowire-java"
 
 include(
     ":proto-annotations",

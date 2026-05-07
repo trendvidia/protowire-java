@@ -17,10 +17,6 @@ protobuf {
     }
 }
 
-sourceSets {
-    main {
-        proto {
-            srcDir("src/main/proto")
-        }
-    }
-}
+// `src/main/proto` is the protobuf plugin's default — registering it
+// explicitly via sourceSets adds it twice, which Gradle 9 rejects with
+// a duplicate-entry error in `processResources`.

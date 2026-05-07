@@ -7,7 +7,7 @@ import com.vanniktech.maven.publish.JavadocJar
 
 plugins {
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.30.0" apply false
+    id("com.vanniktech.maven.publish") version "0.36.0" apply false
 }
 
 allprojects {

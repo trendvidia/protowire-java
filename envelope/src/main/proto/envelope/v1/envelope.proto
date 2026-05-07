@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+// Standard response envelope for API integration.
+
+syntax = "proto3";
+
+package envelope.v1;
+
+option java_package = "org.protowire.envelope.v1";
+option java_multiple_files = true;
+
+message Envelope {
+    int32 status = 1;
+    string transport_error = 2;
+    bytes data = 3;
+    AppError error = 4;
+}
+
+message AppError {
+    string code = 1;
+    string message = 2;
+    repeated string args = 3;
+    repeated FieldError details = 4;
+    map<string, string> metadata = 5;
+}
+
+message FieldError {
+    string field = 1;
+    string code = 2;
+    string message = 3;
+    repeated string args = 4;
+}

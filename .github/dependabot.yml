@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 TrendVidia, LLC.
+
+version: 2
+updates:
+  # --- Gradle (every subproject inherits via the multi-project build) ----
+  - package-ecosystem: "gradle"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps(gradle)"
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-and-patch:
+        update-types: ["minor", "patch"]
+    ignore:
+      # protobuf-java is part of the wire contract; bump in coordination
+      # with the rest of the protowire-* stack, never automatically.
+      - dependency-name: "com.google.protobuf:protobuf-java"
+      - dependency-name: "com.google.protobuf:protoc"
+
+  # --- GitHub Actions ---------------------------------------------------
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "deps(actions)"
+    open-pull-requests-limit: 5
+    groups:
+      actions-minor-and-patch:
+        update-types: ["minor", "patch"]

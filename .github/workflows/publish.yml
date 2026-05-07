@@ -1,0 +1,67 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 TrendVidia, LLC.
+
+name: Publish
+
+# Triggered by pushing a v* tag (cut by the maintainer after CHANGELOG +
+# version bump land on main). Publishes every subproject's jar +
+# javadoc + sources to the Sonatype Central Portal under the
+# org.protowire namespace.
+#
+# Required repository secrets:
+#   CENTRAL_USERNAME      — Sonatype Central Portal username
+#   CENTRAL_PASSWORD      — Sonatype Central Portal token
+#   SIGNING_KEY           — ASCII-armoured GPG private key (export with
+#                           `gpg --armor --export-secret-keys <KEYID>`)
+#   SIGNING_PASSWORD      — passphrase for the key (empty if none)
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Publish to Maven Central
+    runs-on: ubuntu-latest
+    environment: maven-central  # protect with required reviewers in repo settings
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify tag matches build.gradle.kts version
+        run: |
+          tag_version="${GITHUB_REF_NAME#v}"
+          file_version=$(grep -E '^\s*version = ' build.gradle.kts | head -1 | sed -E 's/.*"([^"]+)".*/\1/')
+          if [[ "$tag_version" != "$file_version" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match build.gradle.kts version $file_version"
+            exit 1
+          fi
+          echo "Publishing version $file_version"
+
+      - name: Build + test
+        run: ./gradlew --no-daemon build
+
+      - name: Publish + release to Sonatype Central Portal
+        env:
+          # The vanniktech maven-publish plugin reads these env-var-style
+          # Gradle properties. See:
+          # https://vanniktech.github.io/gradle-maven-publish-plugin/central/
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey:           ${{ secrets.SIGNING_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword:   ${{ secrets.SIGNING_PASSWORD }}
+        # `publishAndReleaseToMavenCentral` (paired with
+        # `automaticRelease = true` in build.gradle.kts) uploads the
+        # bundle and triggers Sonatype's auto-release; if validation
+        # fails the run fails.
+        run: ./gradlew --no-daemon publishAndReleaseToMavenCentral

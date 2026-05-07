@@ -1,0 +1,32 @@
+# SPDX-License-Identifier: MIT
+# Copyright (c) 2026 TrendVidia, LLC.
+#
+# Code ownership for protowire-java.
+#
+# Required teams (must exist under the trendvidia GitHub org):
+#   - @trendvidia/maintainers — full review authority on wire-impacting code
+#   - @trendvidia/contributors — broader reviewer pool
+
+*                              @trendvidia/maintainers
+
+# --- Wire-impacting modules (cross-port equivalence promise applies) ------
+/pxf/                          @trendvidia/maintainers
+/sbe/                          @trendvidia/maintainers
+/pb/                           @trendvidia/maintainers
+/envelope/                     @trendvidia/maintainers
+
+# --- Proto annotations are part of the upstream wire contract ------------
+# Changes here should usually be preceded by an upstream PR in
+# trendvidia/protowire.
+/proto-annotations/            @trendvidia/maintainers
+
+# --- Test harnesses + benches (open to broader reviewer pool) ------------
+/bench-pxf/                    @trendvidia/contributors @trendvidia/maintainers
+/bench-sbe/                    @trendvidia/contributors @trendvidia/maintainers
+/dump-envelope/                @trendvidia/contributors @trendvidia/maintainers
+
+# --- Build, CI, repo plumbing --------------------------------------------
+/.github/                      @trendvidia/maintainers
+/build.gradle.kts              @trendvidia/maintainers
+/settings.gradle.kts           @trendvidia/maintainers
+/gradle.properties             @trendvidia/maintainers

@@ -1,0 +1,23 @@
+# Gradle
+.gradle/
+build/
+out/
+
+# Gradle local config
+local.properties
+
+# JVM crash logs
+hs_err_pid*
+replay_pid*
+
+# IntelliJ IDEA
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store

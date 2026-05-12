@@ -18,6 +18,16 @@ format changes.
 
 ## [Unreleased]
 
+## [0.75.0]
+
+Catch-up release. First tagged version after v0.70.0; brings the Java
+port up to the v0.75.0 protowire spec in four merged feature batches
+(parser-side v0.72/v0.73 grammar, schema reserved-name check, Result
+accessors, TableReader streaming + Scan/BindRow). Aligns the
+`protowire-java` version number with the rest of the `protowire-*`
+stack, which is at v0.75.0 across `protowire` and `protowire-go`.
+Wire format unchanged across all four batches.
+
 ### Added
 
 - **`TableReader` streaming + `scan(Message.Builder)` + `BindRow` helper.**

@@ -82,7 +82,10 @@ final class FastDecoder {
                     }
                     advance();
                 }
-                case AT_DIRECTIVE -> skipNamedDirective();
+                case AT_DIRECTIVE -> {
+                    Ast.Directive dir = consumeNamedDirective();
+                    if (trackPresence) result.addDirective(dir);
+                }
                 case AT_TABLE -> {
                     if (sawType) {
                         throw new PxfException(current.pos(),
@@ -90,7 +93,8 @@ final class FastDecoder {
                     }
                     if (firstTablePos == null) firstTablePos = current.pos();
                     sawTable = true;
-                    skipTableDirective();
+                    Ast.TableDirective tbl = consumeTableDirective();
+                    if (trackPresence) result.addTable(tbl);
                 }
                 default -> { break directives; }
             }
@@ -104,84 +108,221 @@ final class FastDecoder {
     }
 
     /**
-     * Consume a {@code @<name> *(<prefix-id>) [{ ... }]} directive. The
-     * inner block (if any) is brace-counted and skipped without
-     * interpretation. AT_DIRECTIVE is current on entry; on return,
-     * {@link #current} points at the next significant token after the
-     * directive.
-     *
-     * <p>PR-1 implementation: parser-side only. The directive is
-     * discarded. A follow-up will record directives on the Result for
-     * consumer access.
+     * Consume a {@code @<name> *(<prefix-id>) [{ ... }]} directive and
+     * return an {@link Ast.Directive} record. AT_DIRECTIVE is current on
+     * entry; on return, {@link #current} points at the next significant
+     * token after the directive.
      */
-    private void skipNamedDirective() {
+    private Ast.Directive consumeNamedDirective() {
+        Position pp = current.pos();
+        String name = current.value();
         advance(); // consume @<name>
+
         // Zero or more prefix identifiers, with one-token lookahead so an
         // IDENT followed by `=` or `:` (i.e. a body field key) doesn't get
         // eaten as a directive prefix.
+        java.util.List<String> prefixes = new java.util.ArrayList<>();
         while (current.kind() == TokenKind.IDENT) {
             Lexer.Mark mark = lex.mark();
             Token saved = current;
             advance();
             TokenKind nextKind = current.kind();
-            // Restore + decide.
             if (nextKind == TokenKind.EQUALS || nextKind == TokenKind.COLON) {
+                // The peeked IDENT is the first body field key, not a
+                // prefix — rewind one token.
                 lex.restore(mark);
                 current = saved;
-                return;
+                break;
             }
-            // The peeked-ahead token is NOT a body-entry separator, so the
-            // IDENT we just consumed was a directive prefix — keep going.
+            prefixes.add(saved.value());
         }
+        // Back-compat: a single prefix populates the legacy `type` field.
+        String type = prefixes.size() == 1 ? prefixes.get(0) : "";
+
+        byte[] body = null;
         if (current.kind() == TokenKind.LBRACE) {
-            // Brace-balanced skip via the parser-style helper.
             int open = current.pos().offset();
             int close = lex.findMatchingBrace(open);
             if (close < 0) {
                 throw new PxfException(current.pos(), "unmatched '{' in directive block");
             }
-            // Re-seat the lexer just past the closing `}`.
-            lex.restore(new Lexer.Mark(close + 1,
-                    current.pos().line(), current.pos().column()));
+            body = lex.sliceBytes(open + 1, close);
+            // Re-seat the lexer just past the closing `}`. Recompute
+            // line/col by scanning so post-block tokens report their
+            // true position (the old approach carried the pre-block
+            // line/col, which was a pre-existing bug).
+            int[] lc = lex.lineColAt(close + 1);
+            lex.restore(new Lexer.Mark(close + 1, lc[0], lc[1]));
             advance();
         }
+        return new Ast.Directive(pp, name,
+                java.util.List.copyOf(prefixes), type, body, java.util.List.of());
     }
 
     /**
-     * Consume a {@code @table <type> ( cols ) ( vals )...} directive
-     * without storing the rows. PR-1 placeholder; PR 2 will surface
-     * tables via Result.
+     * Consume a {@code @table <type> ( cols ) ( vals )...} directive and
+     * return an {@link Ast.TableDirective} record. AT_TABLE is current on
+     * entry. The same parser-tier enforcement applies: row arity, dotted-
+     * column rejection, list/block-cell rejection.
      */
-    private void skipTableDirective() {
+    private Ast.TableDirective consumeTableDirective() {
+        Position pp = current.pos();
         advance(); // consume @table
+
         if (current.kind() != TokenKind.IDENT) {
             throw new PxfException(current.pos(),
                     "expected row message type after @table, got " + current.kind());
         }
+        String type = current.value();
         advance();
         if (current.kind() != TokenKind.LPAREN) {
             throw new PxfException(current.pos(),
                     "expected '(' to start @table column list, got " + current.kind());
         }
-        // Skip paren-balanced column list, then zero or more row tuples.
-        skipParenBalanced();
-        while (current.kind() == TokenKind.LPAREN) {
-            skipParenBalanced();
+        advance();
+        if (current.kind() != TokenKind.IDENT) {
+            throw new PxfException(current.pos(),
+                    "@table column list must contain at least one field name, got " + current.kind());
         }
+        java.util.List<String> columns = new java.util.ArrayList<>();
+        while (true) {
+            if (current.kind() != TokenKind.IDENT) {
+                throw new PxfException(current.pos(),
+                        "expected column field name, got " + current.kind());
+            }
+            String colName = current.value();
+            if (colName.indexOf('.') >= 0) {
+                throw new PxfException(current.pos(),
+                        "@table column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
+            }
+            columns.add(colName);
+            advance();
+            if (current.kind() == TokenKind.COMMA) { advance(); continue; }
+            if (current.kind() == TokenKind.RPAREN) break;
+            throw new PxfException(current.pos(),
+                    "expected ',' or ')' in @table column list, got " + current.kind());
+        }
+        advance(); // consume )
+
+        java.util.List<Ast.TableRow> rows = new java.util.ArrayList<>();
+        while (current.kind() == TokenKind.LPAREN) {
+            rows.add(consumeTableRow(columns.size()));
+        }
+        return new Ast.TableDirective(pp, type,
+                java.util.List.copyOf(columns),
+                java.util.List.copyOf(rows),
+                java.util.List.of());
     }
 
-    /** Consume tokens through a balanced {@code ( ... )} starting at current. */
-    private void skipParenBalanced() {
-        int depth = 1;
-        advance(); // consume the opening `(`
-        while (depth > 0) {
-            switch (current.kind()) {
-                case LPAREN -> depth++;
-                case RPAREN -> depth--;
-                case EOF -> throw new PxfException(current.pos(), "unmatched '(' in @table directive");
-                default -> { /* token consumed normally */ }
-            }
+    private Ast.TableRow consumeTableRow(int expected) {
+        Position pp = current.pos();
+        advance(); // consume (
+
+        java.util.List<Ast.Value> cells = new java.util.ArrayList<>();
+        cells.add(consumeRowCell());
+        while (current.kind() == TokenKind.COMMA) {
             advance();
+            cells.add(consumeRowCell());
+        }
+        if (current.kind() != TokenKind.RPAREN) {
+            throw new PxfException(current.pos(),
+                    "expected ',' or ')' in @table row, got " + current.kind());
+        }
+        advance();
+        if (cells.size() != expected) {
+            throw new PxfException(pp,
+                    "@table row has " + cells.size() + " cells, expected " + expected + " (column count)");
+        }
+        // Cells legitimately contain null entries; List.copyOf rejects nulls.
+        return new Ast.TableRow(pp,
+                java.util.Collections.unmodifiableList(new java.util.ArrayList<>(cells)));
+    }
+
+    /**
+     * Consume one cell of a @table row. Returns {@code null} for an empty
+     * cell (no value between commas, or at row start/end). Rejects list
+     * and block values per v1 cell-grammar (draft §3.4.4).
+     */
+    private Ast.Value consumeRowCell() {
+        switch (current.kind()) {
+            case COMMA, RPAREN -> { return null; }
+            case LBRACKET -> throw new PxfException(current.pos(),
+                    "@table cells cannot contain list values in v1 (draft §3.4.4)");
+            case LBRACE -> throw new PxfException(current.pos(),
+                    "@table cells cannot contain block values in v1 (draft §3.4.4)");
+            default -> { /* fall through to value consumer */ }
+        }
+        return consumeAstValue();
+    }
+
+    /**
+     * Consume one PXF leaf value from the current token stream and
+     * return the matching {@link Ast.Value} record. Mirrors
+     * {@link Parser#parseValue()} for the subset of values that can
+     * appear in a @table cell (list and block values are rejected at
+     * {@link #consumeRowCell} before reaching here).
+     *
+     * <p>Duplicates the switch arms in Parser.parseValue. The
+     * alternative — extracting a static helper from Parser — would
+     * require threading lexer + token state through the call, which is
+     * more code for no measurable win. Same trade the Go port made for
+     * {@code decode_fast.consumeValue}.
+     */
+    private Ast.Value consumeAstValue() {
+        Position pp = current.pos();
+        switch (current.kind()) {
+            case STRING -> {
+                var v = new Ast.StringVal(pp, current.value());
+                advance();
+                return v;
+            }
+            case INT -> {
+                var v = new Ast.IntVal(pp, current.value());
+                advance();
+                return v;
+            }
+            case FLOAT -> {
+                var v = new Ast.FloatVal(pp, current.value());
+                advance();
+                return v;
+            }
+            case BOOL -> {
+                var v = new Ast.BoolVal(pp, "true".equals(current.value()));
+                advance();
+                return v;
+            }
+            case BYTES -> {
+                byte[] decoded;
+                try { decoded = Base64.getDecoder().decode(current.value()); }
+                catch (IllegalArgumentException e) {
+                    decoded = Base64.getDecoder().decode(current.value() + Lexer.padding(current.value()));
+                }
+                var v = new Ast.BytesVal(pp, decoded);
+                advance();
+                return v;
+            }
+            case TIMESTAMP -> {
+                var v = new Ast.TimestampVal(pp, WellKnown.parseRfc3339(current.value()), current.value());
+                advance();
+                return v;
+            }
+            case DURATION -> {
+                var v = new Ast.DurationVal(pp, WellKnown.parseGoDuration(current.value()), current.value());
+                advance();
+                return v;
+            }
+            case NULL -> {
+                var v = new Ast.NullVal(pp);
+                advance();
+                return v;
+            }
+            case IDENT -> {
+                var v = new Ast.IdentVal(pp, current.value());
+                advance();
+                return v;
+            }
+            default -> throw new PxfException(pp,
+                    "expected value, got " + current.kind() + " (\"" + current.value() + "\")");
         }
     }
 

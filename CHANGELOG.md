@@ -20,6 +20,40 @@ format changes.
 
 ### Added
 
+- **`Result.directives()` / `Result.tables()` accessors.** `FastDecoder`
+  used to consume named directives and `@table` directives at the
+  document head without storing them (PR #35 parser-side port did the
+  minimum needed for the body decode path to succeed on documents that
+  carry them). This PR replaces that skip-and-discard with capture: when
+  `unmarshalFull` is called, the decoder builds full `Ast.Directive` and
+  `Ast.TableDirective` records and exposes them via the new
+  `Result.directives()` and `Result.tables()` accessors. Plain
+  `unmarshal` still skips for efficiency (no `Result` to attach to).
+
+  This is the same shape `protowire-go`'s `Result.directives()` /
+  `Result.tables()` ship: chameleon-style consumers iterate
+  `result.directives()` and hand each `Directive.body()` back to
+  `unmarshalFull` against a chosen message; CSV-replacement consumers
+  iterate `result.tables()` and walk per-row `cells`.
+
+  Cell-state semantics in captured rows match the spec (§3.4.4):
+  `null` entries in `TableRow.cells` ⇒ absent (empty cell between
+  commas), `Ast.NullVal` ⇒ present-but-null, any other `Ast.Value` ⇒
+  present.
+
+  Bug fix folded in: the prior `skipNamedDirective` re-seated the
+  lexer past a directive's closing `}` without recomputing line/col,
+  so post-block tokens reported the pre-block position. Replaced
+  with `Lexer.lineColAt(int)` that scans for the correct line/col
+  from the byte offset.
+
+  Public API additions: `Result.directives()`, `Result.tables()`.
+
+  Tests in `ResultAccessorsTest`: multi-directive order preserved,
+  prefix-list exposed (zero / one / two-prefix shapes), `@table`
+  rows captured with byte-for-byte cell-state mapping, all 9 cell
+  value variants round-trip, empty-doc has empty directives/tables.
+
 - **PXF schema reserved-name check** (draft §3.13). New
   `SchemaValidator.validateFile(FileDescriptor)` /
   `SchemaValidator.validateDescriptor(Descriptor)` walk a protobuf

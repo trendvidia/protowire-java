@@ -44,6 +44,20 @@ final class FastDecoder {
         this.rootBuilder = b;
         this.nullMaskFd = trackPresence ? WellKnown.findNullMaskField(b.getDescriptorForType()) : null;
 
+        // Schema reserved-name check (draft §3.13). Runs by default — the
+        // check catches schemas declaring fields/oneofs/enum values named
+        // `null`/`true`/`false`, which would be silently unreachable from
+        // PXF surface syntax. Callers that have already validated their
+        // descriptors can set UnmarshalOptions.skipValidate to opt out.
+        if (!opts.skipValidate()) {
+            java.util.List<SchemaValidator.Violation> violations =
+                    SchemaValidator.validateDescriptor(b.getDescriptorForType());
+            String validationMsg = SchemaValidator.asMessage(violations);
+            if (validationMsg != null) {
+                throw new PxfException(Position.UNKNOWN, validationMsg);
+            }
+        }
+
         // Drain leading directives. @type populates the type binding;
         // @<name> and @table are side-channel — for the v0.72/v0.73
         // parser-side port we consume + discard so the body decode path

@@ -20,6 +20,47 @@ format changes.
 
 ### Added
 
+- **PXF schema reserved-name check** (draft §3.13). New
+  `SchemaValidator.validateFile(FileDescriptor)` /
+  `SchemaValidator.validateDescriptor(Descriptor)` walk a protobuf
+  descriptor and return every message-field, oneof, or enum-value name
+  that case-sensitively collides with `null`, `true`, or `false` — names
+  that lex as PXF value keywords and produce silently-unreachable
+  bindings. Each violation is a `SchemaValidator.Violation` record
+  carrying `(file, element, name, kind)`; the kind is one of `FIELD`,
+  `ONEOF`, `ENUM_VALUE`.
+
+  Runs by default at the top of every `unmarshal` / `unmarshalFull`
+  call and rejects non-conformant schemas with a `PxfException` before
+  any decoding happens. Callers that have already validated their
+  descriptors (registry-load passes, codegen pre-screening) can set
+  `UnmarshalOptions.skipValidate(true)` to bypass the per-call recheck.
+
+  The check is case-sensitive: identifiers like `NULL`, `True`,
+  `FALSE` lex as ordinary identifiers and are accepted. Synthetic
+  oneofs introduced for proto3 `optional` are skipped (their name is
+  `_<fieldname>`, never in the reserved set, and they'd double-count
+  an already-reported field violation).
+
+  Public API additions: `SchemaValidator`, `SchemaValidator.Violation`,
+  `SchemaValidator.Kind`, `UnmarshalOptions.skipValidate()`,
+  `UnmarshalOptions.withSkipValidate(boolean)`.
+
+  Tests construct adversarial schemas via `FileDescriptorProto` and
+  `FileDescriptor.buildFrom` (protoc's Java code generator rejects
+  some of these names at codegen, but the validator operates on the
+  descriptor tier so it catches schemas built from registry-loaded
+  or hand-constructed `FileDescriptorProto` values too). Covers all
+  three element kinds, nested messages, case-sensitivity (uppercase
+  accepted), stable sort order, decoder integration via `unmarshal`,
+  and the `skipValidate` bypass.
+
+  Note: protobuf-java's `EnumValueDescriptor.getFullName()` scopes
+  enum values under their enum (`trades.v1.Side.null`); Go's
+  protoreflect lifts them to the enclosing package
+  (`trades.v1.null`). Both readings are valid; the validator rule
+  ("the bare name collides with a PXF keyword") is identical.
+
 - **PXF parser-side support for v0.72/v0.73 grammar features.** Brings the
   Java parser tier up to the v0.73.0 protowire spec for three grammar
   additions:

@@ -30,6 +30,19 @@ public final class Parser {
         return parse(input.getBytes(StandardCharsets.UTF_8));
     }
 
+    /**
+     * Parse a single {@code ( cell, cell, ... )} tuple as a {@code @table}
+     * row. Used by {@link TableReader} to decode each row's byte slice
+     * without re-running the full document grammar. {@code input} MUST
+     * start with {@code (} and contain a balanced row tuple.
+     *
+     * @param input    row bytes including the surrounding parens
+     * @param expected expected cell count (column arity)
+     */
+    static Ast.TableRow parseTableRow(byte[] input, int expected) {
+        return new Parser(input).parseTableRow(expected);
+    }
+
     private void advance() {
         while (true) {
             current = lex.next();

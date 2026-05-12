@@ -34,7 +34,107 @@ final class Lexer {
         return ch;
     }
 
-    private Position currentPos() { return new Position(line, col); }
+    private Position currentPos() { return new Position(line, col, pos); }
+
+    // --- helpers exposed to Parser for the v0.72+v0.73 grammar features. ---
+
+    /** Snapshot of the lexer's state, for one-token lookahead in Parser. */
+    record Mark(int pos, int line, int col) {}
+
+    /** Capture the current lexer state. Paired with {@link #restore}. */
+    Mark mark() { return new Mark(pos, line, col); }
+
+    /** Restore lexer state captured by {@link #mark}. */
+    void restore(Mark m) { this.pos = m.pos; this.line = m.line; this.col = m.col; }
+
+    /** Slice a raw byte range from the input, copy-on-read. */
+    byte[] sliceBytes(int from, int to) {
+        if (from < 0 || to > input.length || from > to) {
+            throw new IllegalArgumentException("invalid slice [" + from + "," + to + ")");
+        }
+        byte[] out = new byte[to - from];
+        System.arraycopy(input, from, out, 0, to - from);
+        return out;
+    }
+
+    /**
+     * Find the byte offset of the {@code }} that matches the {@code {} at
+     * {@code openOffset}. Returns -1 on unterminated input. Mirrors the
+     * lexer's string / bytes / comment handling so braces inside literals
+     * or comments don't confuse the depth count.
+     *
+     * <p>Used by {@link Parser#parseDirective()} after the inner block has
+     * already been parsed for well-formedness — we only need the closing-
+     * brace offset for raw-bytes extraction.
+     */
+    int findMatchingBrace(int openOffset) {
+        int depth = 1;
+        int i = openOffset + 1;
+        while (i < input.length) {
+            byte ch = input[i];
+            if (ch == '{') { depth++; i++; continue; }
+            if (ch == '}') { depth--; if (depth == 0) return i; i++; continue; }
+            if (ch == '"') {
+                if (i + 2 < input.length && input[i + 1] == '"' && input[i + 2] == '"') {
+                    // Triple-quoted.
+                    int j = i + 3;
+                    boolean closed = false;
+                    while (j + 2 < input.length) {
+                        if (input[j] == '"' && input[j + 1] == '"' && input[j + 2] == '"') {
+                            j += 3;
+                            closed = true;
+                            break;
+                        }
+                        j++;
+                    }
+                    if (!closed) return -1;
+                    i = j;
+                    continue;
+                }
+                // Single-quoted.
+                int j = i + 1;
+                while (j < input.length) {
+                    if (input[j] == '\\') {
+                        if (j + 1 >= input.length) return -1;
+                        j += 2;
+                        continue;
+                    }
+                    if (input[j] == '"') { j++; break; }
+                    if (input[j] == '\n') return -1;
+                    j++;
+                }
+                i = j;
+                continue;
+            }
+            if (ch == 'b' && i + 1 < input.length && input[i + 1] == '"') {
+                int j = i + 2;
+                while (j < input.length) {
+                    if (input[j] == '"') { j++; break; }
+                    if (input[j] == '\n') return -1;
+                    j++;
+                }
+                i = j;
+                continue;
+            }
+            if (ch == '#' || (ch == '/' && i + 1 < input.length && input[i + 1] == '/')) {
+                while (i < input.length && input[i] != '\n') i++;
+                continue;
+            }
+            if (ch == '/' && i + 1 < input.length && input[i + 1] == '*') {
+                int j = i + 2;
+                boolean closed = false;
+                while (j + 1 < input.length) {
+                    if (input[j] == '*' && input[j + 1] == '/') { j += 2; closed = true; break; }
+                    j++;
+                }
+                if (!closed) return -1;
+                i = j;
+                continue;
+            }
+            i++;
+        }
+        return -1;
+    }
 
     private void skipSpaces() {
         while (pos < input.length) {
@@ -67,6 +167,8 @@ final class Lexer {
             case '}': advance(); return new Token(TokenKind.RBRACE, "}", pp);
             case '[': advance(); return new Token(TokenKind.LBRACKET, "[", pp);
             case ']': advance(); return new Token(TokenKind.RBRACKET, "]", pp);
+            case '(': advance(); return new Token(TokenKind.LPAREN, "(", pp);
+            case ')': advance(); return new Token(TokenKind.RPAREN, ")", pp);
             case '=': advance(); return new Token(TokenKind.EQUALS, "=", pp);
             case ':': advance(); return new Token(TokenKind.COLON, ":", pp);
             case ',': advance(); return new Token(TokenKind.COMMA, ",", pp);
@@ -307,8 +409,10 @@ final class Lexer {
         int start = pos;
         while (pos < input.length && isIdentPart(input[pos])) advance();
         String name = slice(start, pos);
+        if (name.isEmpty()) return new Token(TokenKind.ILLEGAL, "@", pp);
         if ("type".equals(name)) return new Token(TokenKind.AT_TYPE, "@type", pp);
-        return new Token(TokenKind.ILLEGAL, "@" + name, pp);
+        if ("table".equals(name)) return new Token(TokenKind.AT_TABLE, "@table", pp);
+        return new Token(TokenKind.AT_DIRECTIVE, name, pp);
     }
 
     private Token lexNumber(Position pp) {
@@ -354,7 +458,7 @@ final class Lexer {
         while (pos < input.length) {
             byte ch = peek();
             if (ch == ' ' || ch == '\n' || ch == '\t' || ch == '\r'
-                    || ch == ',' || ch == ']' || ch == '}' || ch == '#') break;
+                    || ch == ',' || ch == ']' || ch == '}' || ch == ')' || ch == '#') break;
             if (ch == '/' && (peekAt(1) == '/' || peekAt(1) == '*')) break;
             advance();
         }

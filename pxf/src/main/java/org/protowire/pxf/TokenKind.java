@@ -22,11 +22,15 @@ public enum TokenKind {
     RBRACE("}"),
     LBRACKET("["),
     RBRACKET("]"),
+    LPAREN("("),    // @table column list and row tuples
+    RPAREN(")"),
     EQUALS("="),
     COLON(":"),
     COMMA(","),
 
-    AT_TYPE("@type");
+    AT_TYPE("@type"),
+    AT_TABLE("@table"),                // bulk-row directive (draft §3.4.4)
+    AT_DIRECTIVE("@directive");        // @<name> for name != "type"/"table"
 
     private final String display;
 

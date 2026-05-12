@@ -44,15 +44,131 @@ final class FastDecoder {
         this.rootBuilder = b;
         this.nullMaskFd = trackPresence ? WellKnown.findNullMaskField(b.getDescriptorForType()) : null;
 
-        if (current.kind() == TokenKind.AT_TYPE) {
-            advance();
-            if (current.kind() != TokenKind.IDENT) {
-                throw new PxfException(current.pos(), "expected type name after @type, got " + current.kind());
+        // Drain leading directives. @type populates the type binding;
+        // @<name> and @table are side-channel — for the v0.72/v0.73
+        // parser-side port we consume + discard so the body decode path
+        // still works on documents that carry them. Full directive
+        // recording on Result + per-table accessor land in a follow-up.
+        boolean sawTable = false;
+        Position firstTablePos = null;
+        boolean sawType = false;
+        directives:
+        while (true) {
+            switch (current.kind()) {
+                case AT_TYPE -> {
+                    if (sawTable) {
+                        throw new PxfException(current.pos(),
+                                "@table directive cannot coexist with @type (draft §3.4.4)");
+                    }
+                    sawType = true;
+                    advance();
+                    if (current.kind() != TokenKind.IDENT) {
+                        throw new PxfException(current.pos(),
+                                "expected type name after @type, got " + current.kind());
+                    }
+                    advance();
+                }
+                case AT_DIRECTIVE -> skipNamedDirective();
+                case AT_TABLE -> {
+                    if (sawType) {
+                        throw new PxfException(current.pos(),
+                                "@table directive cannot coexist with @type (draft §3.4.4)");
+                    }
+                    if (firstTablePos == null) firstTablePos = current.pos();
+                    sawTable = true;
+                    skipTableDirective();
+                }
+                default -> { break directives; }
             }
-            advance();
+        }
+        if (sawTable && current.kind() != TokenKind.EOF) {
+            throw new PxfException(firstTablePos,
+                    "@table directive cannot coexist with top-level field entries (draft §3.4.4)");
         }
         decodeFields(b, false);
         if (trackPresence) postDecode(b, "");
+    }
+
+    /**
+     * Consume a {@code @<name> *(<prefix-id>) [{ ... }]} directive. The
+     * inner block (if any) is brace-counted and skipped without
+     * interpretation. AT_DIRECTIVE is current on entry; on return,
+     * {@link #current} points at the next significant token after the
+     * directive.
+     *
+     * <p>PR-1 implementation: parser-side only. The directive is
+     * discarded. A follow-up will record directives on the Result for
+     * consumer access.
+     */
+    private void skipNamedDirective() {
+        advance(); // consume @<name>
+        // Zero or more prefix identifiers, with one-token lookahead so an
+        // IDENT followed by `=` or `:` (i.e. a body field key) doesn't get
+        // eaten as a directive prefix.
+        while (current.kind() == TokenKind.IDENT) {
+            Lexer.Mark mark = lex.mark();
+            Token saved = current;
+            advance();
+            TokenKind nextKind = current.kind();
+            // Restore + decide.
+            if (nextKind == TokenKind.EQUALS || nextKind == TokenKind.COLON) {
+                lex.restore(mark);
+                current = saved;
+                return;
+            }
+            // The peeked-ahead token is NOT a body-entry separator, so the
+            // IDENT we just consumed was a directive prefix — keep going.
+        }
+        if (current.kind() == TokenKind.LBRACE) {
+            // Brace-balanced skip via the parser-style helper.
+            int open = current.pos().offset();
+            int close = lex.findMatchingBrace(open);
+            if (close < 0) {
+                throw new PxfException(current.pos(), "unmatched '{' in directive block");
+            }
+            // Re-seat the lexer just past the closing `}`.
+            lex.restore(new Lexer.Mark(close + 1,
+                    current.pos().line(), current.pos().column()));
+            advance();
+        }
+    }
+
+    /**
+     * Consume a {@code @table <type> ( cols ) ( vals )...} directive
+     * without storing the rows. PR-1 placeholder; PR 2 will surface
+     * tables via Result.
+     */
+    private void skipTableDirective() {
+        advance(); // consume @table
+        if (current.kind() != TokenKind.IDENT) {
+            throw new PxfException(current.pos(),
+                    "expected row message type after @table, got " + current.kind());
+        }
+        advance();
+        if (current.kind() != TokenKind.LPAREN) {
+            throw new PxfException(current.pos(),
+                    "expected '(' to start @table column list, got " + current.kind());
+        }
+        // Skip paren-balanced column list, then zero or more row tuples.
+        skipParenBalanced();
+        while (current.kind() == TokenKind.LPAREN) {
+            skipParenBalanced();
+        }
+    }
+
+    /** Consume tokens through a balanced {@code ( ... )} starting at current. */
+    private void skipParenBalanced() {
+        int depth = 1;
+        advance(); // consume the opening `(`
+        while (depth > 0) {
+            switch (current.kind()) {
+                case LPAREN -> depth++;
+                case RPAREN -> depth--;
+                case EOF -> throw new PxfException(current.pos(), "unmatched '(' in @table directive");
+                default -> { /* token consumed normally */ }
+            }
+            advance();
+        }
     }
 
     private void advance() {

@@ -103,13 +103,21 @@ public final class Format {
     }
 
     private static void formatValue(StringBuilder sb, Ast.Value v, int level) {
+        // NullVal has no payload to format — the bound variable would be
+        // unused, which CodeQL flags. Java 21 standard pattern matching
+        // requires a binding on every `case` label (unnamed `_` is a
+        // preview feature this project doesn't enable), so we route the
+        // no-binding case out before the switch.
+        if (v instanceof Ast.NullVal) {
+            sb.append("null");
+            return;
+        }
         switch (v) {
-            case Ast.StringVal s   -> { sb.append('"').append(escape(s.value())).append('"'); }
+            case Ast.StringVal s   -> sb.append('"').append(escape(s.value())).append('"');
             case Ast.IntVal i      -> sb.append(i.raw());
             case Ast.FloatVal f    -> sb.append(f.raw());
             case Ast.BoolVal b     -> sb.append(b.value() ? "true" : "false");
             case Ast.BytesVal by   -> sb.append("b\"").append(Base64.getEncoder().encodeToString(by.value())).append('"');
-            case Ast.NullVal n     -> sb.append("null");
             case Ast.IdentVal id   -> sb.append(id.name());
             case Ast.TimestampVal t -> sb.append(t.raw());
             case Ast.DurationVal d  -> sb.append(d.raw());
@@ -130,6 +138,8 @@ public final class Format {
                 writeIndent(sb, level);
                 sb.append('}');
             }
+            default -> throw new IllegalStateException(
+                    "Format: unexpected value type " + v.getClass().getSimpleName());
         }
     }
 

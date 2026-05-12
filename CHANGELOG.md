@@ -20,6 +20,63 @@ format changes.
 
 ### Added
 
+- **`TableReader` streaming + `scan(Message.Builder)` + `BindRow` helper.**
+  Companion to `protowire-go` v0.74 (`pxf.TableReader`) and v0.75
+  (`TableReader.scan` / `BindRow`). Reads rows from an
+  {@link java.io.InputStream} one at a time with working-set memory bounded
+  by the size of the largest single row — the shape consumers need for
+  CSV-replacement datasets that don't fit in memory.
+
+  ```java
+  try (var tr = new TableReader(in)) {
+      while (true) {
+          var b = AllTypes.newBuilder();
+          if (!tr.scan(b)) break;
+          process(b.build());
+      }
+  }
+  ```
+
+  Cell-state semantics match `BindRow`: a `null` cell leaves the field
+  absent (`pxf.default` applied, `pxf.required` errors), an `Ast.NullVal`
+  cell clears wrappers / optional / oneof per §3.9, any other value sets
+  the field. WKT timestamps and durations, enum-by-name, proto3 wrappers
+  all bind correctly because `BindRow` re-uses the existing unmarshal
+  pipeline (format-and-reparse).
+
+  Implementation: byte-level row-boundary scanner pulls bytes from the
+  source `InputStream` on demand and slices one `( ... )` row range at a
+  time, which is then handed to `Parser.parseTableRow` for cell decoding.
+  The scanner is string / bytes-literal / line-comment / block-comment
+  aware so embedded parens or `)` inside literals don't trip it. Header
+  parsing reuses `Parser.parse()` against the buffered header prefix, so
+  the standalone constraint and dotted-column rejection get the same
+  enforcement the materializing path uses. Header byte budget caps at
+  64 KiB — fail-fast against a `TableReader` pointed at a giant
+  body-only document with no `@table` ever.
+
+  Multi-table documents chain via `tr.tail()`, which returns an
+  `InputStream` yielding the bytes the reader buffered but didn't consume
+  followed by the remaining source.
+
+  Public API additions:
+  - `TableReader(InputStream)`, `type()`, `columns()`, `directives()`,
+    `tail()`, `next()`, `scan(Message.Builder)`
+  - `BindRow.bindRow(Message.Builder, List<String>, Ast.TableRow)`
+
+  Errors are sticky: once `next()` or `scan` throws, subsequent calls
+  rethrow the same exception (matches the Go port's contract).
+
+  Tests in `TableReaderTest` (24 cases): basic streaming, three cell
+  states, side-channel directives before header, sticky errors,
+  list/block cells rejected mid-stream, strings / block + line comments
+  with embedded parens, byte-at-a-time `InputStream` (adversarial for
+  buffer boundaries), multi-table via `tail()`, equivalence with the
+  materializing path, oversized-header rejection, `scan` happy path,
+  `scan` empty-cell-leaves-field-at-zero, `null`-on-wrapper clearing,
+  WKT timestamp binding, `BindRow` against the materializing path,
+  arity mismatch, non-leaf-cell rejection.
+
 - **`Result.directives()` / `Result.tables()` accessors.** `FastDecoder`
   used to consume named directives and `@table` directives at the
   document head without storing them (PR #35 parser-side port did the

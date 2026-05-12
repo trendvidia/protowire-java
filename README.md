@@ -20,19 +20,19 @@ Maven:
 <dependency>
   <groupId>org.protowire</groupId>
   <artifactId>protowire-pxf</artifactId>
-  <version>0.70.0</version>
+  <version>0.75.0</version>
 </dependency>
 ```
 
 Gradle (Kotlin DSL):
 
 ```kotlin
-implementation("org.protowire:protowire-pxf:0.70.0")
+implementation("org.protowire:protowire-pxf:0.75.0")
 // or pick the modules you need:
 //   protowire-pb, protowire-pxf, protowire-sbe, protowire-envelope, protowire-proto-annotations
 ```
 
-All published artifacts share the `0.70.x` line; ports at the same minor
+All published artifacts share the `0.75.x` line; ports at the same minor
 implement the same wire contract.
 
 ## Modules
@@ -98,6 +98,108 @@ byte[] formatted = Pxf.formatDocument(doc);
 
 The AST is a sealed hierarchy of records (`Ast.Document`, `Ast.Entry`, `Ast.Value`); pattern matching is used throughout the formatter and decoder.
 
+### Directives and `@table` (Result accessors)
+
+PXF documents can carry [`@<name>` directives, `@entry` bundles, and `@table` rows](https://github.com/trendvidia/protowire#directives) at the document root alongside (or instead of) a message body. `unmarshalFull` captures all three on `Result`:
+
+```java
+Result r = Pxf.unmarshalFull(pxfBytes, b);
+
+for (Ast.Directive d : r.directives()) {
+    // d.name(), d.prefixes() (zero-or-more), d.type() (back-compat:
+    // populated when prefixes.size()==1), d.body() raw inner bytes of
+    // `{ ... }` — typically handed back to Pxf.unmarshalFull against a
+    // chosen message, chameleon's @header pattern.
+}
+
+for (Ast.TableDirective t : r.tables()) {
+    // t.type(), t.columns(), t.rows() List<TableRow>.
+    // Each row.cells().get(i) is:
+    //   null               — empty cell (field absent, pxf.default applies)
+    //   Ast.NullVal        — explicit null (field cleared per §3.9)
+    //   any other Ast.Value — field set to that value
+}
+```
+
+`r.directives()` excludes `@type` and `@table` (those have their own accessors). Order is preserved.
+
+### `TableReader`: streaming `@table` consumption
+
+For datasets too large to materialize, read rows from an `InputStream` with working-set memory bounded by the size of the largest single row — not by the row sequence:
+
+```java
+try (var in = Files.newInputStream(Path.of("trades.pxf"))) {
+    var tr = new TableReader(in);
+    String typ = tr.type();
+    List<String> cols = tr.columns();
+    List<Ast.Directive> hdrs = tr.directives();    // side-channel directives before the @table header
+
+    Ast.TableRow row;
+    while ((row = tr.next()) != null) {
+        // row.cells(): List<Ast.Value> with the three-state mapping above.
+    }
+}
+```
+
+`NewTableReader` throws `NoSuchElementException` if the input ends before any `@table` directive. Multi-table documents chain via `tr.tail()`, which returns an `InputStream` of the buffered-but-unconsumed bytes followed by the remaining source:
+
+```java
+var tr1 = new TableReader(src);
+// ... iterate tr1.next() until it returns null ...
+var tr2 = new TableReader(tr1.tail());
+```
+
+Per-row arity and v1 cell-grammar errors (`[...]` / `{...}` cells, dotted columns) surface as the offending row is consumed, not deferred to end-of-input — see [draft §3.4.4 "Streaming consumption"](https://github.com/trendvidia/protowire/blob/main/docs/draft-trendvidia-protowire-00.txt).
+
+### `scan` and `BindRow`: per-row binding
+
+`TableReader.scan(builder)` reads the next row and binds its cells to the message by column name; returns `false` when the row sequence is exhausted:
+
+```java
+var tr = new TableReader(in);
+while (true) {
+    var b = Trade.newBuilder();
+    if (!tr.scan(b)) break;
+    process(b.build());
+}
+```
+
+`BindRow.bindRow(builder, columns, row)` is the same logic exposed standalone, for callers iterating `Result.tables()[i].rows()` on the materializing path:
+
+```java
+Ast.Document doc = Pxf.parse(pxfBytes);
+for (Ast.TableDirective tbl : doc.tables()) {
+    for (Ast.TableRow row : tbl.rows()) {
+        var b = Trade.newBuilder();
+        BindRow.bindRow(b, tbl.columns(), row);
+        process(b.build());
+    }
+}
+```
+
+Both honor the three-state cell semantics (empty / `null` / value), bind WKT timestamps and durations, resolve enums by name, and clear wrappers / oneof / `optional` fields on a `null` cell — the implementation routes through the existing `unmarshal` pipeline so every decoder branch is exercised.
+
+### Schema reserved-name check
+
+A protobuf schema bound for PXF use MUST NOT declare a field, oneof, or enum value named `null`, `true`, or `false` — those identifiers lex as PXF value keywords and produce silently-unreachable bindings. The check runs by default at the top of every `Pxf.unmarshal*` call:
+
+```java
+// Decoder throws PxfException if the schema is non-conformant.
+Pxf.unmarshal(pxfBytes, b);
+
+// Inspect / pre-validate explicitly:
+List<SchemaValidator.Violation> violations =
+    SchemaValidator.validateFile(fd);          // or validateDescriptor(desc)
+for (var v : violations) System.out.println(v);
+
+// Bypass per-call validation (advanced — for callers who pre-validated):
+UnmarshalOptions.defaults()
+    .withSkipValidate(true)
+    .unmarshal(pxfBytes, b);
+```
+
+The check is case-sensitive: `NULL`, `True`, `FALSE` lex as ordinary identifiers and are accepted. Synthetic oneofs introduced for proto3 `optional` are skipped (their name is `_<fieldname>`, never reserved). See [draft §3.13](https://github.com/trendvidia/protowire/blob/main/docs/draft-trendvidia-protowire-00.txt) for the rule.
+
 ## Two-tier decoder split
 
 Mirrors the Go module and the C++ port:
@@ -119,6 +221,12 @@ PXF (`:pxf`):
 - ✅ `_null` `FieldMask` discovery and emission across binary round-trips.
 - ✅ `(pxf.required)` / `(pxf.default)` annotation enforcement in `unmarshalFull`.
 - ✅ AST-preserving `formatDocument`.
+- ✅ **`@<name>` named directives** at document root with raw-body extraction (`Ast.Directive`, `Result.directives()`).
+- ✅ **`@entry` bundle directive** (zero-or-more prefix list; four permitted shapes per draft §3.4.3).
+- ✅ **`@table` directive** (the protowire-native CSV replacement) — `Ast.TableDirective`, `Ast.TableRow`, three-state cells, parser enforces row arity + dotted-column rejection + list/block-cell rejection + standalone-constraint.
+- ✅ **Streaming `TableReader`** over `InputStream` for datasets too large to materialize. Working-set memory bounded by largest single row.
+- ✅ **Per-row binding** via `TableReader.scan(Message.Builder)` and standalone `BindRow.bindRow(...)`.
+- ✅ **Schema reserved-name check** (`SchemaValidator.validateFile` / `validateDescriptor`) catches schemas declaring fields/oneofs/enum values named `null`/`true`/`false`. Runs by default on every `unmarshal*` call; `UnmarshalOptions.withSkipValidate(true)` opts out.
 
 SBE (`:sbe`):
 

@@ -47,6 +47,21 @@ final class Lexer {
     /** Restore lexer state captured by {@link #mark}. */
     void restore(Mark m) { this.pos = m.pos; this.line = m.line; this.col = m.col; }
 
+    /**
+     * Compute the (1-based line, 1-based column) of byte offset {@code off}
+     * in the input. Used to re-seat the lexer after a directive-body block
+     * jump so post-block tokens report their true line/col instead of the
+     * pre-block position carried through {@link #restore}.
+     */
+    int[] lineColAt(int off) {
+        int l = 1, c = 1;
+        int end = Math.min(off, input.length);
+        for (int i = 0; i < end; i++) {
+            if (input[i] == '\n') { l++; c = 1; } else { c++; }
+        }
+        return new int[] {l, c};
+    }
+
     /** Slice a raw byte range from the input, copy-on-read. */
     byte[] sliceBytes(int from, int to) {
         if (from < 0 || to > input.length || from > to) {

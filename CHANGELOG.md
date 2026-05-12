@@ -18,6 +18,67 @@ format changes.
 
 ## [Unreleased]
 
+### Added
+
+- **PXF parser-side support for v0.72/v0.73 grammar features.** Brings the
+  Java parser tier up to the v0.73.0 protowire spec for three grammar
+  additions:
+
+  - **v0.72 named directives** (`@<name> [<type>] [{ ... }]` at document
+    root). The lexer recognizes `@<name>` for any identifier (previously
+    only `@type` parsed; everything else was `ILLEGAL`). New `AT_DIRECTIVE`
+    token kind, new `Ast.Directive` record, new `Document.directives()`
+    accessor. The block's raw bytes are exposed via `Directive.body()` for
+    sub-parsing against a consumer-supplied message — same shape as
+    `protowire-go`'s `Result.directives()`.
+
+  - **v0.73 `@entry` + zero-or-more prefix list.** `named_directive` now
+    accepts zero, one, or more prefix identifiers between `@<name>` and
+    the optional `{ ... }` block (was just one). The parser uses one-token
+    lookahead so an IDENT followed by `=` or `:` (a body field key)
+    doesn't get eaten as a directive prefix. `Directive.prefixes` exposes
+    the full list; the legacy `Directive.type` is preserved (populated
+    when `prefixes.size() == 1`) for back-compat with v0.72-era consumers.
+
+  - **v0.73 `@table` directive.** The protowire-native CSV replacement:
+    `@table <type> ( col1, col2, ... )` header followed by zero-or-more
+    parenthesized row tuples. New `AT_TABLE`/`LPAREN`/`RPAREN` token kinds,
+    new `Ast.TableDirective` and `Ast.TableRow` records, new
+    `Document.tables()` accessor. Three-state cells: `null` in the cells
+    list ⇒ absent (empty cell), `NullVal` ⇒ present-but-null, any other
+    `Value` ⇒ present. Parser enforces: row arity, dotted-column
+    rejection, list/block-cell rejection, and the standalone constraint
+    (a `@table` document MUST NOT carry `@type` or top-level field
+    entries). Timestamp lexer's terminator set grew `)` so values like
+    `2026-05-12T10:00:00Z` inside a row don't eat the closing paren.
+
+  This is a **parser-side port only**. `FastDecoder` was updated to
+  *consume* the new directive forms gracefully (so existing decode flows
+  don't break on documents that carry them), but does not yet surface
+  directives or tables on `Result`. Follow-up PRs:
+
+  - `Result.directives()` / `Result.tables()` accessor wiring on the
+    decode path.
+  - Schema reserved-name check (`SchemaValidator`).
+  - `TableReader` streaming over `InputStream`.
+  - `TableReader.scan(Message.Builder)` + `BindRow` helper.
+
+  Public API additions: `Ast.Directive`, `Ast.TableDirective`,
+  `Ast.TableRow`, `TokenKind.AT_DIRECTIVE`, `TokenKind.AT_TABLE`,
+  `TokenKind.LPAREN`, `TokenKind.RPAREN`, `Document.directives()`,
+  `Document.tables()`, `Position.offset()`.
+
+  **Backward-compat note on `Position`:** the record gained a third
+  component `offset` (0-based byte index into the input, used by directive
+  body extraction). Existing callers using `.line()` / `.column()`
+  accessors are unaffected; callers constructing `new Position(line, col)`
+  go through a back-compat constructor that defaults offset to 0.
+
+  Motivating use case: the JetBrains plugin embeds this parser as
+  `protowire-pxf.jar`. Before this PR it shows red squiggles on every
+  `@<name>` / `@entry` / `@table` document; after the jar is refreshed,
+  those forms highlight cleanly.
+
 ## [0.70.0]
 
 Initial public release. The version number aligns this port with the rest

@@ -2,6 +2,7 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.pxf;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
 
@@ -14,9 +15,47 @@ public final class Format {
         if (!doc.typeUrl().isEmpty()) {
             sb.append("@type ").append(doc.typeUrl()).append("\n\n");
         }
+        for (Ast.Directive d : doc.directives()) {
+            formatDirective(sb, d);
+            sb.append('\n');
+        }
+        for (Ast.TableDirective t : doc.tables()) {
+            formatTableDirective(sb, t);
+            sb.append('\n');
+        }
         writeComments(sb, doc.leadingComments(), 0);
         formatEntries(sb, doc.entries(), 0);
         return sb.toString();
+    }
+
+    private static void formatDirective(StringBuilder sb, Ast.Directive d) {
+        sb.append('@').append(d.name());
+        for (String p : d.prefixes()) {
+            sb.append(' ').append(p);
+        }
+        if (d.body() != null) {
+            sb.append(" {").append(new String(d.body(), StandardCharsets.UTF_8)).append('}');
+        }
+        sb.append('\n');
+    }
+
+    private static void formatTableDirective(StringBuilder sb, Ast.TableDirective t) {
+        sb.append("@table ").append(t.type()).append(" (");
+        for (int i = 0; i < t.columns().size(); i++) {
+            if (i > 0) sb.append(", ");
+            sb.append(t.columns().get(i));
+        }
+        sb.append(")\n");
+        for (Ast.TableRow row : t.rows()) {
+            sb.append('(');
+            for (int i = 0; i < row.cells().size(); i++) {
+                if (i > 0) sb.append(", ");
+                Ast.Value cell = row.cells().get(i);
+                if (cell != null) formatValue(sb, cell, 0);
+                // null cell ⇒ empty between commas, leave it blank.
+            }
+            sb.append(")\n");
+        }
     }
 
     private static void writeIndent(StringBuilder sb, int level) {

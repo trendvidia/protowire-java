@@ -52,14 +52,46 @@ public final class Parser {
     private Ast.Document parseDocument() {
         List<Ast.Comment> leading = flushComments();
         String typeUrl = "";
-        if (current.kind() == TokenKind.AT_TYPE) {
-            advance();
-            if (current.kind() != TokenKind.IDENT) {
-                throw new PxfException(current.pos(), "expected type name after @type, got " + current.kind());
+        List<Ast.Directive> directives = new ArrayList<>();
+        List<Ast.TableDirective> tables = new ArrayList<>();
+
+        // Top-of-document directives. @type, @<name>, and @table may
+        // interleave in any order; @type populates typeUrl, others append
+        // to their respective lists.
+        directives:
+        while (true) {
+            switch (current.kind()) {
+                case AT_TYPE -> {
+                    advance();
+                    if (current.kind() != TokenKind.IDENT) {
+                        throw new PxfException(current.pos(),
+                                "expected type name after @type, got " + current.kind());
+                    }
+                    typeUrl = current.value();
+                    advance();
+                }
+                case AT_DIRECTIVE -> directives.add(parseDirective());
+                case AT_TABLE -> tables.add(parseTableDirective());
+                default -> {
+                    break directives;
+                }
             }
-            typeUrl = current.value();
-            advance();
         }
+
+        // Standalone constraint (draft §3.4.4): a document containing any
+        // @table directive MUST NOT also carry @type or top-level field
+        // entries — the @table header IS the document's type declaration.
+        if (!tables.isEmpty()) {
+            if (!typeUrl.isEmpty()) {
+                throw new PxfException(tables.get(0).pos(),
+                        "@table directive cannot coexist with @type; the @table header declares the document's type (draft §3.4.4)");
+            }
+            if (current.kind() != TokenKind.EOF) {
+                throw new PxfException(current.pos(),
+                        "@table directive cannot coexist with top-level field entries; the document's payload is the @table rows (draft §3.4.4)");
+            }
+        }
+
         List<Ast.Entry> entries = new ArrayList<>();
         while (current.kind() != TokenKind.EOF) {
             // Top-level: only field_entry is allowed. The document represents
@@ -67,7 +99,174 @@ public final class Parser {
             // reserved for the inside of a `{ ... }` block.
             entries.add(parseEntry(false));
         }
-        return new Ast.Document(typeUrl, List.copyOf(entries), leading);
+        return new Ast.Document(typeUrl, List.copyOf(directives), List.copyOf(tables),
+                List.copyOf(entries), leading);
+    }
+
+    /**
+     * Parse a {@code @<name> *(<prefix-id>) [{ ... }]} directive. The
+     * AT_DIRECTIVE token is current on entry (draft §3.4.2).
+     *
+     * <p>The grammar accepts zero-or-more prefix identifiers between
+     * {@code @<name>} and the optional {@code {}} block. Whitespace is
+     * insignificant, so we can't end the prefix run at a newline; instead,
+     * one-token lookahead disambiguates — an IDENT followed by {@code =}
+     * or {@code :} is a body field key, not a directive prefix.
+     */
+    private Ast.Directive parseDirective() {
+        List<Ast.Comment> leading = flushComments();
+        Position pp = current.pos();
+        String name = current.value();
+        advance(); // consume AT_DIRECTIVE
+
+        List<String> prefixes = new ArrayList<>();
+        while (current.kind() == TokenKind.IDENT) {
+            TokenKind nextKind = peekKind();
+            if (nextKind == TokenKind.EQUALS || nextKind == TokenKind.COLON) {
+                // The IDENT is the first body entry's key, not a prefix.
+                break;
+            }
+            prefixes.add(current.value());
+            advance();
+        }
+        // Back-compat: a single prefix populates the legacy `type` field,
+        // matching the v0.72.0 single-Type shape.
+        String type = prefixes.size() == 1 ? prefixes.get(0) : "";
+
+        byte[] body = null;
+        if (current.kind() == TokenKind.LBRACE) {
+            int open = current.pos().offset();
+            advance();
+            // Parse + discard the inner entries to validate well-formedness.
+            parseBody();
+            int close = lex.findMatchingBrace(open);
+            if (close >= 0) {
+                body = lex.sliceBytes(open + 1, close);
+            }
+        }
+        return new Ast.Directive(pp, name, List.copyOf(prefixes), type, body, leading);
+    }
+
+    /**
+     * Parse a {@code @table <type> ( col1, col2, ... ) row*} directive.
+     * AT_TABLE is current on entry (draft §3.4.4).
+     */
+    private Ast.TableDirective parseTableDirective() {
+        List<Ast.Comment> leading = flushComments();
+        Position pp = current.pos();
+        advance(); // consume @table
+
+        if (current.kind() != TokenKind.IDENT) {
+            throw new PxfException(current.pos(),
+                    "expected row message type after @table, got " + current.kind());
+        }
+        String type = current.value();
+        advance();
+
+        if (current.kind() != TokenKind.LPAREN) {
+            throw new PxfException(current.pos(),
+                    "expected '(' to start @table column list, got " + current.kind());
+        }
+        advance();
+
+        if (current.kind() != TokenKind.IDENT) {
+            throw new PxfException(current.pos(),
+                    "@table column list must contain at least one field name, got " + current.kind());
+        }
+        List<String> columns = new ArrayList<>();
+        while (true) {
+            if (current.kind() != TokenKind.IDENT) {
+                throw new PxfException(current.pos(),
+                        "expected column field name, got " + current.kind());
+            }
+            String colName = current.value();
+            // v1: column entries are unqualified field names; dotted paths
+            // reserved for a future revision.
+            if (colName.indexOf('.') >= 0) {
+                throw new PxfException(current.pos(),
+                        "@table column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
+            }
+            columns.add(colName);
+            advance();
+            if (current.kind() == TokenKind.COMMA) {
+                advance();
+                continue;
+            }
+            if (current.kind() == TokenKind.RPAREN) break;
+            throw new PxfException(current.pos(),
+                    "expected ',' or ')' in @table column list, got " + current.kind());
+        }
+        advance(); // consume )
+
+        // Zero or more rows.
+        List<Ast.TableRow> rows = new ArrayList<>();
+        while (current.kind() == TokenKind.LPAREN) {
+            rows.add(parseTableRow(columns.size()));
+        }
+        return new Ast.TableDirective(pp, type, List.copyOf(columns), List.copyOf(rows), leading);
+    }
+
+    private Ast.TableRow parseTableRow(int expected) {
+        Position pp = current.pos();
+        advance(); // consume (
+
+        List<Ast.Value> cells = new ArrayList<>();
+        cells.add(parseRowCell());
+        while (current.kind() == TokenKind.COMMA) {
+            advance();
+            cells.add(parseRowCell());
+        }
+        if (current.kind() != TokenKind.RPAREN) {
+            throw new PxfException(current.pos(),
+                    "expected ',' or ')' in @table row, got " + current.kind());
+        }
+        advance();
+        if (cells.size() != expected) {
+            throw new PxfException(pp,
+                    "@table row has " + cells.size() + " cells, expected " + expected + " (column count)");
+        }
+        // Row cells legitimately contain null for empty cells. List.copyOf
+        // rejects nulls, so wrap an ArrayList copy via Collections instead.
+        return new Ast.TableRow(pp, java.util.Collections.unmodifiableList(new ArrayList<>(cells)));
+    }
+
+    /**
+     * Consume one cell of a @table row. Returns {@code null} for an empty
+     * cell (no value between commas, or at row start/end). Rejects list
+     * and block values per v1 cell-grammar (draft §3.4.4).
+     */
+    private Ast.Value parseRowCell() {
+        switch (current.kind()) {
+            case COMMA, RPAREN -> {
+                return null;
+            }
+            case LBRACKET -> throw new PxfException(current.pos(),
+                    "@table cells cannot contain list values in v1 (draft §3.4.4)");
+            case LBRACE -> throw new PxfException(current.pos(),
+                    "@table cells cannot contain block values in v1 (draft §3.4.4)");
+            default -> { /* fall through */ }
+        }
+        return parseValue();
+    }
+
+    /**
+     * Peek the next significant token kind without consuming. Used by
+     * parseDirective to disambiguate "this IDENT is a directive prefix"
+     * from "this IDENT is a body field key".
+     */
+    private TokenKind peekKind() {
+        Lexer.Mark mark = lex.mark();
+        Token saved = current;
+        int savedComments = pendingComments.size();
+        advance();
+        TokenKind k = current.kind();
+        // Restore.
+        lex.restore(mark);
+        current = saved;
+        while (pendingComments.size() > savedComments) {
+            pendingComments.remove(pendingComments.size() - 1);
+        }
+        return k;
     }
 
     private Ast.Entry parseEntry() {

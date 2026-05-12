@@ -37,7 +37,15 @@ jobs:
           queries: security-and-quality
 
       - name: Compile (drives CodeQL extraction)
-        run: ./gradlew --no-daemon classes
+        # CodeQL's Java tracer wraps `javac` invocations; if Gradle reports
+        # `classes` as UP-TO-DATE (which happens on PRs that touch no
+        # source files — README-only / CHANGELOG-only / workflow-only),
+        # the tracer sees zero compilations and the analyze step fails
+        # with "could not process any code written in Java/Kotlin".
+        # `clean` forces a recompile every run; `--no-build-cache`
+        # belt-and-braces against the gradle/actions/setup-gradle@v6
+        # build-cache restore.
+        run: ./gradlew --no-daemon --no-build-cache clean classes
 
       - uses: github/codeql-action/analyze@v4
         with:

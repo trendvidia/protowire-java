@@ -87,29 +87,39 @@ public final class BindRow {
      * scalar-shaped (no list, no block), so only the leaf-value variants
      * appear; list and block AST nodes are unreachable here because
      * {@code parseTableRow} / {@code consumeRowCell} rejects them before
-     * the streaming reader hands them to {@code bindRow}.
+     * the streaming reader hands them to {@code bindRow}. Hand-constructed
+     * TableRow values bypass that check, so guard defensively.
+     *
+     * <p>The {@code NullVal} / {@code ListVal} / {@code BlockVal} cases
+     * don't need to read the bound variable, so they're checked via
+     * {@code instanceof} before the value-using switch. Java 21 standard
+     * pattern matching requires a variable binding on every {@code case}
+     * label; routing the no-binding cases out keeps the switch tidy and
+     * sidesteps CodeQL's "unused local variable" check.
      */
     static void writeCellValue(StringBuilder sb, Ast.Value v) {
+        if (v instanceof Ast.NullVal) {
+            sb.append("null");
+            return;
+        }
+        if (v instanceof Ast.ListVal || v instanceof Ast.BlockVal) {
+            throw new IllegalArgumentException(
+                    "BindRow: unexpected " + (v instanceof Ast.ListVal ? "list" : "block")
+                            + " value in cell (v1 @table cells are scalar-shaped)");
+        }
         switch (v) {
-            case Ast.StringVal s -> {
+            case Ast.StringVal s ->
                 sb.append('"').append(Format.escape(s.value())).append('"');
-            }
             case Ast.IntVal i -> sb.append(i.raw());
             case Ast.FloatVal f -> sb.append(f.raw());
             case Ast.BoolVal b -> sb.append(b.value() ? "true" : "false");
             case Ast.BytesVal by ->
                 sb.append("b\"").append(Base64.getEncoder().encodeToString(by.value())).append('"');
-            case Ast.NullVal n -> sb.append("null");
             case Ast.IdentVal id -> sb.append(id.name());
             case Ast.TimestampVal t -> sb.append(t.raw());
             case Ast.DurationVal d -> sb.append(d.raw());
-            // v1 @table cells exclude list and block values; the parser
-            // rejects these earlier. Hand-constructed TableRow values
-            // bypass that check, so guard defensively.
-            case Ast.ListVal l -> throw new IllegalArgumentException(
-                    "BindRow: unexpected list value in cell (v1 @table cells are scalar-shaped)");
-            case Ast.BlockVal bv -> throw new IllegalArgumentException(
-                    "BindRow: unexpected block value in cell (v1 @table cells are scalar-shaped)");
+            default -> throw new IllegalArgumentException(
+                    "BindRow: unexpected cell value type " + v.getClass().getSimpleName());
         }
     }
 }

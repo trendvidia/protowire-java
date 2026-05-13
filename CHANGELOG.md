@@ -18,6 +18,16 @@ format changes.
 
 ## [Unreleased]
 
+## [1.0.1] — 2026-05-13
+
+Patch release fixing the Maven Central publish for v1.0.0. Two
+javadoc `{@link Result#tables()}` references — in
+`BindRow` and `ResultAccessorsTest` — survived the v1.0 rename
+and broke the strict javadoc check inside the publish workflow.
+Updated to `{@link Result#datasets()}`. No code or wire-format
+change versus v1.0.0; the v1.0.0 tag exists in git but its
+Maven Central artifact was never published.
+
 ## [1.0.0] — 2026-05-13
 
 First major-version cut. Implements the three one-time spec changes

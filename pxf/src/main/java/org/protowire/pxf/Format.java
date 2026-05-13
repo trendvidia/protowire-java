@@ -19,7 +19,7 @@ public final class Format {
             formatDirective(sb, d);
             sb.append('\n');
         }
-        for (Ast.TableDirective t : doc.tables()) {
+        for (Ast.DatasetDirective t : doc.datasets()) {
             formatTableDirective(sb, t);
             sb.append('\n');
         }
@@ -39,14 +39,14 @@ public final class Format {
         sb.append('\n');
     }
 
-    private static void formatTableDirective(StringBuilder sb, Ast.TableDirective t) {
-        sb.append("@table ").append(t.type()).append(" (");
+    private static void formatTableDirective(StringBuilder sb, Ast.DatasetDirective t) {
+        sb.append("@dataset ").append(t.type()).append(" (");
         for (int i = 0; i < t.columns().size(); i++) {
             if (i > 0) sb.append(", ");
             sb.append(t.columns().get(i));
         }
         sb.append(")\n");
-        for (Ast.TableRow row : t.rows()) {
+        for (Ast.DatasetRow row : t.rows()) {
             sb.append('(');
             for (int i = 0; i < row.cells().size(); i++) {
                 if (i > 0) sb.append(", ");

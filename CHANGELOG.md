@@ -18,6 +18,41 @@ format changes.
 
 ## [Unreleased]
 
+### v1.0 spec changes
+
+Three one-time spec changes from the protowire v1.0 freeze line
+(STABILITY.md). **Breaking** — there is no alias period; v1.0 is itself
+the major bump.
+
+- `@table` directive renamed to `@dataset` (draft §3.4.4). Public API
+  follows: `Ast.TableDirective` → `Ast.DatasetDirective`, `Ast.TableRow`
+  → `Ast.DatasetRow`, `TableReader` → `DatasetReader`,
+  `Document.tables()` → `Document.datasets()`, `Result.tables()` →
+  `Result.datasets()`. Source files `TableReader.java`,
+  `TableReaderTest.java`, `TableParserTest.java` renamed accordingly.
+  Decoder semantics unchanged.
+
+- `@proto` directive added (draft §3.4.5). New `Ast.ProtoDirective`
+  record + `Ast.ProtoShape` enum (`ANONYMOUS`, `NAMED`, `SOURCE`,
+  `DESCRIPTOR`). Four body shapes lexically distinguished:
+  `@proto { ... }` (anonymous), `@proto pkg.Type { ... }` (named),
+  `@proto """..."""` (source), `@proto b"..."` (descriptor). Exposed
+  via `Document.protos()` and `Result.protos()`. Descriptor form is
+  the MUST-support shape per spec; this port supports all four.
+
+- Reserved directive names expanded from 5 to 13 (draft §3.4.6).
+  Decoder rejects `@table`, `@datasource`, `@view`, `@procedure`,
+  `@function`, `@permissions` as spec-reserved (future-allocated).
+  `SchemaValidator.FUTURE_RESERVED_DIRECTIVES` exposes the set.
+
+`@dataset`'s row message type is now optional in the AST. When
+omitted, the directive consumes the typed binding of a preceding
+anonymous `@proto` per draft §3.4.4 Anonymous binding.
+
+`Lexer.repositionTo(int)` added for the parser's `@proto` brace-body
+skip (interior is protobuf source, not PXF, so the lexer hops past
+the body rather than tokenising it).
+
 ## [0.75.0]
 
 Catch-up release. First tagged version after v0.70.0; brings the Java

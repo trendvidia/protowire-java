@@ -98,9 +98,9 @@ byte[] formatted = Pxf.formatDocument(doc);
 
 The AST is a sealed hierarchy of records (`Ast.Document`, `Ast.Entry`, `Ast.Value`); pattern matching is used throughout the formatter and decoder.
 
-### Directives and `@table` (Result accessors)
+### Directives and `@dataset` (Result accessors)
 
-PXF documents can carry [`@<name>` directives, `@entry` bundles, and `@table` rows](https://github.com/trendvidia/protowire#directives) at the document root alongside (or instead of) a message body. `unmarshalFull` captures all three on `Result`:
+PXF documents can carry [`@<name>` directives, `@entry` bundles, and `@dataset` rows](https://github.com/trendvidia/protowire#directives) at the document root alongside (or instead of) a message body. `unmarshalFull` captures all three on `Result`:
 
 ```java
 Result r = Pxf.unmarshalFull(pxfBytes, b);
@@ -112,8 +112,8 @@ for (Ast.Directive d : r.directives()) {
     // chosen message, chameleon's @header pattern.
 }
 
-for (Ast.TableDirective t : r.tables()) {
-    // t.type(), t.columns(), t.rows() List<TableRow>.
+for (Ast.DatasetDirective t : r.datasets()) {
+    // t.type(), t.columns(), t.rows() List<DatasetRow>.
     // Each row.cells().get(i) is:
     //   null               — empty cell (field absent, pxf.default applies)
     //   Ast.NullVal        — explicit null (field cleared per §3.9)
@@ -121,42 +121,42 @@ for (Ast.TableDirective t : r.tables()) {
 }
 ```
 
-`r.directives()` excludes `@type` and `@table` (those have their own accessors). Order is preserved.
+`r.directives()` excludes `@type` and `@dataset` (those have their own accessors). Order is preserved.
 
-### `TableReader`: streaming `@table` consumption
+### `DatasetReader`: streaming `@dataset` consumption
 
 For datasets too large to materialize, read rows from an `InputStream` with working-set memory bounded by the size of the largest single row — not by the row sequence:
 
 ```java
 try (var in = Files.newInputStream(Path.of("trades.pxf"))) {
-    var tr = new TableReader(in);
+    var tr = new DatasetReader(in);
     String typ = tr.type();
     List<String> cols = tr.columns();
-    List<Ast.Directive> hdrs = tr.directives();    // side-channel directives before the @table header
+    List<Ast.Directive> hdrs = tr.directives();    // side-channel directives before the @dataset header
 
-    Ast.TableRow row;
+    Ast.DatasetRow row;
     while ((row = tr.next()) != null) {
         // row.cells(): List<Ast.Value> with the three-state mapping above.
     }
 }
 ```
 
-`NewTableReader` throws `NoSuchElementException` if the input ends before any `@table` directive. Multi-table documents chain via `tr.tail()`, which returns an `InputStream` of the buffered-but-unconsumed bytes followed by the remaining source:
+`NewDatasetReader` throws `NoSuchElementException` if the input ends before any `@dataset` directive. Multi-table documents chain via `tr.tail()`, which returns an `InputStream` of the buffered-but-unconsumed bytes followed by the remaining source:
 
 ```java
-var tr1 = new TableReader(src);
+var tr1 = new DatasetReader(src);
 // ... iterate tr1.next() until it returns null ...
-var tr2 = new TableReader(tr1.tail());
+var tr2 = new DatasetReader(tr1.tail());
 ```
 
 Per-row arity and v1 cell-grammar errors (`[...]` / `{...}` cells, dotted columns) surface as the offending row is consumed, not deferred to end-of-input — see [draft §3.4.4 "Streaming consumption"](https://github.com/trendvidia/protowire/blob/main/docs/draft-trendvidia-protowire-00.txt).
 
 ### `scan` and `BindRow`: per-row binding
 
-`TableReader.scan(builder)` reads the next row and binds its cells to the message by column name; returns `false` when the row sequence is exhausted:
+`DatasetReader.scan(builder)` reads the next row and binds its cells to the message by column name; returns `false` when the row sequence is exhausted:
 
 ```java
-var tr = new TableReader(in);
+var tr = new DatasetReader(in);
 while (true) {
     var b = Trade.newBuilder();
     if (!tr.scan(b)) break;
@@ -164,12 +164,12 @@ while (true) {
 }
 ```
 
-`BindRow.bindRow(builder, columns, row)` is the same logic exposed standalone, for callers iterating `Result.tables()[i].rows()` on the materializing path:
+`BindRow.bindRow(builder, columns, row)` is the same logic exposed standalone, for callers iterating `Result.datasets()[i].rows()` on the materializing path:
 
 ```java
 Ast.Document doc = Pxf.parse(pxfBytes);
-for (Ast.TableDirective tbl : doc.tables()) {
-    for (Ast.TableRow row : tbl.rows()) {
+for (Ast.DatasetDirective tbl : doc.datasets()) {
+    for (Ast.DatasetRow row : tbl.rows()) {
         var b = Trade.newBuilder();
         BindRow.bindRow(b, tbl.columns(), row);
         process(b.build());
@@ -223,9 +223,9 @@ PXF (`:pxf`):
 - ✅ AST-preserving `formatDocument`.
 - ✅ **`@<name>` named directives** at document root with raw-body extraction (`Ast.Directive`, `Result.directives()`).
 - ✅ **`@entry` bundle directive** (zero-or-more prefix list; four permitted shapes per draft §3.4.3).
-- ✅ **`@table` directive** (the protowire-native CSV replacement) — `Ast.TableDirective`, `Ast.TableRow`, three-state cells, parser enforces row arity + dotted-column rejection + list/block-cell rejection + standalone-constraint.
-- ✅ **Streaming `TableReader`** over `InputStream` for datasets too large to materialize. Working-set memory bounded by largest single row.
-- ✅ **Per-row binding** via `TableReader.scan(Message.Builder)` and standalone `BindRow.bindRow(...)`.
+- ✅ **`@dataset` directive** (the protowire-native CSV replacement) — `Ast.DatasetDirective`, `Ast.DatasetRow`, three-state cells, parser enforces row arity + dotted-column rejection + list/block-cell rejection + standalone-constraint.
+- ✅ **Streaming `DatasetReader`** over `InputStream` for datasets too large to materialize. Working-set memory bounded by largest single row.
+- ✅ **Per-row binding** via `DatasetReader.scan(Message.Builder)` and standalone `BindRow.bindRow(...)`.
 - ✅ **Schema reserved-name check** (`SchemaValidator.validateFile` / `validateDescriptor`) catches schemas declaring fields/oneofs/enum values named `null`/`true`/`false`. Runs by default on every `unmarshal*` call; `UnmarshalOptions.withSkipValidate(true)` opts out.
 
 SBE (`:sbe`):

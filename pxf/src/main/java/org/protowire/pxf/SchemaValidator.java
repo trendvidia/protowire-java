@@ -40,8 +40,29 @@ public final class SchemaValidator {
      * Reserved-name set per draft §3.13. Case-sensitive — {@code NULL},
      * {@code True}, {@code FALSE} lex as ordinary identifiers and are
      * accepted.
+     *
+     * <p>The full reserved-directive-name set (13 names; draft §3.4.6) is
+     * separate from this schema-element constraint and lives in
+     * {@link #FUTURE_RESERVED_DIRECTIVES} — schema-element name
+     * collisions with directive names are not problematic because field
+     * names and directive names live in disjoint lexical contexts.
      */
     static final Set<String> RESERVED_NAMES = Set.of("null", "true", "false");
+
+    /**
+     * Directive names the spec reserves for future allocation (draft
+     * §3.4.6). v1 decoders MUST reject these as unknown reserved
+     * directives so applications cannot squat the names before the spec
+     * allocates semantics to them.
+     *
+     * <p>The names with their own production ({@code type},
+     * {@code dataset}, {@code proto}) don't appear here — they're
+     * handled directly by the lexer. The spec-registered {@code entry}
+     * doesn't appear either — it's a valid named-directive with
+     * documented shape (draft §3.4.3).
+     */
+    public static final Set<String> FUTURE_RESERVED_DIRECTIVES = Set.of(
+            "table", "datasource", "view", "procedure", "function", "permissions");
 
     /** Which kind of schema element a {@link Violation} refers to. */
     public enum Kind {

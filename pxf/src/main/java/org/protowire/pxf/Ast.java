@@ -19,24 +19,28 @@ public final class Ast {
      *
      * @param typeUrl         body's message type from {@code @type}; may be empty
      * @param directives      side-channel {@code @<name>} directives at document
-     *                        root in source order (excludes {@code @type} and
-     *                        {@code @table})
-     * @param tables          {@code @table} directives in source order. Per draft
-     *                        §3.4.4 a document with any table MUST NOT also have
-     *                        a {@code typeUrl} or body entries; the parser
-     *                        enforces this
+     *                        root in source order (excludes spec-defined
+     *                        directives: {@code @type}, {@code @dataset},
+     *                        {@code @proto}, {@code @entry})
+     * @param datasets        {@code @dataset} directives in source order. Per
+     *                        draft §3.4.4 a document with any dataset MUST
+     *                        NOT also have a {@code typeUrl} or body entries;
+     *                        the parser enforces this
+     * @param protos          {@code @proto} directives in source order
+     *                        (draft §3.4.5)
      * @param entries         message body entries
      * @param leadingComments comments before any directive or body entry
      */
     public record Document(
             String typeUrl,
             List<Directive> directives,
-            List<TableDirective> tables,
+            List<DatasetDirective> datasets,
+            List<ProtoDirective> protos,
             List<Entry> entries,
             List<Comment> leadingComments) {
 
         public static Document of(String typeUrl, List<Entry> entries) {
-            return new Document(typeUrl, List.of(), List.of(), List.copyOf(entries), List.of());
+            return new Document(typeUrl, List.of(), List.of(), List.of(), List.copyOf(entries), List.of());
         }
     }
 
@@ -74,31 +78,78 @@ public final class Ast {
             List<Comment> leadingComments) {}
 
     /**
-     * A {@code @table <type> ( col1, col2, ... ) row*} directive at document
-     * root (draft §3.4.4). Carries many instances of one message type — the
-     * protowire-native CSV replacement.
+     * A {@code @dataset <type> ( col1, col2, ... ) row*} directive at
+     * document root (draft §3.4.4). Carries many instances of one message
+     * type — the protowire-native CSV replacement.
      *
      * <p>v1 cell-grammar restrictions enforced by the parser: cells exclude
      * list and block values; column entries are unqualified field names
      * (no dotted paths); row arity equals column count; documents with any
-     * {@code @table} MUST NOT carry {@code @type} or body field entries.
+     * {@code @dataset} MUST NOT carry {@code @type} or body field entries.
+     *
+     * <p>{@code type} MAY be empty when an anonymous {@code @proto}
+     * directive (Section 3.4.5) precedes the dataset in document order;
+     * the anonymous schema is consumed as the row message type.
      */
-    public record TableDirective(
+    public record DatasetDirective(
             Position pos,
             String type,
             List<String> columns,
-            List<TableRow> rows,
+            List<DatasetRow> rows,
             List<Comment> leadingComments) {}
 
     /**
-     * One parenthesized cell tuple in a {@link TableDirective}. The cells
-     * list has the same length as the containing table's column list.
+     * One parenthesized cell tuple in a {@link DatasetDirective}. The cells
+     * list has the same length as the containing dataset's column list.
      * A {@code null} entry in cells denotes an absent field (the "empty
      * cell" between two commas); a {@link NullVal} denotes a present-but-
      * null field; any other {@link Value} denotes a present field with that
      * value.
      */
-    public record TableRow(Position pos, List<Value> cells) {}
+    public record DatasetRow(Position pos, List<Value> cells) {}
+
+    /**
+     * Shape of a {@link ProtoDirective}'s body (draft §3.4.5).
+     */
+    public enum ProtoShape {
+        /** {@code @proto { <message-body> }} — defines an unnamed message. */
+        ANONYMOUS,
+        /** {@code @proto <dotted-name> { <message-body> }} — single named message. */
+        NAMED,
+        /** {@code @proto """<proto-source>"""} — complete .proto source file. */
+        SOURCE,
+        /** {@code @proto b"<base64-FileDescriptorSet>"} — compiled descriptor. */
+        DESCRIPTOR;
+    }
+
+    /**
+     * A {@code @proto <body>} directive at document root (draft §3.4.5).
+     * Carries an embedded protobuf schema, making the PXF document
+     * self-describing. The shape distinguishes the four lexically-determined
+     * body forms.
+     *
+     * <p>{@code body} carries raw bytes per shape:
+     * <ul>
+     *   <li>{@link ProtoShape#ANONYMOUS}, {@link ProtoShape#NAMED}: bytes
+     *       between the opening {@code {} and matching {@code }} (both
+     *       exclusive). The bytes are protobuf message-body source.</li>
+     *   <li>{@link ProtoShape#SOURCE}: contents of the triple-quoted string
+     *       (with leading-LF / dedent applied). The bytes are a complete
+     *       {@code .proto} source file.</li>
+     *   <li>{@link ProtoShape#DESCRIPTOR}: base64-decoded bytes of the
+     *       bytes literal. The bytes are a serialised
+     *       {@code google.protobuf.FileDescriptorSet}.</li>
+     * </ul>
+     *
+     * <p>{@code typeName} is non-empty only when {@code shape} is
+     * {@link ProtoShape#NAMED}.
+     */
+    public record ProtoDirective(
+            Position pos,
+            ProtoShape shape,
+            String typeName,
+            byte[] body,
+            List<Comment> leadingComments) {}
 
     /** A single entry inside a message body: assignment, map entry, or block. */
     public sealed interface Entry permits Assignment, MapEntry, Block {

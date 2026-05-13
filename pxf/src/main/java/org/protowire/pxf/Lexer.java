@@ -62,6 +62,22 @@ final class Lexer {
         return new int[] {l, c};
     }
 
+    /**
+     * Reposition the lexer to a byte offset, recomputing line/col so
+     * subsequent error messages stay accurate. Used by Parser to skip
+     * past an {@code @proto} brace-bounded body whose interior is
+     * protobuf source (not PXF) without lexing through it.
+     */
+    void repositionTo(int target) {
+        if (target < 0 || target > input.length) {
+            throw new IllegalArgumentException("repositionTo: out of bounds " + target);
+        }
+        int[] lc = lineColAt(target);
+        this.pos = target;
+        this.line = lc[0];
+        this.col = lc[1];
+    }
+
     /** Slice a raw byte range from the input, copy-on-read. */
     byte[] sliceBytes(int from, int to) {
         if (from < 0 || to > input.length || from > to) {
@@ -426,7 +442,8 @@ final class Lexer {
         String name = slice(start, pos);
         if (name.isEmpty()) return new Token(TokenKind.ILLEGAL, "@", pp);
         if ("type".equals(name)) return new Token(TokenKind.AT_TYPE, "@type", pp);
-        if ("table".equals(name)) return new Token(TokenKind.AT_TABLE, "@table", pp);
+        if ("dataset".equals(name)) return new Token(TokenKind.AT_DATASET, "@dataset", pp);
+        if ("proto".equals(name)) return new Token(TokenKind.AT_PROTO, "@proto", pp);
         return new Token(TokenKind.AT_DIRECTIVE, name, pp);
     }
 

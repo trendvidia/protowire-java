@@ -10,8 +10,8 @@ import java.util.Base64;
 import java.util.List;
 
 /**
- * Per-row proto-binding helper for {@code @table} rows. Sits atop the
- * streaming {@link TableReader} (via {@link TableReader#scan}) and is also
+ * Per-row proto-binding helper for {@code @dataset} rows. Sits atop the
+ * streaming {@link DatasetReader} (via {@link DatasetReader#scan}) and is also
  * exported as a standalone helper for callers that iterate the
  * materializing path's {@link Result#tables()} rows.
  *
@@ -49,7 +49,7 @@ public final class BindRow {
      * surfaces as a "field not found" error from the underlying unmarshal
      * call (unless {@link UnmarshalOptions#discardUnknown} is set).
      */
-    public static void bindRow(Message.Builder builder, List<String> columns, Ast.TableRow row) {
+    public static void bindRow(Message.Builder builder, List<String> columns, Ast.DatasetRow row) {
         if (columns.size() != row.cells().size()) {
             throw new IllegalArgumentException(
                     "BindRow: " + columns.size() + " columns vs " + row.cells().size() + " cells");
@@ -57,7 +57,7 @@ public final class BindRow {
         byte[] body = rowToPxfBody(columns, row);
         // Run the synthetic body through the standard unmarshal pipeline.
         // SkipValidate avoids re-running the reserved-name check per row
-        // (the caller's TableReader / unmarshalFull already validated the
+        // (the caller's DatasetReader / unmarshalFull already validated the
         // descriptor once at bind time).
         UnmarshalOptions.defaults().withSkipValidate(true).unmarshal(body, builder);
     }
@@ -67,7 +67,7 @@ public final class BindRow {
      * non-{@code null} cell, in column order. Empty cells produce no
      * entry — the field stays absent from the decoder's perspective.
      */
-    static byte[] rowToPxfBody(List<String> columns, Ast.TableRow row) {
+    static byte[] rowToPxfBody(List<String> columns, Ast.DatasetRow row) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < row.cells().size(); i++) {
@@ -83,12 +83,12 @@ public final class BindRow {
     }
 
     /**
-     * Format a single cell value as PXF text. v1 {@code @table} cells are
+     * Format a single cell value as PXF text. v1 {@code @dataset} cells are
      * scalar-shaped (no list, no block), so only the leaf-value variants
      * appear; list and block AST nodes are unreachable here because
-     * {@code parseTableRow} / {@code consumeRowCell} rejects them before
+     * {@code parseDatasetRow} / {@code consumeRowCell} rejects them before
      * the streaming reader hands them to {@code bindRow}. Hand-constructed
-     * TableRow values bypass that check, so guard defensively.
+     * DatasetRow values bypass that check, so guard defensively.
      *
      * <p>The {@code NullVal} / {@code ListVal} / {@code BlockVal} cases
      * don't need to read the bound variable, so they're checked via
@@ -105,7 +105,7 @@ public final class BindRow {
         if (v instanceof Ast.ListVal || v instanceof Ast.BlockVal) {
             throw new IllegalArgumentException(
                     "BindRow: unexpected " + (v instanceof Ast.ListVal ? "list" : "block")
-                            + " value in cell (v1 @table cells are scalar-shaped)");
+                            + " value in cell (v1 @dataset cells are scalar-shaped)");
         }
         switch (v) {
             case Ast.StringVal s ->

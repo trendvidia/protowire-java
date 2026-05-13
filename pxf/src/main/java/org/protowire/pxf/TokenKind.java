@@ -22,15 +22,16 @@ public enum TokenKind {
     RBRACE("}"),
     LBRACKET("["),
     RBRACKET("]"),
-    LPAREN("("),    // @table column list and row tuples
+    LPAREN("("),    // @dataset column list and row tuples
     RPAREN(")"),
     EQUALS("="),
     COLON(":"),
     COMMA(","),
 
     AT_TYPE("@type"),
-    AT_TABLE("@table"),                // bulk-row directive (draft §3.4.4)
-    AT_DIRECTIVE("@directive");        // @<name> for name != "type"/"table"
+    AT_DATASET("@dataset"),            // row-oriented bulk-data directive (draft §3.4.4)
+    AT_PROTO("@proto"),                // embedded protobuf schema (draft §3.4.5)
+    AT_DIRECTIVE("@directive");        // @<name> for any non-reserved name
 
     private final String display;
 

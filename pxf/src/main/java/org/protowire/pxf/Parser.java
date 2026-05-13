@@ -31,16 +31,16 @@ public final class Parser {
     }
 
     /**
-     * Parse a single {@code ( cell, cell, ... )} tuple as a {@code @table}
-     * row. Used by {@link TableReader} to decode each row's byte slice
+     * Parse a single {@code ( cell, cell, ... )} tuple as a {@code @dataset}
+     * row. Used by {@link DatasetReader} to decode each row's byte slice
      * without re-running the full document grammar. {@code input} MUST
      * start with {@code (} and contain a balanced row tuple.
      *
      * @param input    row bytes including the surrounding parens
      * @param expected expected cell count (column arity)
      */
-    static Ast.TableRow parseTableRow(byte[] input, int expected) {
-        return new Parser(input).parseTableRow(expected);
+    static Ast.DatasetRow parseDatasetRow(byte[] input, int expected) {
+        return new Parser(input).parseDatasetRow(expected);
     }
 
     private void advance() {
@@ -66,11 +66,12 @@ public final class Parser {
         List<Ast.Comment> leading = flushComments();
         String typeUrl = "";
         List<Ast.Directive> directives = new ArrayList<>();
-        List<Ast.TableDirective> tables = new ArrayList<>();
+        List<Ast.DatasetDirective> datasets = new ArrayList<>();
+        List<Ast.ProtoDirective> protos = new ArrayList<>();
 
-        // Top-of-document directives. @type, @<name>, and @table may
-        // interleave in any order; @type populates typeUrl, others append
-        // to their respective lists.
+        // Top-of-document directives. @type, @<name>, @dataset, and @proto
+        // may interleave in any order; @type populates typeUrl, others
+        // append to their respective lists.
         directives:
         while (true) {
             switch (current.kind()) {
@@ -84,7 +85,8 @@ public final class Parser {
                     advance();
                 }
                 case AT_DIRECTIVE -> directives.add(parseDirective());
-                case AT_TABLE -> tables.add(parseTableDirective());
+                case AT_DATASET -> datasets.add(parseDatasetDirective());
+                case AT_PROTO -> protos.add(parseProtoDirective());
                 default -> {
                     break directives;
                 }
@@ -92,16 +94,16 @@ public final class Parser {
         }
 
         // Standalone constraint (draft §3.4.4): a document containing any
-        // @table directive MUST NOT also carry @type or top-level field
-        // entries — the @table header IS the document's type declaration.
-        if (!tables.isEmpty()) {
+        // @dataset directive MUST NOT also carry @type or top-level field
+        // entries — the @dataset header IS the document's type declaration.
+        if (!datasets.isEmpty()) {
             if (!typeUrl.isEmpty()) {
-                throw new PxfException(tables.get(0).pos(),
-                        "@table directive cannot coexist with @type; the @table header declares the document's type (draft §3.4.4)");
+                throw new PxfException(datasets.get(0).pos(),
+                        "@dataset directive cannot coexist with @type; the @dataset header declares the document's type (draft §3.4.4)");
             }
             if (current.kind() != TokenKind.EOF) {
                 throw new PxfException(current.pos(),
-                        "@table directive cannot coexist with top-level field entries; the document's payload is the @table rows (draft §3.4.4)");
+                        "@dataset directive cannot coexist with top-level field entries; the document's payload is the @dataset rows (draft §3.4.4)");
             }
         }
 
@@ -112,8 +114,8 @@ public final class Parser {
             // reserved for the inside of a `{ ... }` block.
             entries.add(parseEntry(false));
         }
-        return new Ast.Document(typeUrl, List.copyOf(directives), List.copyOf(tables),
-                List.copyOf(entries), leading);
+        return new Ast.Document(typeUrl, List.copyOf(directives), List.copyOf(datasets),
+                List.copyOf(protos), List.copyOf(entries), leading);
     }
 
     /**
@@ -130,6 +132,10 @@ public final class Parser {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
         String name = current.value();
+        if (SchemaValidator.FUTURE_RESERVED_DIRECTIVES.contains(name)) {
+            throw new PxfException(pp,
+                    "@" + name + " is a spec-reserved directive name with no v1 semantics (draft §3.4.6)");
+        }
         advance(); // consume AT_DIRECTIVE
 
         List<String> prefixes = new ArrayList<>();
@@ -161,30 +167,33 @@ public final class Parser {
     }
 
     /**
-     * Parse a {@code @table <type> ( col1, col2, ... ) row*} directive.
-     * AT_TABLE is current on entry (draft §3.4.4).
+     * Parse a {@code @dataset <type> ( col1, col2, ... ) row*} directive.
+     * AT_DATASET is current on entry (draft §3.4.4).
+     *
+     * <p>The row message type MAY be omitted when an anonymous
+     * {@code @proto} directive precedes the dataset (draft §3.4.4
+     * Anonymous binding).
      */
-    private Ast.TableDirective parseTableDirective() {
+    private Ast.DatasetDirective parseDatasetDirective() {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
-        advance(); // consume @table
+        advance(); // consume @dataset
 
-        if (current.kind() != TokenKind.IDENT) {
-            throw new PxfException(current.pos(),
-                    "expected row message type after @table, got " + current.kind());
+        String type = "";
+        if (current.kind() == TokenKind.IDENT) {
+            type = current.value();
+            advance();
         }
-        String type = current.value();
-        advance();
 
         if (current.kind() != TokenKind.LPAREN) {
             throw new PxfException(current.pos(),
-                    "expected '(' to start @table column list, got " + current.kind());
+                    "expected '(' to start @dataset column list, got " + current.kind());
         }
         advance();
 
         if (current.kind() != TokenKind.IDENT) {
             throw new PxfException(current.pos(),
-                    "@table column list must contain at least one field name, got " + current.kind());
+                    "@dataset column list must contain at least one field name, got " + current.kind());
         }
         List<String> columns = new ArrayList<>();
         while (true) {
@@ -197,7 +206,7 @@ public final class Parser {
             // reserved for a future revision.
             if (colName.indexOf('.') >= 0) {
                 throw new PxfException(current.pos(),
-                        "@table column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
+                        "@dataset column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
             }
             columns.add(colName);
             advance();
@@ -207,19 +216,19 @@ public final class Parser {
             }
             if (current.kind() == TokenKind.RPAREN) break;
             throw new PxfException(current.pos(),
-                    "expected ',' or ')' in @table column list, got " + current.kind());
+                    "expected ',' or ')' in @dataset column list, got " + current.kind());
         }
         advance(); // consume )
 
         // Zero or more rows.
-        List<Ast.TableRow> rows = new ArrayList<>();
+        List<Ast.DatasetRow> rows = new ArrayList<>();
         while (current.kind() == TokenKind.LPAREN) {
-            rows.add(parseTableRow(columns.size()));
+            rows.add(parseDatasetRow(columns.size()));
         }
-        return new Ast.TableDirective(pp, type, List.copyOf(columns), List.copyOf(rows), leading);
+        return new Ast.DatasetDirective(pp, type, List.copyOf(columns), List.copyOf(rows), leading);
     }
 
-    private Ast.TableRow parseTableRow(int expected) {
+    private Ast.DatasetRow parseDatasetRow(int expected) {
         Position pp = current.pos();
         advance(); // consume (
 
@@ -231,20 +240,94 @@ public final class Parser {
         }
         if (current.kind() != TokenKind.RPAREN) {
             throw new PxfException(current.pos(),
-                    "expected ',' or ')' in @table row, got " + current.kind());
+                    "expected ',' or ')' in @dataset row, got " + current.kind());
         }
         advance();
         if (cells.size() != expected) {
             throw new PxfException(pp,
-                    "@table row has " + cells.size() + " cells, expected " + expected + " (column count)");
+                    "@dataset row has " + cells.size() + " cells, expected " + expected + " (column count)");
         }
         // Row cells legitimately contain null for empty cells. List.copyOf
         // rejects nulls, so wrap an ArrayList copy via Collections instead.
-        return new Ast.TableRow(pp, java.util.Collections.unmodifiableList(new ArrayList<>(cells)));
+        return new Ast.DatasetRow(pp, java.util.Collections.unmodifiableList(new ArrayList<>(cells)));
     }
 
     /**
-     * Consume one cell of a @table row. Returns {@code null} for an empty
+     * Parse a {@code @proto <body>} directive (draft §3.4.5). AT_PROTO is
+     * current on entry. Four body shapes are lexically distinguished:
+     * anonymous ({@code { ... }}), named ({@code <dotted-name> { ... }}),
+     * source-form ({@code """..."""}) and descriptor ({@code b"..."}).
+     *
+     * <p>For the brace-bounded shapes the body is captured as raw bytes
+     * between {@code {} and the matching {@code }} (both exclusive); the
+     * contents are protobuf source and are NOT decoded as PXF entries.
+     */
+    private Ast.ProtoDirective parseProtoDirective() {
+        List<Ast.Comment> leading = flushComments();
+        Position pp = current.pos();
+        advance(); // consume @proto
+
+        switch (current.kind()) {
+            case LBRACE -> {
+                byte[] body = captureBraceBody("@proto (anonymous form)");
+                return new Ast.ProtoDirective(pp, Ast.ProtoShape.ANONYMOUS, "", body, leading);
+            }
+            case IDENT -> {
+                String typeName = current.value();
+                advance();
+                if (current.kind() != TokenKind.LBRACE) {
+                    throw new PxfException(current.pos(),
+                            "expected '{' after @proto " + typeName + ", got " + current.kind());
+                }
+                byte[] body = captureBraceBody("@proto " + typeName);
+                return new Ast.ProtoDirective(pp, Ast.ProtoShape.NAMED, typeName, body, leading);
+            }
+            case STRING -> {
+                byte[] body = current.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                advance();
+                return new Ast.ProtoDirective(pp, Ast.ProtoShape.SOURCE, "", body, leading);
+            }
+            case BYTES -> {
+                String raw = current.value();
+                byte[] decoded;
+                try {
+                    decoded = java.util.Base64.getDecoder().decode(raw);
+                } catch (IllegalArgumentException e1) {
+                    try {
+                        decoded = java.util.Base64.getUrlDecoder().decode(raw);
+                    } catch (IllegalArgumentException e2) {
+                        throw new PxfException(current.pos(),
+                                "@proto descriptor body: invalid base64: " + e1.getMessage());
+                    }
+                }
+                advance();
+                return new Ast.ProtoDirective(pp, Ast.ProtoShape.DESCRIPTOR, "", decoded, leading);
+            }
+            default -> throw new PxfException(current.pos(),
+                    "expected '{', dotted identifier, triple-quoted string, or b\"...\" after @proto, got " + current.kind());
+        }
+    }
+
+    /**
+     * Slice the raw bytes between {@code {} and the matching {@code }}
+     * (both exclusive) without decoding the contents as PXF entries.
+     * LBRACE is current on entry. Repositions the lexer past the closing
+     * {@code }} and primes the parser to that next token.
+     */
+    private byte[] captureBraceBody(String label) {
+        int open = current.pos().offset();
+        int close = lex.findMatchingBrace(open);
+        if (close < 0) {
+            throw new PxfException(current.pos(), label + ": unmatched '{'");
+        }
+        byte[] body = lex.sliceBytes(open + 1, close);
+        lex.repositionTo(close + 1);
+        advance(); // prime current token past `}`
+        return body;
+    }
+
+    /**
+     * Consume one cell of a @dataset row. Returns {@code null} for an empty
      * cell (no value between commas, or at row start/end). Rejects list
      * and block values per v1 cell-grammar (draft §3.4.4).
      */
@@ -254,9 +337,9 @@ public final class Parser {
                 return null;
             }
             case LBRACKET -> throw new PxfException(current.pos(),
-                    "@table cells cannot contain list values in v1 (draft §3.4.4)");
+                    "@dataset cells cannot contain list values in v1 (draft §3.4.4)");
             case LBRACE -> throw new PxfException(current.pos(),
-                    "@table cells cannot contain block values in v1 (draft §3.4.4)");
+                    "@dataset cells cannot contain block values in v1 (draft §3.4.4)");
             default -> { /* fall through */ }
         }
         return parseValue();

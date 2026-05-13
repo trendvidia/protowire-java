@@ -24,10 +24,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
 
 /**
- * Streaming {@code @table} consumption tests. Mirrors protowire-go's
+ * Streaming {@code @dataset} consumption tests. Mirrors protowire-go's
  * table_stream_test.go.
  */
-class TableReaderTest {
+class DatasetReaderTest {
 
     private static InputStream s(String in) {
         return new ByteArrayInputStream(in.getBytes(StandardCharsets.UTF_8));
@@ -37,8 +37,8 @@ class TableReaderTest {
 
     @Test
     void basicStreaming() throws IOException {
-        var tr = new TableReader(s("""
-                @table trades.v1.Trade (symbol, price, qty)
+        var tr = new DatasetReader(s("""
+                @dataset trades.v1.Trade (symbol, price, qty)
                 ("AAPL", 192.34, 100)
                 ("MSFT", 410.10, 50)
                 ("GOOG", 142.00, 25)"""));
@@ -46,8 +46,8 @@ class TableReaderTest {
         assertEquals(List.of("symbol", "price", "qty"), tr.columns());
         assertEquals(List.of(), tr.directives());
 
-        List<Ast.TableRow> rows = new ArrayList<>();
-        for (Ast.TableRow r; (r = tr.next()) != null; ) rows.add(r);
+        List<Ast.DatasetRow> rows = new ArrayList<>();
+        for (Ast.DatasetRow r; (r = tr.next()) != null; ) rows.add(r);
         assertEquals(3, rows.size());
         var sv = (Ast.StringVal) rows.get(0).cells().get(0);
         assertEquals("AAPL", sv.value());
@@ -55,7 +55,7 @@ class TableReaderTest {
 
     @Test
     void emptyTableReturnsNullImmediately() throws IOException {
-        var tr = new TableReader(s("@table trades.v1.Trade (symbol, price)"));
+        var tr = new DatasetReader(s("@dataset trades.v1.Trade (symbol, price)"));
         assertNull(tr.next());
         assertNull(tr.next()); // sticky
     }
@@ -64,8 +64,8 @@ class TableReaderTest {
 
     @Test
     void cellStates() throws IOException {
-        var tr = new TableReader(s("""
-                @table t.T (a, b, c)
+        var tr = new DatasetReader(s("""
+                @dataset t.T (a, b, c)
                 ("x", 1, true)
                 (null, , 3)
                 (, "y", null)"""));
@@ -93,9 +93,9 @@ class TableReaderTest {
 
     @Test
     void sideChannelDirectivesBeforeHeader() throws IOException {
-        var tr = new TableReader(s("""
+        var tr = new DatasetReader(s("""
                 @header meta.v1.H { generated_at = 2026-05-12T10:00:00Z }
-                @table trades.v1.Trade (symbol)
+                @dataset trades.v1.Trade (symbol)
                 ("AAPL")
                 ("MSFT")"""));
 
@@ -113,32 +113,32 @@ class TableReaderTest {
     @Test
     void rejectsAtTypeWithAtTable() {
         var ex = assertThrows(PxfException.class, () ->
-                new TableReader(s("""
+                new DatasetReader(s("""
                         @type some.Other
-                        @table trades.v1.Trade (symbol)
+                        @dataset trades.v1.Trade (symbol)
                         ("AAPL")""")));
         assertTrue(ex.getMessage().contains("@type"));
     }
 
-    // --- No @table ---
+    // --- No @dataset ---
 
     @Test
     void noTableInStream() {
         assertThrows(NoSuchElementException.class, () ->
-                new TableReader(s("string_field = \"x\"")));
+                new DatasetReader(s("string_field = \"x\"")));
     }
 
     @Test
     void emptyInput() {
-        assertThrows(NoSuchElementException.class, () -> new TableReader(s("")));
+        assertThrows(NoSuchElementException.class, () -> new DatasetReader(s("")));
     }
 
     // --- Errors mid-stream are sticky ---
 
     @Test
     void errorsAreSticky() throws IOException {
-        var tr = new TableReader(s("""
-                @table T (a, b, c)
+        var tr = new DatasetReader(s("""
+                @dataset T (a, b, c)
                 ("x", 1, 2)
                 ("y", 1)""")); // arity mismatch
         assertNotNull(tr.next());
@@ -150,8 +150,8 @@ class TableReaderTest {
 
     @Test
     void rejectsListCellMidStream() throws IOException {
-        var tr = new TableReader(s("""
-                @table T (a, b)
+        var tr = new DatasetReader(s("""
+                @dataset T (a, b)
                 ("ok", 1)
                 ("bad", [1, 2])"""));
         assertNotNull(tr.next());
@@ -163,8 +163,8 @@ class TableReaderTest {
 
     @Test
     void stringWithParens() throws IOException {
-        var tr = new TableReader(s("""
-                @table T (note, n)
+        var tr = new DatasetReader(s("""
+                @dataset T (note, n)
                 ("contains (paren) inside", 1)
                 ("normal", 2)"""));
         var r1 = tr.next();
@@ -175,8 +175,8 @@ class TableReaderTest {
 
     @Test
     void blockCommentBetweenRows() throws IOException {
-        var tr = new TableReader(s("""
-                @table T (a)
+        var tr = new DatasetReader(s("""
+                @dataset T (a)
                 ("x")
                 /* this comment ) has ( parens
                    spanning multiple lines */
@@ -188,8 +188,8 @@ class TableReaderTest {
 
     @Test
     void lineCommentBetweenRows() throws IOException {
-        var tr = new TableReader(s("""
-                @table T (a)
+        var tr = new DatasetReader(s("""
+                @dataset T (a)
                 ("x")
                 # this is a comment, with ( a paren ) inside
                 ("y")
@@ -223,8 +223,8 @@ class TableReaderTest {
 
     @Test
     void handlesByteAtATimeReader() throws IOException {
-        var tr = new TableReader(new ChunkedStream("""
-                @table T (a, b, c)
+        var tr = new DatasetReader(new ChunkedStream("""
+                @dataset T (a, b, c)
                 ("hello", 42, true)
                 ("world", 99, false)
                 ("end", 0, null)""".getBytes(StandardCharsets.UTF_8)));
@@ -237,18 +237,18 @@ class TableReaderTest {
 
     @Test
     void multipleTablesViaTail() throws IOException {
-        var tr1 = new TableReader(s("""
-                @table events.v1.Created (id, ts)
+        var tr1 = new DatasetReader(s("""
+                @dataset events.v1.Created (id, ts)
                 ("e-1", 2026-05-12T10:00:00Z)
                 ("e-2", 2026-05-12T10:00:01Z)
-                @table events.v1.Deleted (id, ts)
+                @dataset events.v1.Deleted (id, ts)
                 ("e-9", 2026-05-12T10:00:02Z)"""));
         assertEquals("events.v1.Created", tr1.type());
         int c1 = 0;
         while (tr1.next() != null) c1++;
         assertEquals(2, c1);
 
-        var tr2 = new TableReader(tr1.tail());
+        var tr2 = new DatasetReader(tr1.tail());
         assertEquals("events.v1.Deleted", tr2.type());
         int c2 = 0;
         while (tr2.next() != null) c2++;
@@ -260,20 +260,20 @@ class TableReaderTest {
     @Test
     void equivalentToMaterializingPath() throws IOException {
         String in = """
-                @table t.T (a, b, c)
+                @dataset t.T (a, b, c)
                 ("alpha", 1, true)
                 ("beta", null, false)
                 (, , )
                 ("gamma", 99, true)""";
         // Materializing.
         var doc = Parser.parse(in);
-        assertEquals(1, doc.tables().size());
-        var mat = doc.tables().get(0).rows();
+        assertEquals(1, doc.datasets().size());
+        var mat = doc.datasets().get(0).rows();
 
         // Streaming.
-        var tr = new TableReader(s(in));
-        List<Ast.TableRow> stream = new ArrayList<>();
-        for (Ast.TableRow r; (r = tr.next()) != null; ) stream.add(r);
+        var tr = new DatasetReader(s(in));
+        List<Ast.DatasetRow> stream = new ArrayList<>();
+        for (Ast.DatasetRow r; (r = tr.next()) != null; ) stream.add(r);
 
         assertEquals(mat.size(), stream.size());
         for (int i = 0; i < mat.size(); i++) {
@@ -297,7 +297,7 @@ class TableReaderTest {
         // 70 KiB identifier > 64 KiB cap.
         String long_ = "a".repeat(70 * 1024);
         var ex = assertThrows(PxfException.class, () ->
-                new TableReader(s("@table " + long_ + ".T (col)\n(1)")));
+                new DatasetReader(s("@dataset " + long_ + ".T (col)\n(1)")));
         assertTrue(ex.getMessage().contains("header exceeds"));
     }
 
@@ -305,8 +305,8 @@ class TableReaderTest {
 
     @Test
     void scanHappyPath() throws IOException {
-        var tr = new TableReader(s("""
-                @table test.v1.AllTypes (string_field, int32_field, bool_field, enum_field)
+        var tr = new DatasetReader(s("""
+                @dataset test.v1.AllTypes (string_field, int32_field, bool_field, enum_field)
                 ("alpha", 1, true, STATUS_ACTIVE)
                 ("beta", 2, false, STATUS_INACTIVE)
                 ("gamma", 3, true, STATUS_UNSPECIFIED)"""));
@@ -322,8 +322,8 @@ class TableReaderTest {
 
     @Test
     void scanReturnsFalseOnEof() throws IOException {
-        var tr = new TableReader(s("""
-                @table test.v1.AllTypes (string_field)
+        var tr = new DatasetReader(s("""
+                @dataset test.v1.AllTypes (string_field)
                 ("x")"""));
         var b1 = DynamicMessage.newBuilder(AllTypes.getDescriptor());
         assertTrue(tr.scan(b1));
@@ -333,8 +333,8 @@ class TableReaderTest {
 
     @Test
     void scanEmptyCellLeavesFieldUnset() throws IOException {
-        var tr = new TableReader(s("""
-                @table test.v1.AllTypes (string_field, int32_field)
+        var tr = new DatasetReader(s("""
+                @dataset test.v1.AllTypes (string_field, int32_field)
                 ("present", 7)
                 (, 99)
                 ("set", )"""));
@@ -359,8 +359,8 @@ class TableReaderTest {
 
     @Test
     void scanNullOnWrapperClears() throws IOException {
-        var tr = new TableReader(s("""
-                @table test.v1.AllTypes (string_field, nullable_int)
+        var tr = new DatasetReader(s("""
+                @dataset test.v1.AllTypes (string_field, nullable_int)
                 ("with-value", 42)
                 ("nullified", null)"""));
         var nullableIntFd = AllTypes.getDescriptor().findFieldByName("nullable_int");
@@ -376,8 +376,8 @@ class TableReaderTest {
 
     @Test
     void scanWellKnownTimestamp() throws IOException {
-        var tr = new TableReader(s("""
-                @table test.v1.AllTypes (string_field, ts_field)
+        var tr = new DatasetReader(s("""
+                @dataset test.v1.AllTypes (string_field, ts_field)
                 ("first", 2026-05-12T10:30:00Z)"""));
         var tsFd = AllTypes.getDescriptor().findFieldByName("ts_field");
 
@@ -394,10 +394,10 @@ class TableReaderTest {
     @Test
     void bindRowAgainstMaterializingPath() {
         var doc = Parser.parse("""
-                @table test.v1.AllTypes (string_field, int32_field)
+                @dataset test.v1.AllTypes (string_field, int32_field)
                 ("alpha", 1)
                 ("beta", 2)""");
-        var tbl = doc.tables().get(0);
+        var tbl = doc.datasets().get(0);
         for (int i = 0; i < tbl.rows().size(); i++) {
             var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
             BindRow.bindRow(b, tbl.columns(), tbl.rows().get(i));
@@ -407,7 +407,7 @@ class TableReaderTest {
     @Test
     void bindRowArityMismatch() {
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
-        var row = new Ast.TableRow(Position.UNKNOWN,
+        var row = new Ast.DatasetRow(Position.UNKNOWN,
                 java.util.Collections.singletonList(new Ast.StringVal(Position.UNKNOWN, "x")));
         var ex = assertThrows(IllegalArgumentException.class,
                 () -> BindRow.bindRow(b, List.of("a", "b"), row));
@@ -417,10 +417,10 @@ class TableReaderTest {
     @Test
     void bindRowRejectsNonLeafCell() {
         // Hand-construct a row with a ListVal cell — the parser rejects
-        // these earlier, but a caller that builds a TableRow manually
+        // these earlier, but a caller that builds a DatasetRow manually
         // bypasses that check.
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
-        var row = new Ast.TableRow(Position.UNKNOWN,
+        var row = new Ast.DatasetRow(Position.UNKNOWN,
                 java.util.Collections.singletonList(
                         new Ast.ListVal(Position.UNKNOWN,
                                 List.of(new Ast.StringVal(Position.UNKNOWN, "x")))));

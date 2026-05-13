@@ -91,31 +91,31 @@ class ResultAccessorsTest {
     void recordsTablesInOrder() {
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
         var result = UnmarshalOptions.defaults().unmarshalFull("""
-                @table events.v1.Created (id)
+                @dataset events.v1.Created (id)
                 ("e-1")
                 ("e-2")
-                @table events.v1.Deleted (id)
+                @dataset events.v1.Deleted (id)
                 ("e-9")
                 """.getBytes(), b);
 
-        assertEquals(2, result.tables().size());
-        assertEquals("events.v1.Created", result.tables().get(0).type());
-        assertEquals(2, result.tables().get(0).rows().size());
-        assertEquals("events.v1.Deleted", result.tables().get(1).type());
-        assertEquals(1, result.tables().get(1).rows().size());
+        assertEquals(2, result.datasets().size());
+        assertEquals("events.v1.Created", result.datasets().get(0).type());
+        assertEquals(2, result.datasets().get(0).rows().size());
+        assertEquals("events.v1.Deleted", result.datasets().get(1).type());
+        assertEquals(1, result.datasets().get(1).rows().size());
     }
 
     @Test
     void tableCellStatesRoundTrip() {
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
         var result = UnmarshalOptions.defaults().unmarshalFull("""
-                @table t.T (a, b, c)
+                @dataset t.T (a, b, c)
                 ("x", 1, true)
                 (null, , 3)
                 (, "y", null)
                 """.getBytes(), b);
 
-        var rows = result.tables().get(0).rows();
+        var rows = result.datasets().get(0).rows();
         // Row 1: all present, distinct types.
         assertTrue(rows.get(0).cells().get(0) instanceof Ast.StringVal);
         assertTrue(rows.get(0).cells().get(1) instanceof Ast.IntVal);
@@ -136,10 +136,10 @@ class ResultAccessorsTest {
         // PXF leaf value type that v1 cell-grammar permits.
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
         var result = UnmarshalOptions.defaults().unmarshalFull("""
-                @table t.T (s, i, f, b, by, ts, d, e, n)
+                @dataset t.T (s, i, f, b, by, ts, d, e, n)
                 ("hi", 42, 3.14, true, b"aGVsbG8=", 2026-05-12T10:00:00Z, 1h30m, ENUM_VAL, null)
                 """.getBytes(), b);
-        var cells = result.tables().get(0).rows().get(0).cells();
+        var cells = result.datasets().get(0).rows().get(0).cells();
         assertTrue(cells.get(0) instanceof Ast.StringVal);
         assertTrue(cells.get(1) instanceof Ast.IntVal);
         assertTrue(cells.get(2) instanceof Ast.FloatVal);
@@ -157,6 +157,6 @@ class ResultAccessorsTest {
         var result = UnmarshalOptions.defaults().unmarshalFull(
                 "string_field = \"x\"".getBytes(), b);
         assertEquals(java.util.List.of(), result.directives());
-        assertEquals(java.util.List.of(), result.tables());
+        assertEquals(java.util.List.of(), result.datasets());
     }
 }

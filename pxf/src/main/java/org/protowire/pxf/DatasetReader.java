@@ -13,9 +13,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 /**
- * Streaming consumption for the {@code @table} directive (draft §3.4.4
+ * Streaming consumption for the {@code @dataset} directive (draft §3.4.4
  * "Streaming consumption"). Pulls bytes from an {@link InputStream} on
- * demand and yields one {@link Ast.TableRow} per {@link #next()} call,
+ * demand and yields one {@link Ast.DatasetRow} per {@link #next()} call,
  * with working-set memory bounded by the size of the largest single row.
  * Use it for datasets too large to materialize via {@link Pxf#unmarshal} /
  * {@link Pxf#unmarshalFull}.
@@ -24,24 +24,24 @@ import java.util.NoSuchElementException;
  * cell-grammar rule on each row as it is consumed (not deferred to end of
  * input), and MUST yield rows in source order. Both invariants fall out
  * of the implementation here: the row-boundary scanner produces one
- * {@code ( ... )} byte slice at a time, and {@link Parser#parseTableRow}
+ * {@code ( ... )} byte slice at a time, and {@link Parser#parseDatasetRow}
  * decodes it.
  *
- * <p>A TableReader is positioned at the first row after
- * {@link #TableReader(InputStream)} returns. Call {@link #next()} in a
+ * <p>A DatasetReader is positioned at the first row after
+ * {@link #DatasetReader(InputStream)} returns. Call {@link #next()} in a
  * loop until it returns {@code null}; the row sequence is exhausted at
- * that point. For documents containing multiple {@code @table}
- * directives, construct a second TableReader from {@link #tail()}.
+ * that point. For documents containing multiple {@code @dataset}
+ * directives, construct a second DatasetReader from {@link #tail()}.
  *
- * <p>A TableReader is NOT safe for concurrent use.
+ * <p>A DatasetReader is NOT safe for concurrent use.
  */
-public final class TableReader {
+public final class DatasetReader {
 
     /**
-     * Cap on the byte budget for the {@code @table} header (leading
-     * directives + {@code @table TYPE (col1, col2, ...)}). Real headers
-     * are tiny; the cap exists to fail-fast on misuse — a TableReader
-     * pointed at a multi-gigabyte document with no {@code @table}
+     * Cap on the byte budget for the {@code @dataset} header (leading
+     * directives + {@code @dataset TYPE (col1, col2, ...)}). Real headers
+     * are tiny; the cap exists to fail-fast on misuse — a DatasetReader
+     * pointed at a multi-gigabyte document with no {@code @dataset}
      * directive shouldn't OOM trying to find one.
      */
     private static final int DEFAULT_HEADER_MAX_BYTES = 64 * 1024;
@@ -64,43 +64,43 @@ public final class TableReader {
 
     /**
      * Consume any leading directives ({@code @type}, {@code @<name>}, etc.)
-     * and the {@code @table TYPE ( cols )} header, returning a reader
+     * and the {@code @dataset TYPE ( cols )} header, returning a reader
      * positioned at the first row.
      *
      * @throws NoSuchElementException if the input ends before any
-     *                                {@code @table} directive is seen
+     *                                {@code @dataset} directive is seen
      * @throws PxfException           on a malformed header
      * @throws IOException            on an underlying {@link InputStream}
      *                                read failure
      */
-    public TableReader(InputStream src) throws IOException {
+    public DatasetReader(InputStream src) throws IOException {
         this.src = src;
         readHeader();
     }
 
-    /** The row message type declared by the {@code @table} header. */
+    /** The row message type declared by the {@code @dataset} header. */
     public String type() { return type; }
 
-    /** The column field names declared by the {@code @table} header, in source order. */
+    /** The column field names declared by the {@code @dataset} header, in source order. */
     public List<String> columns() { return columns; }
 
     /**
      * The side-channel directives ({@code @<name>} / {@code @entry} /
-     * etc., NOT {@code @type} or {@code @table}) that appeared before the
-     * {@code @table} header. Stable for the reader's lifetime.
+     * etc., NOT {@code @type} or {@code @dataset}) that appeared before the
+     * {@code @dataset} header. Stable for the reader's lifetime.
      */
     public List<Ast.Directive> directives() { return directives; }
 
     /**
      * Returns an {@link InputStream} that yields the bytes the reader has
      * buffered but not consumed, followed by any remaining bytes from the
-     * underlying source. Use it to chain a second TableReader for
-     * documents containing multiple {@code @table} directives:
+     * underlying source. Use it to chain a second DatasetReader for
+     * documents containing multiple {@code @dataset} directives:
      *
      * <pre>{@code
-     * var tr1 = new TableReader(src);
+     * var tr1 = new DatasetReader(src);
      * // ... iterate tr1.next() until null ...
-     * var tr2 = new TableReader(tr1.tail());
+     * var tr2 = new DatasetReader(tr1.tail());
      * }</pre>
      *
      * <p>MUST only be called after {@link #next()} has returned {@code null}.
@@ -117,10 +117,10 @@ public final class TableReader {
      * sequence is exhausted. After {@code null} (or any other error), all
      * subsequent calls return {@code null} or rethrow the sticky error.
      *
-     * <p>The returned {@link Ast.TableRow}'s cells list is freshly
+     * <p>The returned {@link Ast.DatasetRow}'s cells list is freshly
      * allocated; reading the next row does not invalidate it.
      */
-    public Ast.TableRow next() throws IOException {
+    public Ast.DatasetRow next() throws IOException {
         if (stickyError != null) throw stickyError;
         if (finished) return null;
         for (;;) {
@@ -129,9 +129,9 @@ public final class TableReader {
                 int start = rowRange[0];
                 int end = rowRange[1];
                 byte[] rowBytes = sliceBytes(pending, start, end + 1);
-                Ast.TableRow row;
+                Ast.DatasetRow row;
                 try {
-                    row = Parser.parseTableRow(rowBytes, columns.size());
+                    row = Parser.parseDatasetRow(rowBytes, columns.size());
                 } catch (PxfException e) {
                     stickyError = e;
                     throw e;
@@ -158,7 +158,7 @@ public final class TableReader {
      * value sets the field.
      */
     public boolean scan(Message.Builder builder) throws IOException {
-        Ast.TableRow row = next();
+        Ast.DatasetRow row = next();
         if (row == null) return false;
         BindRow.bindRow(builder, columns, row);
         return true;
@@ -171,18 +171,18 @@ public final class TableReader {
             int headerEnd = scanHeaderEnd(pending);
             if (headerEnd >= 0) {
                 // Parse the header prefix as a (rowless) PXF document.
-                // Parser is happy with an @table directive that has no
+                // Parser is happy with an @dataset directive that has no
                 // rows yet, and validates everything we care about
-                // (leading-directive shape, @type/@table conflict,
+                // (leading-directive shape, @type/@dataset conflict,
                 // dotted columns, etc.).
                 byte[] headerBytes = sliceBytes(pending, 0, headerEnd + 1);
                 Ast.Document doc = Parser.parse(headerBytes);
-                if (doc.tables().isEmpty()) {
-                    // Should not happen — scanHeaderEnd found an @table —
+                if (doc.datasets().isEmpty()) {
+                    // Should not happen — scanHeaderEnd found an @dataset —
                     // but defensive.
-                    throw new NoSuchElementException("pxf: no @table directive in stream");
+                    throw new NoSuchElementException("pxf: no @dataset directive in stream");
                 }
-                Ast.TableDirective tbl = doc.tables().get(0);
+                Ast.DatasetDirective tbl = doc.datasets().get(0);
                 this.type = tbl.type();
                 this.columns = tbl.columns();
                 this.directives = doc.directives();
@@ -190,12 +190,12 @@ public final class TableReader {
                 return;
             }
             if (srcEof) {
-                throw new NoSuchElementException("pxf: no @table directive in stream");
+                throw new NoSuchElementException("pxf: no @dataset directive in stream");
             }
             if (pending.length >= DEFAULT_HEADER_MAX_BYTES) {
                 throw new PxfException(Position.UNKNOWN,
-                        "pxf: @table header exceeds " + DEFAULT_HEADER_MAX_BYTES + " bytes; "
-                                + "check that the input begins with `@table TYPE (cols)`");
+                        "pxf: @dataset header exceeds " + DEFAULT_HEADER_MAX_BYTES + " bytes; "
+                                + "check that the input begins with `@dataset TYPE (cols)`");
             }
             pull(STREAM_PULL_SIZE);
         }
@@ -224,7 +224,7 @@ public final class TableReader {
 
     /**
      * Search {@code input} for the first complete
-     * {@code @table TYPE ( cols )} directive and return the index of the
+     * {@code @dataset TYPE ( cols )} directive and return the index of the
      * {@code )} that closes its column list. Returns -1 if the input
      * ends before the header is complete (caller should pull more bytes).
      * Throws {@link PxfException} on malformed string/comment.
@@ -232,34 +232,39 @@ public final class TableReader {
     static int scanHeaderEnd(byte[] input) {
         int atIdx = findAtTable(input);
         if (atIdx < 0) return -1;
-        int lparen = findNextChar(input, atIdx + "@table".length(), '(');
+        int lparen = findNextChar(input, atIdx + "@dataset".length(), '(');
         if (lparen < 0) return -1;
         return findMatchingParen(input, lparen);
     }
 
     /**
-     * Return the byte offset of the next {@code @table} keyword outside
+     * Return the byte offset of the next {@code @dataset} keyword outside
      * strings/comments. The match must be followed by a non-identifier
-     * byte so we don't false-match {@code @tableau}. Returns -1 when not
+     * byte so we don't false-match {@code @datasetau}. Returns -1 when not
      * found or when the input ends mid-construct.
      */
     static int findAtTable(byte[] input) {
+        final byte[] needle = {'@', 'd', 'a', 't', 'a', 's', 'e', 't'};
         int i = 0;
         while (i < input.length) {
             int j = skipStringOrComment(input, i);
             if (j == NEED_MORE) return -1;
             if (j != i) { i = j; continue; }
-            if (input[i] == '@' && i + 6 <= input.length
-                    && input[i + 1] == 't' && input[i + 2] == 'a' && input[i + 3] == 'b'
-                    && input[i + 4] == 'l' && input[i + 5] == 'e') {
-                int after = i + 6;
-                if (after == input.length) {
-                    // `@table` followed by more bytes we haven't seen yet
-                    // — be conservative.
-                    return -1;
+            if (input[i] == '@' && i + needle.length <= input.length) {
+                boolean match = true;
+                for (int k = 1; k < needle.length; k++) {
+                    if (input[i + k] != needle[k]) { match = false; break; }
                 }
-                if (!isIdentPart(input[after])) {
-                    return i;
+                if (match) {
+                    int after = i + needle.length;
+                    if (after == input.length) {
+                        // `@dataset` followed by more bytes we haven't seen
+                        // yet — be conservative.
+                        return -1;
+                    }
+                    if (!isIdentPart(input[after])) {
+                        return i;
+                    }
                 }
             }
             i++;

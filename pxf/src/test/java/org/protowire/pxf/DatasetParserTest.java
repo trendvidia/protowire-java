@@ -13,20 +13,20 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Parser-side tests for the {@code @table} directive (draft §3.4.4).
+ * Parser-side tests for the {@code @dataset} directive (draft §3.4.4).
  * Mirrors the Go-port tests in encoding/pxf/table_test.go.
  */
-class TableParserTest {
+class DatasetParserTest {
 
     @Test
     void basicTable() {
         var doc = Parser.parse("""
-                @table trades.v1.Trade (symbol, price, qty)
+                @dataset trades.v1.Trade (symbol, price, qty)
                 ("AAPL", 192.34, 100)
                 ("MSFT", 410.10, 50)
                 """);
-        assertEquals(1, doc.tables().size());
-        var t = doc.tables().get(0);
+        assertEquals(1, doc.datasets().size());
+        var t = doc.datasets().get(0);
         assertEquals("trades.v1.Trade", t.type());
         assertEquals(List.of("symbol", "price", "qty"), t.columns());
         assertEquals(2, t.rows().size());
@@ -35,10 +35,10 @@ class TableParserTest {
 
     @Test
     void emptyTable() {
-        var doc = Parser.parse("@table trades.v1.Trade (symbol, price)");
-        assertEquals(1, doc.tables().size());
-        assertEquals(List.of("symbol", "price"), doc.tables().get(0).columns());
-        assertEquals(0, doc.tables().get(0).rows().size());
+        var doc = Parser.parse("@dataset trades.v1.Trade (symbol, price)");
+        assertEquals(1, doc.datasets().size());
+        assertEquals(List.of("symbol", "price"), doc.datasets().get(0).columns());
+        assertEquals(0, doc.datasets().get(0).rows().size());
     }
 
     // --- Three cell states ---
@@ -46,12 +46,12 @@ class TableParserTest {
     @Test
     void threeCellStates() {
         var doc = Parser.parse("""
-                @table trades.v1.Trade (symbol, price, qty)
+                @dataset trades.v1.Trade (symbol, price, qty)
                 ("AAPL", 192.34, 100)
                 ("MSFT", null, 50)
                 ("GOOG", , )
                 """);
-        var rows = doc.tables().get(0).rows();
+        var rows = doc.datasets().get(0).rows();
         // Row 1: all present.
         for (Ast.Value c : rows.get(0).cells()) assertNotNull(c);
         // Row 2: middle is *NullVal.
@@ -67,10 +67,10 @@ class TableParserTest {
     @Test
     void leadingEmptyCell() {
         var doc = Parser.parse("""
-                @table T (a, b)
+                @dataset T (a, b)
                 ( , 192.34)
                 """);
-        var row = doc.tables().get(0).rows().get(0);
+        var row = doc.datasets().get(0).rows().get(0);
         assertNull(row.cells().get(0));
         assertNotNull(row.cells().get(1));
     }
@@ -78,10 +78,10 @@ class TableParserTest {
     @Test
     void allEmptyRow() {
         var doc = Parser.parse("""
-                @table T (a, b, c)
+                @dataset T (a, b, c)
                 (,,)
                 """);
-        var row = doc.tables().get(0).rows().get(0);
+        var row = doc.datasets().get(0).rows().get(0);
         assertEquals(3, row.cells().size());
         for (Ast.Value c : row.cells()) assertNull(c);
     }
@@ -91,7 +91,7 @@ class TableParserTest {
     @Test
     void arityShortRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table T (symbol, price, qty)
+                @dataset T (symbol, price, qty)
                 ("AAPL", 1.0)
                 """));
         assertTrue(ex.getMessage().contains("2 cells, expected 3"));
@@ -100,7 +100,7 @@ class TableParserTest {
     @Test
     void arityLongRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table T (symbol, price)
+                @dataset T (symbol, price)
                 ("AAPL", 1.0, 100)
                 """));
         assertTrue(ex.getMessage().contains("3 cells, expected 2"));
@@ -111,7 +111,7 @@ class TableParserTest {
     @Test
     void listCellRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table T (symbol, tags)
+                @dataset T (symbol, tags)
                 ("AAPL", ["tech", "blue-chip"])
                 """));
         assertTrue(ex.getMessage().contains("list values"));
@@ -120,7 +120,7 @@ class TableParserTest {
     @Test
     void blockCellRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table T (symbol, meta)
+                @dataset T (symbol, meta)
                 ("AAPL", { exchange = "NASDAQ" })
                 """));
         assertTrue(ex.getMessage().contains("block values"));
@@ -131,7 +131,7 @@ class TableParserTest {
     @Test
     void dottedColumnRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table T (symbol, meta.exchange)
+                @dataset T (symbol, meta.exchange)
                 ("AAPL", "NASDAQ")
                 """));
         assertTrue(ex.getMessage().contains("dotted column paths"));
@@ -139,7 +139,7 @@ class TableParserTest {
 
     @Test
     void emptyColumnListRejected() {
-        var ex = assertThrows(PxfException.class, () -> Parser.parse("@table T ()"));
+        var ex = assertThrows(PxfException.class, () -> Parser.parse("@dataset T ()"));
         assertTrue(ex.getMessage().contains("at least one field name"));
     }
 
@@ -149,7 +149,7 @@ class TableParserTest {
     void atTypeWithAtTableRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
                 @type trades.v1.Wrapper
-                @table trades.v1.Trade (symbol)
+                @dataset trades.v1.Trade (symbol)
                 ("AAPL")
                 """));
         assertTrue(ex.getMessage().contains("@type"));
@@ -158,7 +158,7 @@ class TableParserTest {
     @Test
     void atTableWithBodyEntriesRejected() {
         var ex = assertThrows(PxfException.class, () -> Parser.parse("""
-                @table trades.v1.Trade (symbol)
+                @dataset trades.v1.Trade (symbol)
                 ("AAPL")
                 extra = "stray"
                 """));
@@ -170,17 +170,17 @@ class TableParserTest {
     @Test
     void multipleTablesOrderPreserved() {
         var doc = Parser.parse("""
-                @table events.v1.Created (id)
+                @dataset events.v1.Created (id)
                 ("e-1")
                 ("e-2")
-                @table events.v1.Deleted (id)
+                @dataset events.v1.Deleted (id)
                 ("e-9")
                 """);
-        assertEquals(2, doc.tables().size());
-        assertEquals("events.v1.Created", doc.tables().get(0).type());
-        assertEquals("events.v1.Deleted", doc.tables().get(1).type());
-        assertEquals(2, doc.tables().get(0).rows().size());
-        assertEquals(1, doc.tables().get(1).rows().size());
+        assertEquals(2, doc.datasets().size());
+        assertEquals("events.v1.Created", doc.datasets().get(0).type());
+        assertEquals("events.v1.Deleted", doc.datasets().get(1).type());
+        assertEquals(2, doc.datasets().get(0).rows().size());
+        assertEquals(1, doc.datasets().get(1).rows().size());
     }
 
     // --- Cell variants (smoke check that timestamp, duration, bytes, etc. land correctly) ---
@@ -188,10 +188,10 @@ class TableParserTest {
     @Test
     void cellVariants() {
         var doc = Parser.parse("""
-                @table t.T (s, i, f, b, by, ts, d, e, n)
+                @dataset t.T (s, i, f, b, by, ts, d, e, n)
                 ("hi", 42, 3.14, true, b"aGVsbG8=", 2026-05-12T10:00:00Z, 1h30m, ENUM_VAL, null)
                 """);
-        var cells = doc.tables().get(0).rows().get(0).cells();
+        var cells = doc.datasets().get(0).rows().get(0).cells();
         assertTrue(cells.get(0) instanceof Ast.StringVal);
         assertTrue(cells.get(1) instanceof Ast.IntVal);
         assertTrue(cells.get(2) instanceof Ast.FloatVal);

@@ -13,7 +13,7 @@ import java.util.List;
  * Per-row proto-binding helper for {@code @dataset} rows. Sits atop the
  * streaming {@link DatasetReader} (via {@link DatasetReader#scan}) and is also
  * exported as a standalone helper for callers that iterate the
- * materializing path's {@link Result#tables()} rows.
+ * materializing path's {@link Result#datasets()} rows.
  *
  * <p>Implementation strategy: convert each non-{@code null} cell back to
  * its PXF text representation, concatenate as a {@code <column> = <value>\n}

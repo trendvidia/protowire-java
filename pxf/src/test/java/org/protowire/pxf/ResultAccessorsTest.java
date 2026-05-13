@@ -12,7 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Verifies that {@link Result#directives()} and {@link Result#tables()}
+ * Verifies that {@link Result#directives()} and {@link Result#datasets()}
  * are populated by {@link UnmarshalOptions#unmarshalFull} (the decode
  * path now records the side-channel directives the prior PRs only
  * skipped). Mirrors the Go-port test

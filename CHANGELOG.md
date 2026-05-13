@@ -18,6 +18,15 @@ format changes.
 
 ## [Unreleased]
 
+## [1.0.0] — 2026-05-13
+
+First major-version cut. Implements the three one-time spec changes
+from the protowire v1.0 freeze line in lockstep with `protowire`,
+`protowire-go`, and `protowire-typescript`. **Breaking** — there is
+no alias period; v1.0 is itself the major bump. Maven group remains
+`org.protowire`; the published artifact is `protowire-pxf` (and the
+sibling modules `pb`, `sbe`, `envelope`, `proto-annotations`).
+
 ### v1.0 spec changes
 
 Three one-time spec changes from the protowire v1.0 freeze line

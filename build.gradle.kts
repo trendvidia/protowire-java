@@ -7,7 +7,7 @@ import com.vanniktech.maven.publish.SourcesJar
 
 plugins {
     `java-library`
-    id("com.vanniktech.maven.publish") version "0.36.0" apply false
+    id("com.vanniktech.maven.publish") version "0.37.0" apply false
 }
 
 allprojects {
@@ -71,7 +71,7 @@ subprojects {
     }
 
     dependencies {
-        "testImplementation"("org.junit.jupiter:junit-jupiter:6.1.0")
+        "testImplementation"("org.junit.jupiter:junit-jupiter:6.1.1")
         "testRuntimeOnly"("org.junit.platform:junit-platform-launcher")
     }
 

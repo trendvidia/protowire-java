@@ -29,7 +29,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v6
+      - uses: gradle/actions/setup-gradle@v6.2.0
 
       - uses: github/codeql-action/init@v4
         with:
@@ -43,7 +43,7 @@ jobs:
         # the tracer sees zero compilations and the analyze step fails
         # with "could not process any code written in Java/Kotlin".
         # `clean` forces a recompile every run; `--no-build-cache`
-        # belt-and-braces against the gradle/actions/setup-gradle@v6
+        # belt-and-braces against the gradle/actions/setup-gradle@v6.2.0
         # build-cache restore.
         run: ./gradlew --no-daemon --no-build-cache clean classes
 

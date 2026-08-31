@@ -19,8 +19,8 @@ import java.io.IOException;
 final class Annotations {
     private Annotations() {}
 
-    static final int EXT_REQUIRED = 50000;
-    static final int EXT_DEFAULT  = 50001;
+    static final int EXT_REQUIRED = 1314;
+    static final int EXT_DEFAULT  = 1315;
 
     static boolean isRequired(FieldDescriptor fd) {
         return readBool(fd, EXT_REQUIRED);

@@ -15,11 +15,11 @@ import java.io.IOException;
 final class SbeAnnotations {
     private SbeAnnotations() {}
 
-    static final int EXT_SCHEMA_ID   = 50100;
-    static final int EXT_VERSION     = 50101;
-    static final int EXT_TEMPLATE_ID = 50200;
-    static final int EXT_LENGTH      = 50300;
-    static final int EXT_ENCODING    = 50301;
+    static final int EXT_SCHEMA_ID   = 1319;
+    static final int EXT_VERSION     = 1320;
+    static final int EXT_TEMPLATE_ID = 1321;
+    static final int EXT_LENGTH      = 1322;
+    static final int EXT_ENCODING    = 1323;
 
     static Integer fileUint32(FileDescriptor fd, int target) {
         return readUint32(fd.toProto().getOptions().toByteString(), target);

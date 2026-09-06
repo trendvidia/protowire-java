@@ -588,6 +588,38 @@ final class LiteWireWriterTest {
     }
 
     @Test
+    void stringDefault_isTheRawOptionValue() {
+        // (pxf.default) = "us-east-1" on a string field: the option text is
+        // the value, as in the full tier -- not a PXF expression, which would
+        // stop at the dash. protowire/testdata/annotations/ok.pxf is the
+        // cross-port case.
+        Ast.Document doc = Parser.parse("");
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("region", 3),
+                Map.of(3, 9 /* STRING */),
+                Set.of(),
+                Map.of(3, "us-east-1"),
+                Map.of());
+
+        // tag 0x1a (field 3, length-delimited), len 9, "us-east-1"
+        assertEquals("1a0975732d656173742d31", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
+    void bytesDefault_isBase64Decoded() {
+        Ast.Document doc = Parser.parse("");
+        PxfMeta m = semanticMeta("test.Sample",
+                Map.of("token", 5),
+                Map.of(5, 12 /* BYTES */),
+                Set.of(),
+                Map.of(5, "AQID"),
+                Map.of());
+
+        // tag 0x2a (field 5, length-delimited), len 3, 01 02 03
+        assertEquals("2a03010203", hex(LiteWireWriter.encode(doc, m)));
+    }
+
+    @Test
     void default_appliedWhenAbsent() {
         Ast.Document doc = Parser.parse("");  // age not set
         PxfMeta m = semanticMeta("test.Sample",

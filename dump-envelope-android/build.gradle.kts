@@ -14,6 +14,7 @@ plugins {
 
 dependencies {
     implementation(project(":envelope-android"))
+    implementation(project(":lite-fixtures"))
 }
 
 application {

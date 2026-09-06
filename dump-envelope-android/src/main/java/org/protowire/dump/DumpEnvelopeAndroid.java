@@ -9,6 +9,7 @@
 // equality between this output and :dump-envelope's.
 package org.protowire.dump;
 
+import org.protowire.lite.fixtures.FixtureModes;
 import com.google.protobuf.ByteString;
 import org.protowire.envelope.v1.AppError;
 import org.protowire.envelope.v1.Envelope;
@@ -18,6 +19,13 @@ public final class DumpEnvelopeAndroid {
     private DumpEnvelopeAndroid() {}
 
     public static void main(String[] args) {
+        if (args.length != 0) {
+            if (!FixtureModes.isFixtureInvocation(args)) {
+                System.err.println("usage: dump-envelope-android [--pb|--sbe FDS MESSAGE DOC]");
+                System.exit(2);
+            }
+            System.exit(FixtureModes.run(args[0], args[1], args[2], args[3]));
+        }
         FieldError fe = FieldError.newBuilder()
             .setField("amount").setCode("MIN_VALUE")
             .setMessage("below minimum").addArgs("10.00").build();

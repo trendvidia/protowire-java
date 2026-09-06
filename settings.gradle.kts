@@ -32,4 +32,5 @@ include(
     ":sbe-android",
     ":sbe-android-codegen-it",
     ":bench-sbe-android",
+    ":lite-fixtures",
 )

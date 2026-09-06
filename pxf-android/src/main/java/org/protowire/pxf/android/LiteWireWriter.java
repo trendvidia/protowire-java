@@ -17,6 +17,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -307,15 +308,36 @@ public final class LiteWireWriter {
             if (oneof != null && oneofSet.containsKey(oneof)) {
                 continue;
             }
-            Ast.Document parsed = Parser.parse("__default = " + e.getValue());
-            if (parsed.entries().isEmpty() || !(parsed.entries().get(0) instanceof Ast.Assignment def)) {
-                throw new IllegalStateException(
-                    "(pxf.default) for field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
-                    " did not parse as a value: " + e.getValue());
-            }
             int kind = fieldKinds.getOrDefault(num, 0);
-            writeField(out, num, kind, def.value(), meta, registry);
+            writeField(out, num, kind, defaultValue(kind, e.getValue(), meta, num), meta, registry);
             recordSet(num, oneofOf, setFields, oneofSet);
+        }
+    }
+
+    /**
+     * The value a {@code (pxf.default)} option denotes, by field kind -- the
+     * same rule the full tier applies in {@code FastDecoder.applyDefault}: a
+     * string field takes the option text as its value, a bytes field its
+     * base64 decoding, and every other kind parses the text as a PXF literal.
+     * Parsing a string default as PXF would reject any value that is not a
+     * bare identifier ({@code "us-east-1"} stops at the dash), which is where
+     * this tier diverged from the JVM one until protowire's annotation gate
+     * (protowire#244, #58) ran the shared fixture through both.
+     */
+    private static Ast.Value defaultValue(int kind, String raw, PxfMeta meta, int num) {
+        switch (kind) {
+            case 9:  // TYPE_STRING
+                return new Ast.StringVal(Position.UNKNOWN, raw);
+            case 12: // TYPE_BYTES
+                return new Ast.BytesVal(Position.UNKNOWN, Base64.getDecoder().decode(raw));
+            default:
+                Ast.Document parsed = Parser.parse("__default = " + raw);
+                if (parsed.entries().isEmpty() || !(parsed.entries().get(0) instanceof Ast.Assignment def)) {
+                    throw new IllegalStateException(
+                        "(pxf.default) for field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
+                        " did not parse as a value: " + raw);
+                }
+                return def.value();
         }
     }
 

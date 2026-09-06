@@ -23,7 +23,7 @@ allprojects {
 // internal test runners (consumed by the spec repo's cross_*.sh scripts)
 // and intentionally excluded.
 val publishableModules = setOf(
-    "pb", "pxf-runtime", "pxf", "sbe", "envelope", "proto-annotations",
+    "pb", "pxf-runtime", "pxf", "sbe-runtime", "sbe", "envelope", "proto-annotations",
     // lite tier (#60)
     "pb-android", "pxf-android", "envelope-android",
 )

@@ -2,10 +2,12 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.sbe;
 
+import org.protowire.sbe.runtime.SbeConstants;
+
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 
-import static org.protowire.sbe.Codec.*;
+import static org.protowire.sbe.runtime.SbeConstants.*;
 
 /**
  * Zero-allocation reader. Holds an underlying byte buffer; field values are read at fixed offsets
@@ -18,7 +20,7 @@ public final class View {
     final ViewSchema schema;
     private final ByteBuffer bb;
 
-    View(byte[] data, int blockStart, int blockLength, ViewSchema schema) {
+    public View(byte[] data, int blockStart, int blockLength, ViewSchema schema) {
         this.data = data;
         this.blockStart = blockStart;
         this.blockLength = blockLength;

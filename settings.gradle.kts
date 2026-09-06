@@ -18,4 +18,5 @@ include(
     ":dump-envelope",
     ":bench-pxf",
     ":bench-sbe",
+    ":check-decode",
 )

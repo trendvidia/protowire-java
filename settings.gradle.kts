@@ -29,4 +29,7 @@ include(
     ":dump-envelope-android",
     ":dump-envelope-pxf-android",
     ":bench-pxf-android",
+    ":sbe-android",
+    ":sbe-android-codegen-it",
+    ":bench-sbe-android",
 )

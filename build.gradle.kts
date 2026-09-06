@@ -22,7 +22,11 @@ allprojects {
 // Modules that ship to Maven Central. Bench harnesses + dump-envelope are
 // internal test runners (consumed by the spec repo's cross_*.sh scripts)
 // and intentionally excluded.
-val publishableModules = setOf("pb", "pxf-runtime", "pxf", "sbe", "envelope", "proto-annotations")
+val publishableModules = setOf(
+    "pb", "pxf-runtime", "pxf", "sbe", "envelope", "proto-annotations",
+    // lite tier (#60)
+    "pb-android", "pxf-android", "envelope-android",
+)
 
 subprojects {
     apply(plugin = "java-library")
@@ -91,7 +95,8 @@ subprojects {
 
             configure(
                 JavaLibrary(
-                    javadocJar = JavadocJar.Javadoc(),
+                    // pb-android re-exports protobuf-javalite and has no sources to document.
+                    javadocJar = if (project.name == "pb-android") JavadocJar.Empty() else JavadocJar.Javadoc(),
                     sourcesJar = SourcesJar.Sources(),
                 ),
             )

@@ -17,6 +17,7 @@ import org.protowire.pxf.android.LitePxf;
 import org.protowire.pxf.android.LiteWireWriter;
 
 import java.util.Arrays;
+import org.protowire.lite.fixtures.FixtureModes;
 
 public final class DumpEnvelopePxfAndroid {
     private DumpEnvelopePxfAndroid() {}
@@ -47,6 +48,13 @@ public final class DumpEnvelopePxfAndroid {
         "}\n";
 
     public static void main(String[] args) throws Exception {
+        if (args.length != 0) {
+            if (!FixtureModes.isFixtureInvocation(args)) {
+                System.err.println("usage: dump-envelope-pxf-android [--pb|--sbe FDS MESSAGE DOC]");
+                System.exit(2);
+            }
+            System.exit(FixtureModes.run(args[0], args[1], args[2], args[3]));
+        }
         Ast.Document doc = Parser.parse(CANONICAL_PXF);
         byte[] wire = LiteWireWriter.encode(doc, EnvelopePxfMeta.INSTANCE);
         // Round-trip through MessageLite.parseFrom + toByteArray to confirm the

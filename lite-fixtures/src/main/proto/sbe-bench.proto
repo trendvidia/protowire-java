@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 TrendVidia, LLC.
+
 // Canonical SBE benchmark fixture, shared across all language ports.
 //
 // Matches the `Order` message used by each port's existing SBE tests
@@ -9,13 +10,8 @@
 syntax = "proto3";
 package bench.v1;
 
-// java_package added locally for the lite-tier consumer in
-// :bench-sbe-android; protoc-gen-pxf-java-meta requires it for codegen.
-// The canonical testdata/sbe-bench.proto in the protowire repo doesn't set
-// java_package because the full-runtime :bench-sbe goes through
-// DynamicMessage, not typed Java classes — so this is wire-irrelevant
-// divergence (java_package only affects Java class names, never the
-// wire output).
+// Java options for this port's codegen: protoc-gen-pxf-java-meta requires an
+// explicit java_package; the rest of the file is protowire's testdata/sbe-bench.proto verbatim.
 option java_package = "bench.v1";
 option java_multiple_files = true;
 

@@ -9,7 +9,7 @@ import java.util.Set;
 
 /**
  * Field-presence metadata + side-channel directives produced by
- * {@link Pxf#unmarshalFull}. Tracks set, null, and absent fields by
+ * {@code Pxf.unmarshalFull} (protowire-pxf). Tracks set, null, and absent fields by
  * dotted path (e.g. {@code "name"}, {@code "nested.value"}), plus the
  * {@code @<name>} directives and {@code @dataset} directives the decoder
  * saw at the document root.
@@ -47,7 +47,7 @@ public final class Result {
      * saw at the document root, in source order. Excludes the {@code @type}
      * and {@code @dataset} directives (which have their own accessors).
      * Callers typically iterate and hand each {@link Ast.Directive#body()}
-     * back to {@link Pxf#unmarshalFull} against a chosen message —
+     * back to {@code Pxf.unmarshalFull} (protowire-pxf) against a chosen message —
      * chameleon's {@code @header} consumption pattern.
      */
     public List<Ast.Directive> directives() { return List.copyOf(directives); }

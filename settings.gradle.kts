@@ -12,6 +12,7 @@ rootProject.name = "protowire-java"
 include(
     ":proto-annotations",
     ":pb",
+    ":pxf-runtime",
     ":pxf",
     ":sbe",
     ":envelope",

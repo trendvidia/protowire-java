@@ -25,7 +25,7 @@ allprojects {
 val publishableModules = setOf(
     "pb", "pxf-runtime", "pxf", "sbe-runtime", "sbe", "envelope", "proto-annotations",
     // lite tier (#60)
-    "pb-android", "pxf-android", "envelope-android",
+    "pb-android", "pxf-android", "envelope-android", "sbe-android",
 )
 
 subprojects {
@@ -95,8 +95,8 @@ subprojects {
 
             configure(
                 JavaLibrary(
-                    // pb-android re-exports protobuf-javalite and has no sources to document.
-                    javadocJar = if (project.name == "pb-android") JavadocJar.Empty() else JavadocJar.Javadoc(),
+                    // pb-android and sbe-android re-export their runtimes and have no sources to document.
+                    javadocJar = if (project.name in setOf("pb-android", "sbe-android")) JavadocJar.Empty() else JavadocJar.Javadoc(),
                     sourcesJar = SourcesJar.Sources(),
                 ),
             )

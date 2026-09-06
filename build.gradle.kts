@@ -22,7 +22,7 @@ allprojects {
 // Modules that ship to Maven Central. Bench harnesses + dump-envelope are
 // internal test runners (consumed by the spec repo's cross_*.sh scripts)
 // and intentionally excluded.
-val publishableModules = setOf("pb", "pxf", "sbe", "envelope", "proto-annotations")
+val publishableModules = setOf("pb", "pxf-runtime", "pxf", "sbe", "envelope", "proto-annotations")
 
 subprojects {
     apply(plugin = "java-library")

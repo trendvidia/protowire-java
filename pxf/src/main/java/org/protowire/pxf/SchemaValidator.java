@@ -51,18 +51,10 @@ public final class SchemaValidator {
 
     /**
      * Directive names the spec reserves for future allocation (draft
-     * §3.4.6). v1 decoders MUST reject these as unknown reserved
-     * directives so applications cannot squat the names before the spec
-     * allocates semantics to them.
-     *
-     * <p>The names with their own production ({@code type},
-     * {@code dataset}, {@code proto}) don't appear here — they're
-     * handled directly by the lexer. The spec-registered {@code entry}
-     * doesn't appear either — it's a valid named-directive with
-     * documented shape (draft §3.4.3).
+     * §3.4.6). Lives on {@link Parser}, which enforces it and has no
+     * descriptor dependency; kept here under its original name.
      */
-    public static final Set<String> FUTURE_RESERVED_DIRECTIVES = Set.of(
-            "table", "datasource", "view", "procedure", "function", "permissions");
+    public static final Set<String> FUTURE_RESERVED_DIRECTIVES = Parser.FUTURE_RESERVED_DIRECTIVES;
 
     /** Which kind of schema element a {@link Violation} refers to. */
     public enum Kind {

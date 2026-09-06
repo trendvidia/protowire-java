@@ -4,6 +4,7 @@ package org.protowire.pxf;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Set;
 import java.util.Base64;
 import java.util.List;
 
@@ -12,6 +13,21 @@ import java.util.List;
  * collected into pending comments and attached to the next entry.
  */
 public final class Parser {
+    /**
+     * Directive names the spec reserves for future allocation (draft
+     * §3.4.6). v1 decoders MUST reject these as unknown reserved
+     * directives so applications cannot squat the names before the spec
+     * allocates semantics to them.
+     *
+     * <p>The names with their own production ({@code type},
+     * {@code dataset}, {@code proto}) don't appear here — they're
+     * handled directly by the lexer. The spec-registered {@code entry}
+     * doesn't appear either — it's a valid named-directive with
+     * documented shape (draft §3.4.3).
+     */
+    public static final Set<String> FUTURE_RESERVED_DIRECTIVES = Set.of(
+            "table", "datasource", "view", "procedure", "function", "permissions");
+
     private final Lexer lex;
     private Token current;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
@@ -132,7 +148,7 @@ public final class Parser {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
         String name = current.value();
-        if (SchemaValidator.FUTURE_RESERVED_DIRECTIVES.contains(name)) {
+        if (FUTURE_RESERVED_DIRECTIVES.contains(name)) {
             throw new PxfException(pp,
                     "@" + name + " is a spec-reserved directive name with no v1 semantics (draft §3.4.6)");
         }
@@ -440,12 +456,12 @@ public final class Parser {
                 advance(); yield v;
             }
             case TIMESTAMP -> {
-                var t = WellKnown.parseRfc3339(current.value());
+                var t = TimeFormats.parseRfc3339(current.value());
                 var v = new Ast.TimestampVal(pp, t, current.value());
                 advance(); yield v;
             }
             case DURATION -> {
-                var d = WellKnown.parseGoDuration(current.value());
+                var d = TimeFormats.parseGoDuration(current.value());
                 var v = new Ast.DurationVal(pp, d, current.value());
                 advance(); yield v;
             }

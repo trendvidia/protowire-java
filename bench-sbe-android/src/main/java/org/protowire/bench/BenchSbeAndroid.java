@@ -31,7 +31,7 @@ public final class BenchSbeAndroid {
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--seconds":
-                    seconds = Double.parseDouble(args[++i]);
+                    seconds = Double.parseDouble(requireValue(args, ++i));
                     break;
                 case "--testdata":
                     // Lite tier doesn't read FileDescriptorSet; --testdata is
@@ -78,6 +78,18 @@ public final class BenchSbeAndroid {
      * marshal output should byte-equal full-tier marshal output for the
      * same logical input.
      */
+    /**
+     * The value after a flag, or exit 2: {@code --seconds} as the last
+     * argument is a usage error, not an ArrayIndexOutOfBoundsException.
+     */
+    private static String requireValue(String[] args, int i) {
+        if (i >= args.length) {
+            System.err.println("bench-sbe-android: " + args[i - 1] + " needs a value");
+            System.exit(2);
+        }
+        return args[i];
+    }
+
     private static Order canonicalOrder() {
         return Order.newBuilder()
             .setOrderId(1001L)

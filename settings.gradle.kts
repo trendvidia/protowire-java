@@ -20,4 +20,12 @@ include(
     ":bench-pxf",
     ":bench-sbe",
     ":check-decode",
+    // Lite tier (protobuf-javalite): see #60.
+    ":pb-android",
+    ":pxf-android",
+    ":envelope-android",
+    ":pxf-android-codegen-it",
+    ":dump-envelope-android",
+    ":dump-envelope-pxf-android",
+    ":bench-pxf-android",
 )

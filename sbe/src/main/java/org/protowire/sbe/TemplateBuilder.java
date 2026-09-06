@@ -10,8 +10,17 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 
-import static org.protowire.sbe.Codec.*;
 
+import static org.protowire.sbe.runtime.SbeConstants.*;
+
+/**
+ * Compiles a protobuf {@link Descriptor} into the descriptor-free
+ * {@link MessageTemplate} that the wire codec consumes. {@code field
+ * number} + {@code kind} (the {@code FieldDescriptorProto.Type} integer)
+ * are baked into each {@link FieldTemplate} / {@link GroupTemplate} —
+ * the runtime never reaches back through a {@link FieldDescriptor} after
+ * this step.
+ */
 final class TemplateBuilder {
     private TemplateBuilder() {}
 
@@ -37,13 +46,13 @@ final class TemplateBuilder {
             if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 int[] sz = new int[]{0};
                 List<FieldTemplate> sub = buildComposite(fd.getMessageType(), sz);
-                fields.add(new FieldTemplate(fd, offset, sz[0], "", sub));
+                fields.add(new FieldTemplate(fd.getNumber(), fd.getName(), kindOf(fd), offset, sz[0], "", sub));
                 offset += sz[0];
                 continue;
             }
             int[] szRef = new int[1];
             String enc = fieldEncodingSize(fd, szRef);
-            fields.add(new FieldTemplate(fd, offset, szRef[0], enc, null));
+            fields.add(new FieldTemplate(fd.getNumber(), fd.getName(), kindOf(fd), offset, szRef[0], enc, null));
             offset += szRef[0];
         }
 
@@ -60,16 +69,16 @@ final class TemplateBuilder {
             if (f.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 int[] sz = new int[1];
                 List<FieldTemplate> sub = buildComposite(f.getMessageType(), sz);
-                fields.add(new FieldTemplate(f, offset, sz[0], "", sub));
+                fields.add(new FieldTemplate(f.getNumber(), f.getName(), kindOf(f), offset, sz[0], "", sub));
                 offset += sz[0];
                 continue;
             }
             int[] szRef = new int[1];
             String enc = fieldEncodingSize(f, szRef);
-            fields.add(new FieldTemplate(f, offset, szRef[0], enc, null));
+            fields.add(new FieldTemplate(f.getNumber(), f.getName(), kindOf(f), offset, szRef[0], enc, null));
             offset += szRef[0];
         }
-        return new GroupTemplate(fd, offset, List.copyOf(fields));
+        return new GroupTemplate(fd.getNumber(), fd.getName(), offset, List.copyOf(fields));
     }
 
     static List<FieldTemplate> buildComposite(Descriptor md, int[] outSize) {
@@ -80,13 +89,13 @@ final class TemplateBuilder {
             if (f.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 int[] sz = new int[1];
                 List<FieldTemplate> sub = buildComposite(f.getMessageType(), sz);
-                fields.add(new FieldTemplate(f, offset, sz[0], "", sub));
+                fields.add(new FieldTemplate(f.getNumber(), f.getName(), kindOf(f), offset, sz[0], "", sub));
                 offset += sz[0];
                 continue;
             }
             int[] szRef = new int[1];
             String enc = fieldEncodingSize(f, szRef);
-            fields.add(new FieldTemplate(f, offset, szRef[0], enc, null));
+            fields.add(new FieldTemplate(f.getNumber(), f.getName(), kindOf(f), offset, szRef[0], enc, null));
             offset += szRef[0];
         }
         outSize[0] = offset;
@@ -126,12 +135,12 @@ final class TemplateBuilder {
     static ViewSchema buildViewSchema(List<FieldTemplate> fields, List<GroupTemplate> groups) {
         ViewSchema vs = new ViewSchema();
         for (FieldTemplate ft : fields) {
-            vs.fields.put(ft.fd.getName(), ft);
+            vs.fields.put(ft.name, ft);
             if (ft.composite != null) ft.compositeView = buildViewSchema(ft.composite, List.of());
         }
         for (GroupTemplate gt : groups) {
             ViewSchema gvs = buildViewSchema(gt.fields, List.of());
-            vs.groupOrder.add(new ViewSchema.GroupInfo(gt.fd.getName(), gvs));
+            vs.groupOrder.add(new ViewSchema.GroupInfo(gt.name, gvs));
         }
         return vs;
     }
@@ -140,5 +149,10 @@ final class TemplateBuilder {
         List<FieldDescriptor> out = new ArrayList<>(md.getFields());
         out.sort(Comparator.comparingInt(FieldDescriptor::getNumber));
         return out;
+    }
+
+    /** Maps a {@link FieldDescriptor.Type} to the stable wire-of-the-meta-graph integer. */
+    static int kindOf(FieldDescriptor fd) {
+        return fd.getType().toProto().getNumber();
     }
 }

@@ -8,6 +8,7 @@ plugins {
 }
 
 dependencies {
+    api(project(":sbe-runtime"))
     api("com.google.protobuf:protobuf-java:3.25.5")
     api(project(":proto-annotations"))
 }

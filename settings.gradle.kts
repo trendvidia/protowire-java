@@ -14,6 +14,7 @@ include(
     ":pb",
     ":pxf-runtime",
     ":pxf",
+    ":sbe-runtime",
     ":sbe",
     ":envelope",
     ":dump-envelope",

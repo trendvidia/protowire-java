@@ -35,10 +35,10 @@ public final class BenchPxfAndroid {
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--seconds":
-                    seconds = Double.parseDouble(args[++i]);
+                    seconds = Double.parseDouble(requireValue(args, ++i));
                     break;
                 case "--testdata":
-                    testdata = Paths.get(args[++i]);
+                    testdata = Paths.get(requireValue(args, ++i));
                     break;
                 default:
                     System.err.println("bench-pxf-android: unknown arg " + args[i]);
@@ -63,6 +63,18 @@ public final class BenchPxfAndroid {
             ConfigPxfCodec.marshal(msg);
         });
         emitMarshal(m[0], m[1]);
+    }
+
+    /**
+     * The value after a flag, or exit 2: {@code --seconds} as the last
+     * argument is a usage error, not an ArrayIndexOutOfBoundsException.
+     */
+    private static String requireValue(String[] args, int i) {
+        if (i >= args.length) {
+            System.err.println("bench-pxf-android: " + args[i - 1] + " needs a value");
+            System.exit(2);
+        }
+        return args[i];
     }
 
     private static long[] timeLoop(long targetNanos, Runnable fn) {

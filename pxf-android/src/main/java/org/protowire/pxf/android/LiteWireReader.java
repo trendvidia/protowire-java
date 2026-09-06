@@ -156,13 +156,13 @@ public final class LiteWireReader {
                     }
                     in.popLimit(oldLimit);
                 } else {
-                    Ast.Value v = readSingle(in, wireType, kind, fieldNum, meta, registry);
+                    Ast.Value v = readSingle(in, kind, fieldNum, meta, registry);
                     repeatedAcc.computeIfAbsent(fieldNum, k -> new ArrayList<>()).add(v);
                 }
                 continue;
             }
 
-            singles.put(fieldNum, readSingle(in, wireType, kind, fieldNum, meta, registry));
+            singles.put(fieldNum, readSingle(in, kind, fieldNum, meta, registry));
         }
 
         // Emit in field-number order. Stable + matches protobuf's tag ordering.
@@ -193,7 +193,7 @@ public final class LiteWireReader {
 
     /** Reads a single value (non-packed, non-map) and returns the Ast.Value. */
     private static Ast.Value readSingle(
-            CodedInputStream in, int wireType, int kind, int fieldNum,
+            CodedInputStream in, int kind, int fieldNum,
             PxfMeta meta, PxfRegistry registry) throws IOException {
         return switch (kind) {
             case K_BOOL                                       -> new Ast.BoolVal(Position.UNKNOWN, in.readBool());

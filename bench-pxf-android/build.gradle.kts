@@ -22,7 +22,7 @@ plugins {
 
 dependencies {
     implementation(project(":pxf-android"))
-    implementation("com.google.protobuf:protobuf-javalite:3.25.5")
+    implementation("com.google.protobuf:protobuf-javalite:4.36.1")
 
     configurations.all {
         exclude(group = "com.google.protobuf", module = "protobuf-java")
@@ -78,7 +78,7 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.5"
+        artifact = "com.google.protobuf:protoc:4.36.1"
     }
     plugins {
         id("pxf-java-meta") {

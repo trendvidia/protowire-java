@@ -26,7 +26,7 @@ plugins {
 
 dependencies {
     api(project(":sbe-runtime"))
-    api("com.google.protobuf:protobuf-javalite:3.25.5")
+    api("com.google.protobuf:protobuf-javalite:4.36.1")
 
     configurations.all {
         exclude(group = "com.google.protobuf", module = "protobuf-java")

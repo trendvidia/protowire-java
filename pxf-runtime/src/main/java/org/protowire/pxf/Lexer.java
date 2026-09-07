@@ -3,6 +3,9 @@
 package org.protowire.pxf;
 
 import java.io.ByteArrayOutputStream;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
@@ -242,7 +245,23 @@ final class Lexer {
         while (pos < input.length) {
             int ch = advance() & 0xff;
             if (ch == '"') {
-                return new Token(TokenKind.STRING, out.toString(StandardCharsets.UTF_8), pp);
+                // Strict decode: a \xHH or octal escape can produce bytes that
+                // are not UTF-8, and a proto3 string field may not hold them
+                // (HARDENING.md § UTF-8). ByteArrayOutputStream.toString would
+                // substitute U+FFFD silently, which the same section forbids.
+                // Quoted literals only ever feed string fields (bytes fields
+                // take b"..."), so rejecting here is the same rule the Go
+                // decoder applies at every string-field site.
+                try {
+                    String s = StandardCharsets.UTF_8.newDecoder()
+                            .onMalformedInput(CodingErrorAction.REPORT)
+                            .onUnmappableCharacter(CodingErrorAction.REPORT)
+                            .decode(ByteBuffer.wrap(out.toByteArray()))
+                            .toString();
+                    return new Token(TokenKind.STRING, s, pp);
+                } catch (CharacterCodingException e) {
+                    return new Token(TokenKind.ILLEGAL, "invalid UTF-8 in string literal", pp);
+                }
             }
             if (ch != '\\') {
                 out.write(ch);

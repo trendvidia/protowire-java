@@ -18,6 +18,12 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- The lite modules fetch `protoc-gen-pxf-java-meta` at protowire's release
+  tag `v1.12.0` instead of a commit hash (`gradle.properties`
+  `pxfJavaMeta.ref`); same plugin source, now a named release.
+
 ## [1.1.0] — 2026-09-07
 
 Minor release: the lite tier (protobuf-javalite) reaches Maven Central,

@@ -39,7 +39,7 @@ dependencies {
     // configurations.
     compileOnly("com.google.protobuf:protobuf-java:4.36.1")
 
-    testImplementation(platform("org.junit:junit-bom:5.10.0"))
+    testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }

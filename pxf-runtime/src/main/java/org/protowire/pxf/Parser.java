@@ -30,6 +30,13 @@ public final class Parser {
 
     private final Lexer lex;
     private Token current;
+    /**
+     * Current {@code {} / {@code [} nesting, HARDENING.md § Recursion.
+     * Top-level entries are depth 0, the first block or list is depth 1,
+     * the same convention as protowire-go's {@code parser.go}: the 100th
+     * nested block is accepted, the 101st is rejected.
+     */
+    private int depth;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
 
     private Parser(byte[] input) {
@@ -473,7 +480,23 @@ public final class Parser {
         };
     }
 
+    /** Enters one nesting level or rejects: HARDENING.md § Recursion. */
+    private void enter(Position pp) {
+        if (++depth > Limits.MAX_NESTING_DEPTH) {
+            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + Limits.MAX_NESTING_DEPTH);
+        }
+    }
+
     private Ast.Value parseList() {
+        enter(current.pos());
+        try {
+            return parseListInner();
+        } finally {
+            depth--;
+        }
+    }
+
+    private Ast.Value parseListInner() {
         Position pp = current.pos();
         advance();
         List<Ast.Value> elems = new ArrayList<>();
@@ -496,6 +519,15 @@ public final class Parser {
     }
 
     private List<Ast.Entry> parseBody() {
+        enter(current.pos());
+        try {
+            return parseBodyInner();
+        } finally {
+            depth--;
+        }
+    }
+
+    private List<Ast.Entry> parseBodyInner() {
         List<Ast.Entry> entries = new ArrayList<>();
         while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
             entries.add(parseEntry());

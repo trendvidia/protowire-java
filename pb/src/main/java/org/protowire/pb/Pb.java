@@ -54,9 +54,37 @@ public final class Pb {
         }
     }
 
+    /**
+     * HARDENING.md {@code MaxNestingDepth}: the deepest submessage / map-entry
+     * nesting {@link #unmarshal} follows. Depth 100 is accepted; 101 is
+     * rejected. The counter is carried into every nested
+     * {@code CodedInputStream} rather than reset with it.
+     */
+    public static final int MAX_NESTING_DEPTH = 100;
+
     public static void unmarshal(byte[] data, Object dest) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
-        unmarshalStruct(in, dest);
+        unmarshalStruct(in, dest, 1);
+    }
+
+    /**
+     * One level of descent into a length-delimited submessage. {@code depth}
+     * is the submessage's own depth (top-level struct = 1), exactly as in
+     * protowire-go's {@code unmarshalStruct}: the counter is checked here,
+     * on the inner decoder's entry, so a fresh {@code CodedInputStream}
+     * cannot reset it.
+     */
+    private static Object unmarshalNested(byte[] data, Class<?> type, int depth) throws IOException {
+        if (depth > MAX_NESTING_DEPTH) {
+            throw new IOException("nesting depth exceeds MaxNestingDepth=" + MAX_NESTING_DEPTH);
+        }
+        try {
+            Object obj = type.getDeclaredConstructor().newInstance();
+            unmarshalStruct(CodedInputStream.newInstance(data), obj, depth);
+            return obj;
+        } catch (ReflectiveOperationException e) {
+            throw new IOException("pb.unmarshal: cannot instantiate " + type.getName(), e);
+        }
     }
 
     // -- struct info cache ---------------------------------------------------
@@ -241,7 +269,7 @@ public final class Pb {
 
     // -- unmarshal -----------------------------------------------------------
 
-    private static void unmarshalStruct(CodedInputStream in, Object dest) throws IOException {
+    private static void unmarshalStruct(CodedInputStream in, Object dest, int depth) throws IOException {
         StructInfo info = info(dest.getClass());
         while (true) {
             int tag = in.readTag();
@@ -254,14 +282,14 @@ public final class Pb {
                 continue;
             }
             try {
-                consumeField(in, dest, fi, wireType);
+                consumeField(in, dest, fi, wireType, depth);
             } catch (IllegalAccessException e) {
                 throw new IOException("field " + fi.field.getName() + ": " + e.getMessage(), e);
             }
         }
     }
 
-    private static void consumeField(CodedInputStream in, Object dest, FieldInfo fi, int wireType)
+    private static void consumeField(CodedInputStream in, Object dest, FieldInfo fi, int wireType, int depth)
             throws IOException, IllegalAccessException {
         if (fi.kind == FieldKind.LIST) {
             @SuppressWarnings("unchecked")
@@ -270,7 +298,7 @@ public final class Pb {
                 list = new ArrayList<>();
                 fi.field.set(dest, list);
             }
-            list.add(readScalar(in, fi.elementClass, wireType));
+            list.add(readScalar(in, fi.elementClass, wireType, depth));
             return;
         }
         if (fi.kind == FieldKind.MAP) {
@@ -281,6 +309,11 @@ public final class Pb {
                 fi.field.set(dest, map);
             }
             byte[] entryBytes = in.readByteArray();
+            // A map entry is a nested message on the wire: one level, like
+            // protowire-go's unmarshalField(entry, ..., depth+1).
+            if (depth + 1 > MAX_NESTING_DEPTH) {
+                throw new IOException("nesting depth exceeds MaxNestingDepth=" + MAX_NESTING_DEPTH);
+            }
             CodedInputStream entryIn = CodedInputStream.newInstance(entryBytes);
             Object key = scalarZero(fi.mapKeyClass);
             Object val = scalarZero(fi.elementClass);
@@ -290,9 +323,9 @@ public final class Pb {
                 int n = WireFormat.getTagFieldNumber(tag);
                 int wt = WireFormat.getTagWireType(tag);
                 if (n == 1) {
-                    key = readScalar(entryIn, fi.mapKeyClass, wt);
+                    key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1);
                 } else if (n == 2) {
-                    val = readScalar(entryIn, fi.elementClass, wt);
+                    val = readScalar(entryIn, fi.elementClass, wt, depth + 1);
                 } else {
                     entryIn.skipField(tag);
                 }
@@ -300,7 +333,7 @@ public final class Pb {
             map.put(key, val);
             return;
         }
-        Object value = readScalar(in, fi.field.getType(), wireType);
+        Object value = readScalar(in, fi.field.getType(), wireType, depth);
         fi.field.set(dest, value);
     }
 
@@ -317,7 +350,7 @@ public final class Pb {
         return null;
     }
 
-    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType) throws IOException {
+    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType, int depth) throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             return in.readBool();
         }
@@ -340,7 +373,8 @@ public final class Pb {
             return in.readDouble();
         }
         if (type == String.class) {
-            return in.readString();
+            // HARDENING.md § UTF-8: no lossy decode into a string field.
+            return in.readStringRequireUtf8();
         }
         if (type == byte[].class) {
             return in.readByteArray();
@@ -353,7 +387,7 @@ public final class Pb {
         }
         // nested message
         byte[] sub = in.readByteArray();
-        return unmarshal(sub, type);
+        return unmarshalNested(sub, type, depth + 1);
     }
 
     // -- zigzag --------------------------------------------------------------

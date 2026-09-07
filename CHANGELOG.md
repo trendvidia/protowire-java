@@ -18,6 +18,28 @@ format changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **HARDENING.md conformance of the decoders** (#63). `MaxNestingDepth=100`
+  is now enforced everywhere protowire-java recurses on input: the AST
+  parser (`{` / `[` nesting), the descriptor-driven `FastDecoder`
+  (submessage blocks, list elements, map values), `Pb.unmarshal`
+  (submessages and map entries, with the counter threaded through every
+  nested `CodedInputStream`) and the lite tier's `LiteWireReader`. Depth
+  overflow is a `PxfException` / `IOException`, never a
+  `StackOverflowError`. String fields are decoded as strict UTF-8: a
+  `\xHH` or octal escape that does not form valid UTF-8 is an ILLEGAL
+  token (`invalid UTF-8 in string literal`), and the PB readers use
+  `readStringRequireUtf8` instead of the lossy `readString`. The new
+  `org.protowire.pxf.Limits` class carries the shared constant. The
+  Java row of protowire's `cross_security_check.sh` is now 16/16.
+- `LiteWireReader.toAst` reports malformed wire input (truncated record,
+  invalid UTF-8) as a `PxfException` with the protobuf diagnostic instead
+  of an `IllegalStateException("CodedInputStream read failed")`.
+- `check-decode` exits 2 with `crash: <Error>` on `StackOverflowError` /
+  `OutOfMemoryError` instead of reporting them as a clean reject, so a
+  missing depth cap can no longer pass the corpus's 100k-level row.
+
 ## [1.0.1] — 2026-05-13
 
 Patch release fixing the Maven Central publish for v1.0.0. Two

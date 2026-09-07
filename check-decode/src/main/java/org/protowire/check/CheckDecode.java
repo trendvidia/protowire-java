@@ -100,6 +100,14 @@ public final class CheckDecode {
         } catch (RejectException e) {
             System.err.println("reject: " + e.getMessage());
             System.exit(1);
+        } catch (VirtualMachineError e) {
+            // StackOverflowError / OutOfMemoryError are what HARDENING.md item
+            // 1 forbids on attacker input ("no StackOverflowError propagation").
+            // Reporting them as "reject" would let a missing depth cap pass the
+            // corpus's deep-nesting-100000 row; they are the Java spelling of a
+            // Go panic, so they get the same exit code (FAIL_CRASH upstream).
+            System.err.println("crash: " + e.getClass().getSimpleName());
+            System.exit(2);
         } catch (Throwable t) {
             // The conformance contract treats "anything other than rc=0/1" as
             // a decoder bug — leave this branch to surface those, but still

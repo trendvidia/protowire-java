@@ -345,6 +345,9 @@ final class FastDecoder {
      */
     private Ast.Value consumeAstValue() {
         Position pp = current.pos();
+        if (current.kind() == TokenKind.ILLEGAL) {
+            throw new PxfException(pp, current.value());
+        }
         switch (current.kind()) {
             case STRING -> {
                 var v = new Ast.StringVal(pp, current.value());
@@ -410,9 +413,38 @@ final class FastDecoder {
         }
     }
 
-    // -- core --------------------------------------------------------------
+    // -- nesting depth (HARDENING.md § Recursion) --------------------------
+    // Mirrors protowire-go encoding/pxf/decode_fast.go: every entry into
+    // decodeFields, decodeList or decodeMap is one level of recursive
+    // descent; the top-level call is depth 1, the first nested submessage
+    // depth 2, and so on. The counter is decremented on return so siblings
+    // see the correct depth.
+    private int depth;
+
+    private void enter(Position pp) {
+        if (++depth > Limits.MAX_NESTING_DEPTH) {
+            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + Limits.MAX_NESTING_DEPTH);
+        }
+    }
 
     private void decodeFields(Message.Builder b, boolean inBlock) {
+        enter(current.pos());
+        try { decodeFieldsInner(b, inBlock); } finally { depth--; }
+    }
+
+    private void decodeList(Message.Builder b, FieldDescriptor fd) {
+        enter(current.pos());
+        try { decodeListInner(b, fd); } finally { depth--; }
+    }
+
+    private void decodeMap(Message.Builder b, FieldDescriptor fd) {
+        enter(current.pos());
+        try { decodeMapInner(b, fd); } finally { depth--; }
+    }
+
+    // -- core --------------------------------------------------------------
+
+    private void decodeFieldsInner(Message.Builder b, boolean inBlock) {
         Descriptor desc = b.getDescriptorForType();
         Map<String, String> setOneofs = null;
 
@@ -600,7 +632,7 @@ final class FastDecoder {
         b.setField(fd, anyB.build());
     }
 
-    private void decodeList(Message.Builder b, FieldDescriptor fd) {
+    private void decodeListInner(Message.Builder b, FieldDescriptor fd) {
         if (current.kind() != TokenKind.LBRACKET) {
             throw new PxfException(current.pos(), "expected '[' for repeated field \"" + fd.getName() + "\"");
         }
@@ -679,7 +711,7 @@ final class FastDecoder {
         return sub.build();
     }
 
-    private void decodeMap(Message.Builder b, FieldDescriptor fd) {
+    private void decodeMapInner(Message.Builder b, FieldDescriptor fd) {
         if (current.kind() != TokenKind.LBRACE) {
             throw new PxfException(current.pos(), "expected '{' for map field \"" + fd.getName() + "\"");
         }
@@ -745,6 +777,13 @@ final class FastDecoder {
     }
 
     private Object consumeScalar(FieldDescriptor fd) {
+        // An ILLEGAL token is admitted nowhere in the grammar, so the lexer's
+        // own diagnostic ("invalid UTF-8 in string literal", "invalid
+        // duration: ...") is the useful error, not "expected string for
+        // field". Mirrors protowire-go decode_fast.go illegalErr().
+        if (current.kind() == TokenKind.ILLEGAL) {
+            throw new PxfException(current.pos(), current.value());
+        }
         Position pos = current.pos();
         switch (fd.getJavaType()) {
             case STRING:

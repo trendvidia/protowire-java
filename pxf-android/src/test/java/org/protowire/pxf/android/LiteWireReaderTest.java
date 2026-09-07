@@ -340,4 +340,143 @@ final class LiteWireReaderTest {
         assertRoundTrip("measurement = 0.0001234567",
             wktMeta("measurement", 1, "org.protowire.proto.pxf.BigFloat", PxfMeta.WKT_BIG_FLOAT));
     }
+
+    // -- HARDENING.md § Recursion and § UTF-8 (protowire-java#63) ---------
+
+    /** {@code message Tree { Tree child = 1; string label = 2; map<string, Tree> kids = 3; }} */
+    private static final class TreeMeta implements PxfMeta {
+        @Override public String                fullName()           { return "test.Tree"; }
+        @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("child", 1, "label", 2, "kids", 3); }
+        @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, 11, 2, 9, 3, 11); }
+        @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+        @Override public Set<Integer>          repeatedFields()     { return Set.of(3); }
+        @Override public Set<Integer>          packedFields()       { return Set.of(); }
+        @Override public Map<Integer, String>  messageTypes()       { return Map.of(1, "test.Tree", 3, "test.Tree.KidsEntry"); }
+        @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+        @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+        @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+        @Override public int                   sbeTemplateId()      { return -1; }
+        @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+        @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+        @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        @Override public Set<Integer>          mapFields()          { return Set.of(3); }
+        @Override public Map<Integer, PxfMeta> nestedMetas()        { return Map.of(1, this, 3, KIDS_ENTRY); }
+    }
+
+    private static final TreeMeta TREE = new TreeMeta();
+
+    private static final PxfMeta KIDS_ENTRY = new PxfMeta() {
+        @Override public String                fullName()           { return "test.Tree.KidsEntry"; }
+        @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("key", 1, "value", 2); }
+        @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, 9, 2, 11); }
+        @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+        @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+        @Override public Set<Integer>          packedFields()       { return Set.of(); }
+        @Override public Map<Integer, String>  messageTypes()       { return Map.of(2, "test.Tree"); }
+        @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+        @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+        @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+        @Override public int                   sbeTemplateId()      { return -1; }
+        @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+        @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+        @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        @Override public Map<Integer, PxfMeta> nestedMetas()        { return Map.of(2, TREE); }
+    };
+
+    private static byte[] varint(long v) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        while ((v & ~0x7FL) != 0) { o.write((int) ((v & 0x7F) | 0x80)); v >>>= 7; }
+        o.write((int) v);
+        return o.toByteArray();
+    }
+
+    private static byte[] lengthDelimited(int field, byte[] payload) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        o.write((field << 3) | 2);
+        o.writeBytes(varint(payload.length));
+        o.writeBytes(payload);
+        return o.toByteArray();
+    }
+
+    /** {@code n} nested {@code child} submessages, built iteratively. */
+    private static byte[] nested(int n) {
+        byte[] inner = new byte[0];
+        for (int i = 0; i < n; i++) inner = lengthDelimited(1, inner);
+        return inner;
+    }
+
+    private static int depthOf(Ast.Document doc) {
+        int d = 0;
+        java.util.List<Ast.Entry> entries = doc.entries();
+        while (true) {
+            Ast.Value child = null;
+            for (Ast.Entry e : entries) {
+                if (e instanceof Ast.Assignment a && "child".equals(a.key())) child = a.value();
+            }
+            if (!(child instanceof Ast.BlockVal b)) return d;
+            d++;
+            entries = b.entries();
+        }
+    }
+
+    private static void assertDepthRejected(byte[] wire) {
+        org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(wire, TREE));
+        org.junit.jupiter.api.Assertions.assertTrue(
+            e.getMessage().contains("nesting depth exceeds MaxNestingDepth=100"), e.getMessage());
+    }
+
+    @Test
+    void nesting_upToTheLimitIsAccepted() {
+        // Top-level message is depth 1 (as in :pb); 99 nested = depth 100.
+        assertEquals(99, depthOf(LiteWireReader.toAst(nested(99), TREE)));
+    }
+
+    @Test
+    void nesting_pastTheLimitIsRejected() {
+        assertDepthRejected(nested(100));
+    }
+
+    @Test
+    void nesting_mapEntriesCountAsLevels() {
+        // 97 nested (depth 98) + map entry (99) + value message (100): accepted.
+        byte[] entry = new byte[0];
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        o.writeBytes(lengthDelimited(1, "k".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        o.writeBytes(lengthDelimited(2, entry));
+        byte[] wire = lengthDelimited(3, o.toByteArray());
+        for (int i = 0; i < 97; i++) wire = lengthDelimited(1, wire);
+        assertEquals(97, depthOf(LiteWireReader.toAst(wire, TREE)));
+        assertDepthRejected(lengthDelimited(1, wire));
+    }
+
+    @Test
+    void nesting_hundredThousandLevelsRejectedWithoutStackOverflow() {
+        // assertThrows(PxfException) fails on a StackOverflowError.
+        assertDepthRejected(nested(100_000));
+    }
+
+    @Test
+    void invalidUtf8InStringFieldIsRejected() {
+        // HARDENING.md § UTF-8: label = 0xFF 0xFE is not a proto3 string, and
+        // the rejection is the tier's own exception type, not a wrapped I/O error.
+        byte[] bad = lengthDelimited(2, new byte[] {(byte) 0xFF, (byte) 0xFE});
+        org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(bad, TREE));
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("malformed wire: "), e.getMessage());
+
+        byte[] ok = lengthDelimited(2, new byte[] {(byte) 0xC3, (byte) 0xA9});
+        Ast.Document doc = LiteWireReader.toAst(ok, TREE);
+        Ast.Assignment a = (Ast.Assignment) doc.entries().get(0);
+        assertEquals("\u00e9", ((Ast.StringVal) a.value()).value());
+    }
+
+    @Test
+    void truncatedRecordIsACleanRejection() {
+        // Length prefix says 100 bytes, two follow (the corpus's
+        // pb/length-prefix-truncated.binpb shape).
+        byte[] bad = {0x12, 100, 'a', 'b'};
+        org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(bad, TREE));
+    }
 }

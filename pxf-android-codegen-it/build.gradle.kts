@@ -22,7 +22,7 @@ plugins {
 // the canonical protowire repo checked out as a sibling at `../../protowire/`.
 
 dependencies {
-    api("com.google.protobuf:protobuf-javalite:3.25.5")
+    api("com.google.protobuf:protobuf-javalite:4.36.1")
     api(project(":pxf-runtime"))
     api(project(":pxf-android"))
 
@@ -83,7 +83,7 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.5"
+        artifact = "com.google.protobuf:protoc:4.36.1"
     }
     plugins {
         id("pxf-java-meta") {

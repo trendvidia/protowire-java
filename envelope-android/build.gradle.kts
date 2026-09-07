@@ -31,7 +31,7 @@ plugins {
 // :dump-envelope-pxf-android are their own application distributions.
 
 dependencies {
-    api("com.google.protobuf:protobuf-javalite:3.25.5")
+    api("com.google.protobuf:protobuf-javalite:4.36.1")
     api(project(":pxf-runtime"))  // generated PxfMeta classes implement org.protowire.pxf.PxfMeta
 
     configurations.all {
@@ -83,7 +83,7 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.5"
+        artifact = "com.google.protobuf:protoc:4.36.1"
     }
     plugins {
         id("pxf-java-meta") {

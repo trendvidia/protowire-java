@@ -20,13 +20,13 @@ plugins {
 // registered numbers and that LiteWireWriter / <Message>SbeCodec honour them.
 // bench-sbe-android takes its Order from here too. Not published.
 dependencies {
-    api("com.google.protobuf:protobuf-javalite:3.25.5")
+    api("com.google.protobuf:protobuf-javalite:4.36.1")
     api(project(":pxf-android"))
     api(project(":sbe-runtime"))
     compileOnly(project(":proto-annotations"))
     // compile-only, like sbe-android-codegen-it: the well-known protos on the
     // proto include path come from this jar; it is not on the runtime classpath.
-    compileOnly("com.google.protobuf:protobuf-java:3.25.5")
+    compileOnly("com.google.protobuf:protobuf-java:4.36.1")
 }
 
 // --- protoc-gen-pxf-java-meta (Go) plugin build -----------------------------
@@ -73,7 +73,7 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.5"
+        artifact = "com.google.protobuf:protoc:4.36.1"
     }
     plugins {
         id("pxf-java-meta") {

@@ -13,5 +13,5 @@ plugins {
 }
 
 dependencies {
-    compileOnly("com.google.protobuf:protobuf-javalite:3.25.5")
+    compileOnly("com.google.protobuf:protobuf-javalite:4.36.1")
 }

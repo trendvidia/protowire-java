@@ -19,7 +19,7 @@ plugins {
 // and the canonical protowire repo at ../../protowire/.
 
 dependencies {
-    api("com.google.protobuf:protobuf-javalite:3.25.5")
+    api("com.google.protobuf:protobuf-javalite:4.36.1")
     api(project(":sbe-runtime"))
     // The plugin emits PxfMeta + PxfCodec for every message in addition to
     // the SBE companions, so the smoke test needs :pxf-android (and its
@@ -37,7 +37,7 @@ dependencies {
     // at compile-only puts descriptor.proto on extractIncludeProto's path.
     // No transitive runtime escape: protobuf-java never enters the runtime
     // configurations.
-    compileOnly("com.google.protobuf:protobuf-java:3.25.5")
+    compileOnly("com.google.protobuf:protobuf-java:4.36.1")
 
     testImplementation(platform("org.junit:junit-bom:5.10.0"))
     testImplementation("org.junit.jupiter:junit-jupiter")
@@ -94,7 +94,7 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
 
 protobuf {
     protoc {
-        artifact = "com.google.protobuf:protoc:3.25.5"
+        artifact = "com.google.protobuf:protoc:4.36.1"
     }
     plugins {
         id("pxf-java-meta") {

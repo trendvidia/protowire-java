@@ -16,6 +16,7 @@ import java.util.Map;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class PbTest {
@@ -154,5 +155,113 @@ class PbTest {
         assertEquals("", got.tags.get(""));
         assertEquals("", got.tags.get("k"));
         assertEquals(2, got.tags.size());
+    }
+
+    // -- HARDENING.md § Recursion (protowire-java#63) ------------------------
+
+    public static class Node {
+        @ProtoField(1) Node child;
+        @ProtoField(2) String label;
+        @ProtoField(3) Map<String, Node> kids = new HashMap<>();
+
+        public Node() {}
+    }
+
+    private static byte[] varint(long v) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        while ((v & ~0x7FL) != 0) { o.write((int) ((v & 0x7F) | 0x80)); v >>>= 7; }
+        o.write((int) v);
+        return o.toByteArray();
+    }
+
+    private static byte[] lengthDelimited(int field, byte[] payload) {
+        java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
+        o.write((field << 3) | 2);
+        o.writeBytes(varint(payload.length));
+        o.writeBytes(payload);
+        return o.toByteArray();
+    }
+
+    /** {@code n} nested {@code child} submessages, built iteratively so the test itself never recurses. */
+    private static byte[] nested(int n) {
+        byte[] inner = new byte[0];
+        for (int i = 0; i < n; i++) inner = lengthDelimited(1, inner);
+        return inner;
+    }
+
+    private static int depthOf(Node n) {
+        int d = 0;
+        while (n.child != null) { n = n.child; d++; }
+        return d;
+    }
+
+    private static void assertDepthRejected(byte[] wire) {
+        IOException e = assertThrows(IOException.class, () -> Pb.unmarshal(wire, new Node()));
+        assertTrue(e.getMessage().contains("nesting depth exceeds MaxNestingDepth=100"), e.getMessage());
+    }
+
+    @Test
+    void limitIsTheCrossPortDefault() {
+        assertEquals(100, Pb.MAX_NESTING_DEPTH);
+    }
+
+    @Test
+    void submessagesUpToTheLimitAreAccepted() throws IOException {
+        // Top-level struct is depth 1 (protowire-go pb.go); 99 nested = depth 100.
+        Node n = new Node();
+        Pb.unmarshal(nested(99), n);
+        assertEquals(99, depthOf(n));
+    }
+
+    @Test
+    void submessagesPastTheLimitAreRejected() {
+        assertDepthRejected(nested(100));
+    }
+
+    @Test
+    void mapEntriesCountAsLevels() throws IOException {
+        // 97 nested (depth 98) + map entry (99) + value struct (100): accepted.
+        byte[] entry = new byte[0];
+        entry = concat(lengthDelimited(1, "k".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
+                       lengthDelimited(2, new byte[0]));
+        byte[] wire = lengthDelimited(3, entry);
+        for (int i = 0; i < 97; i++) wire = lengthDelimited(1, wire);
+        Node n = new Node();
+        Pb.unmarshal(wire, n);
+        assertEquals(97, depthOf(n));
+        // One more level and the value struct sits at depth 101.
+        assertDepthRejected(lengthDelimited(1, wire));
+    }
+
+    @Test
+    void depthCounterSurvivesFreshInputStreams() throws IOException {
+        // Every nested struct is decoded from a fresh CodedInputStream; the
+        // counter must carry across them (the corpus's
+        // pb/deep-submessage-200.binpb). 200 levels: rejected.
+        assertDepthRejected(nested(200));
+    }
+
+    @Test
+    void hundredThousandLevelsRejectedWithoutStackOverflow() {
+        // assertThrows(IOException) fails on a StackOverflowError.
+        assertDepthRejected(nested(100_000));
+    }
+
+    @Test
+    void invalidUtf8InStringFieldIsRejected() throws IOException {
+        // HARDENING.md § UTF-8: label = 0xFF 0xFE is not a proto3 string.
+        byte[] bad = lengthDelimited(2, new byte[] {(byte) 0xFF, (byte) 0xFE});
+        assertThrows(IOException.class, () -> Pb.unmarshal(bad, new Node()));
+        byte[] ok = lengthDelimited(2, new byte[] {(byte) 0xC3, (byte) 0xA9});
+        Node n = new Node();
+        Pb.unmarshal(ok, n);
+        assertEquals("\u00e9", n.label);
+    }
+
+    private static byte[] concat(byte[] a, byte[] b) {
+        byte[] out = new byte[a.length + b.length];
+        System.arraycopy(a, 0, out, 0, a.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
     }
 }

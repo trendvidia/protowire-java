@@ -18,6 +18,62 @@ format changes.
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-09-07
+
+Minor release: the lite tier (protobuf-javalite) reaches Maven Central,
+and the decoders conform to protowire's `docs/HARDENING.md`. No public
+API is removed; the one behaviour change is that `Pb.unmarshal` now
+rejects invalid UTF-8 in `String` fields (below).
+
+### Added
+
+- **Lite tier** (#60, PRs #61, #65, #66, #68, #69). Six new artifacts
+  under `org.protowire`, all at `1.1.0`:
+  - `protowire-pxf-runtime` — the descriptor-free half of `:pxf`
+    (`Ast`, `Lexer`, `Parser`, `Format`, `Result`, `Position`, `Token`,
+    `TokenKind`, `PxfException`, `Limits`) plus the lite-tier metadata
+    contract (`PxfMeta`, `PxfRegistry`, `SimplePxfRegistry`, `PxfEnum`,
+    `TimeFormats`). No dependency on protobuf-java. Packages are
+    unchanged; `protowire-pxf` depends on it with `api`, so existing
+    consumers get it transitively.
+  - `protowire-sbe-runtime` — `View`, `ViewSchema`, `MessageTemplate`,
+    `FieldTemplate`, `GroupTemplate` and `XmlSchema` move here under their
+    existing `org.protowire.sbe` names (no source change for
+    `protowire-sbe` consumers, which get the jar transitively), plus a
+    descriptor-free wire codec in `org.protowire.sbe.runtime`
+    (`SbeWireCodec`, `SbeFieldReader`, `SbeFieldWriter`, `SbeConstants`)
+    for generated lite code.
+  - `protowire-pxf-android` — PXF for protobuf-javalite messages:
+    `LiteWireWriter` (PXF AST → wire bytes), `LiteWireReader` (wire bytes
+    → PXF AST) and the `LitePxf` convenience, driven by `PxfMeta` classes
+    that protowire's `protoc-gen-pxf-java-meta` plugin generates.
+    Applies `(pxf.required)` and `(pxf.default)` from the registered
+    extension numbers 1314–1318.
+  - `protowire-envelope-android` — the `envelope/v1` messages compiled
+    for javalite, with their `PxfMeta`.
+  - `protowire-pb-android`, `protowire-sbe-android` — javalite-facing
+    entry points that re-export `protobuf-javalite` and, for SBE,
+    `protowire-sbe-runtime`.
+- `:check-decode` (#64): the HARDENING conformance driver protowire's
+  `scripts/cross_security_check.sh` runs against this port. Not published.
+- Lite-tier harnesses for the spec repo's cross-port scripts
+  (`dump-envelope-android`, `dump-envelope-pxf-android`,
+  `bench-pxf-android`, `bench-sbe-android`) and the two codegen
+  integration-test modules. Not published.
+
+### Changed
+
+- Building the lite modules compiles protowire's Go plugin
+  `protoc-gen-pxf-java-meta`, from a sibling `../protowire` checkout when
+  present and otherwise from a shallow fetch at the commit pinned in
+  `gradle.properties` (`pxfJavaMeta.ref`). CI installs Go for it (#65).
+- `org.protowire.pxf` and `org.protowire.sbe` are each split across two
+  jars (`protowire-pxf` / `protowire-pxf-runtime`, `protowire-sbe` /
+  `protowire-sbe-runtime`). Classpath consumers are unaffected; JPMS
+  consumers cannot put both halves on the module path as named modules.
+- `gradlew.bat` is committed with CRLF line endings via `.gitattributes`,
+  so a checkout is no longer perpetually dirty on macOS/Linux (#67).
+
 ### Fixed
 
 - **HARDENING.md conformance of the decoders** (#63). `MaxNestingDepth=100`

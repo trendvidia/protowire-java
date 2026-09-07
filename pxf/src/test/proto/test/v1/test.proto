@@ -48,3 +48,12 @@ message Nested {
   string name = 1;
   int32 value = 2;
 }
+
+// Self-referential message for the HARDENING.md MaxNestingDepth tests
+// (FastDecoderLimitsTest); the same shape as testdata/adversarial's Tree.
+message Tree {
+  Tree child = 1;
+  string label = 2;
+  repeated Tree children = 3;
+  map<string, Tree> kids = 4;
+}

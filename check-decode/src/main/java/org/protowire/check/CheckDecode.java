@@ -72,6 +72,15 @@ public final class CheckDecode {
         public BigIntHolder() {}
     }
 
+    // pxf.BigInt → BigInteger, pxf.Decimal → BigDecimal (Pb's big-number
+    // mappings; the Decimal.scale bound is MAX_NUMERIC_LITERAL_DIGITS).
+    // pxf.BigFloat has no Pb mapping and is skipped as an unknown field.
+    public static final class BigNumHolder {
+        @ProtoField(1) public java.math.BigInteger bigInt;
+        @ProtoField(2) public java.math.BigDecimal decimal;
+        public BigNumHolder() {}
+    }
+
     public static void main(String[] args) {
         String format = null, schema = null, proto = null, input = null;
         for (int i = 0; i + 1 < args.length; i += 2) {
@@ -152,6 +161,7 @@ public final class CheckDecode {
             case "adversarial.v1.StringHolder"  -> new StringHolder();
             case "adversarial.v1.BytesHolder"   -> new BytesHolder();
             case "adversarial.v1.BigIntHolder"  -> new BigIntHolder();
+            case "adversarial.v1.BigNumHolder"  -> new BigNumHolder();
             default -> throw new RejectException("unknown schema for pb: " + schema);
         };
         try {

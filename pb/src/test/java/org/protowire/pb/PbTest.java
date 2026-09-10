@@ -265,4 +265,36 @@ class PbTest {
         System.arraycopy(b, 0, out, a.length, b.length);
         return out;
     }
+
+    // -- MaxNumericLiteralDigits bounds Decimal.scale (HARDENING § Mandatory limits, #81)
+
+    public static class DecimalHolder {
+        @ProtoField(1) java.math.BigDecimal d;
+        public DecimalHolder() {}
+    }
+
+    /** A pxf.Decimal message with unscaled 25 and the given scale, as this module writes it. */
+    private static byte[] decimalWire(int scale) throws IOException {
+        byte[] msg = Pb.marshalBigDecimal(new java.math.BigDecimal(java.math.BigInteger.valueOf(25), scale));
+        return lengthDelimited(1, msg);
+    }
+
+    @Test
+    void decimalScaleAtTheBoundDecodes() throws IOException {
+        for (int scale : new int[] {Pb.MAX_NUMERIC_LITERAL_DIGITS, -Pb.MAX_NUMERIC_LITERAL_DIGITS}) {
+            DecimalHolder h = new DecimalHolder();
+            Pb.unmarshal(decimalWire(scale), h);
+            assertEquals(new java.math.BigDecimal(java.math.BigInteger.valueOf(25), scale), h.d, "scale " + scale);
+        }
+    }
+
+    @Test
+    void decimalScalePastTheBoundIsRejectedOnBothSigns() throws IOException {
+        for (int scale : new int[] {Pb.MAX_NUMERIC_LITERAL_DIGITS + 1, -Pb.MAX_NUMERIC_LITERAL_DIGITS - 1,
+                                    Integer.MAX_VALUE, Integer.MIN_VALUE}) {
+            byte[] wire = decimalWire(scale);
+            IOException e = assertThrows(IOException.class, () -> Pb.unmarshal(wire, new DecimalHolder()), "scale " + scale);
+            assertTrue(e.getMessage().contains("MaxNumericLiteralDigits=4096"), e.getMessage());
+        }
+    }
 }

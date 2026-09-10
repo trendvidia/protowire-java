@@ -64,6 +64,19 @@ public final class Pb {
      */
     public static final int MAX_NESTING_DEPTH = 100;
 
+    /**
+     * HARDENING.md {@code MaxNumericLiteralDigits}, bounding the magnitude of
+     * a {@code pxf.Decimal}'s {@code scale} on the wire: a Decimal is
+     * unscaled × 10^(-scale), so a consumer that renders it materialises
+     * 10^|scale| — work and memory proportional to a value the input sets in
+     * five bytes. A scale is a digit count, which is why the draft's
+     * numeric-literal digit cap is the bound rather than a new one: a
+     * Decimal with scale 4096 is the wire form of a 4096-digit literal.
+     * Same value as {@code org.protowire.pxf.Limits.MAX_NUMERIC_LITERAL_DIGITS};
+     * copied because this module has no dependency on {@code :pxf-runtime}.
+     */
+    public static final int MAX_NUMERIC_LITERAL_DIGITS = 4096;
+
     public static void unmarshal(byte[] data, Object dest) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
         unmarshalStruct(in, dest, 0);
@@ -461,6 +474,10 @@ public final class Pb {
                 case 3 -> negative = in.readBool();
                 default -> in.skipField(tag);
             }
+        }
+        if (scale > MAX_NUMERIC_LITERAL_DIGITS || scale < -MAX_NUMERIC_LITERAL_DIGITS) {
+            throw new IOException("pxf.Decimal scale " + scale
+                    + " exceeds MaxNumericLiteralDigits=" + MAX_NUMERIC_LITERAL_DIGITS);
         }
         BigInteger unscaled = abs.length == 0 ? BigInteger.ZERO : new BigInteger(1, abs);
         BigDecimal bd = new BigDecimal(unscaled, scale);

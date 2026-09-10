@@ -15,8 +15,14 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.testproto.AllTypes;
+import org.protowire.pxf.testproto.KeyedBad;
+import org.protowire.pxf.testproto.KeyedOk;
+import org.protowire.pxf.testproto.OneDefault;
+import org.protowire.pxf.testproto.RepeatedDefault;
 
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -186,7 +192,7 @@ class SchemaValidatorTest {
         var b = DynamicMessage.newBuilder(desc);
         var ex = assertThrows(PxfException.class,
                 () -> UnmarshalOptions.defaults().unmarshal("true = true".getBytes(), b));
-        assertTrue(ex.getMessage().contains("reserved-name"),
+        assertTrue(ex.getMessage().contains("uses PXF-reserved name \"true\""),
                 () -> "expected reserved-name violation in: " + ex.getMessage());
     }
 
@@ -254,5 +260,183 @@ class SchemaValidatorTest {
     /** Build an enum-value descriptor proto. */
     private static EnumValueDescriptorProto ev(String name, int number) {
         return EnumValueDescriptorProto.newBuilder().setName(name).setNumber(number).build();
+    }
+
+    // -- #54: placement checks, on the compiled annotated_invalid.proto ------
+
+    private static Map<String, SchemaValidator.Violation> byElement(List<SchemaValidator.Violation> vs) {
+        return vs.stream().collect(Collectors.toMap(SchemaValidator.Violation::element, v -> v, (a, b) -> a));
+    }
+
+    @Test
+    void placementViolationsInTheInvalidFile() {
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateDescriptor(RepeatedDefault.getDescriptor());
+        Map<String, SchemaValidator.Violation> by = byElement(vs);
+        // Every violation is attributed to the declaring file and sorted by element.
+        for (SchemaValidator.Violation v : vs) assertEquals("test/v1/annotated_invalid.proto", v.file(), v.toString());
+        List<String> elements = vs.stream().map(SchemaValidator.Violation::element).toList();
+        assertEquals(elements.stream().sorted().toList(), elements);
+
+        // Default Placement (§6.1.1)
+        assertKind(by, "test.v1.RepeatedDefault.tags", SchemaValidator.Kind.DEFAULT_OPTION, "not valid on repeated fields");
+        assertKind(by, "test.v1.RepeatedIntDefault.counts", SchemaValidator.Kind.DEFAULT_OPTION, "not valid on repeated fields");
+        assertKind(by, "test.v1.MapDefault.labels", SchemaValidator.Kind.DEFAULT_OPTION, "not valid on map fields");
+        assertKind(by, "test.v1.MessageDefault.inner", SchemaValidator.Kind.DEFAULT_OPTION, "not valid on message type test.v1.Plain: no PXF literal denotes it");
+        assertEquals("ignored", by.get("test.v1.RepeatedDefault.tags").name());
+        assertTrue(by.get("test.v1.RepeatedDefault.tags").toString().contains("invalid (pxf.default) = \"ignored\""), by.get("test.v1.RepeatedDefault.tags").toString());
+        // Oneof Members (§6.1.2)
+        assertKind(by, "test.v1.RequiredMember.a", SchemaValidator.Kind.REQUIRED_OPTION, "(pxf.required) is not valid on a member of oneof \"choice\"");
+        assertEquals("choice", by.get("test.v1.RequiredMember.a").name());
+        assertKind(by, "test.v1.TwoDefaults.a", SchemaValidator.Kind.DEFAULT_OPTION, "at most one member of oneof \"choice\" may carry a default; 2 do (a, b)");
+        assertKind(by, "test.v1.TwoDefaults.b", SchemaValidator.Kind.DEFAULT_OPTION, "2 do (a, b)");
+        assertEquals("aaa", by.get("test.v1.TwoDefaults.a").name());
+        assertEquals("bbb", by.get("test.v1.TwoDefaults.b").name());
+        // Schema Placement (§3.13.1)
+        assertKind(by, "test.v1.KeyedBad.single", SchemaValidator.Kind.KEY_OPTION, "valid only on repeated message-typed fields");
+        assertKind(by, "test.v1.KeyedBad.names", SchemaValidator.Kind.KEY_OPTION, "valid only on repeated message-typed fields");
+        assertKind(by, "test.v1.KeyedBad.missing", SchemaValidator.Kind.KEY_OPTION, "element message test.v1.Plain has no field \"nope\"");
+        assertKind(by, "test.v1.KeyedBad.nonstring", SchemaValidator.Kind.KEY_OPTION, "key field test.v1.Counted.n must be a singular string field");
+        assertTrue(by.get("test.v1.KeyedBad.single").toString().contains("invalid (pxf.key) = \"s\""));
+        assertEquals(11, vs.size(), vs.toString());
+    }
+
+    private static void assertKind(Map<String, SchemaValidator.Violation> by, String element, SchemaValidator.Kind kind, String detail) {
+        SchemaValidator.Violation v = by.get(element);
+        assertTrue(v != null, element + " not reported; have " + by.keySet());
+        assertEquals(kind, v.kind(), v.toString());
+        assertTrue(v.detail().contains(detail), v.toString());
+    }
+
+    // The conformant file: one default per oneof, a synthetic oneof's
+    // default, a well-placed (pxf.key) — and its closure through
+    // pxf/annotations.proto and google/protobuf/descriptor.proto.
+    @Test
+    void conformantFileAndItsClosureAreClean() {
+        assertEquals(List.of(), SchemaValidator.validateDescriptor(OneDefault.getDescriptor()));
+        assertEquals(List.of(), SchemaValidator.validateDescriptor(KeyedOk.getDescriptor()));
+        assertEquals(List.of(), SchemaValidator.validateFile(KeyedBad.getDescriptor().getFile().getDependencies().get(1)),
+                "pxf/annotations.proto itself is clean");
+    }
+
+    @Test
+    void decoderRejectsTheInvalidFileBeforeReadingADocument() {
+        PxfException e = assertThrows(PxfException.class,
+                () -> Pxf.unmarshal("tags = [\"a\"]".getBytes(java.nio.charset.StandardCharsets.UTF_8), RepeatedDefault.newBuilder()));
+        assertTrue(e.getMessage().contains("PXF schema bind-time violations:"), e.getMessage());
+        assertTrue(e.getMessage().contains("test.v1.KeyedBad.single"), "the whole file's violations are reported: " + e.getMessage());
+        // skipValidate bypasses the bind-time check; the document then decodes.
+        RepeatedDefault.Builder b = RepeatedDefault.newBuilder();
+        UnmarshalOptions.defaults().withSkipValidate(true).unmarshal("tags = [\"a\"]".getBytes(java.nio.charset.StandardCharsets.UTF_8), b);
+        assertEquals(1, b.getTagsCount());
+    }
+
+    // -- #54: scope is the import closure (§3.15) -----------------------------
+
+    private static FileDescriptorProto.Builder file(String name, String pkg) {
+        return FileDescriptorProto.newBuilder().setName(name).setPackage(pkg).setSyntax("proto3");
+    }
+
+    private static DescriptorProto messageWithField(String msg, String field) {
+        return DescriptorProto.newBuilder().setName(msg)
+                .addField(FieldDescriptorProto.newBuilder().setName(field).setNumber(1)
+                        .setLabel(Label.LABEL_OPTIONAL).setType(Type.TYPE_STRING))
+                .build();
+    }
+
+    private static FileDescriptor build(FileDescriptorProto fp, FileDescriptor... deps) {
+        try {
+            return FileDescriptor.buildFrom(fp, deps);
+        } catch (Descriptors.DescriptorValidationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    @Test
+    void reservedNameInImportedFileIsReportedThroughTheImporter() {
+        FileDescriptor inner = build(file("inner.proto", "inner.v1").addMessageType(messageWithField("Inner", "null")).build());
+        FileDescriptor root = build(file("root.proto", "root.v1").addDependency("inner.proto")
+                .addMessageType(messageWithField("Root", "ok")).build(), inner);
+        assertEquals(List.of(), SchemaValidator.fileViolations(root), "root itself is clean");
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(root);
+        assertEquals(1, vs.size(), vs.toString());
+        assertEquals("inner.proto", vs.get(0).file(), "attributed to the declaring file, not the bound one");
+        assertEquals("inner.v1.Inner.null", vs.get(0).element());
+        // And through the decoder: an empty document binds Root, whose closure is not clean.
+        PxfException e = assertThrows(PxfException.class,
+                () -> Pxf.unmarshal(new byte[0], DynamicMessage.newBuilder(root.findMessageTypeByName("Root"))));
+        assertTrue(e.getMessage().contains("inner.v1.Inner.null"), e.getMessage());
+    }
+
+    @Test
+    void transitiveImportDepthAndDiamondReportOnce() {
+        FileDescriptor d = build(file("d.proto", "d.v1").addMessageType(messageWithField("D", "true")).build());
+        FileDescriptor b = build(file("b.proto", "b.v1").addDependency("d.proto").addMessageType(messageWithField("B", "ok")).build(), d);
+        FileDescriptor c = build(file("c.proto", "c.v1").addDependency("d.proto").addMessageType(messageWithField("C", "ok")).build(), d);
+        FileDescriptor a = build(file("a.proto", "a.v1").addDependency("b.proto").addDependency("c.proto")
+                .addMessageType(messageWithField("A", "ok")).build(), b, c);
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(a);
+        assertEquals(1, vs.size(), "D reached via B and via C is checked once: " + vs);
+        assertEquals("d.v1.D.true", vs.get(0).element());
+        assertEquals("d.proto", vs.get(0).file());
+    }
+
+    @Test
+    void sortedByFileThenElement() {
+        FileDescriptor z = build(file("z.proto", "z.v1").addMessageType(messageWithField("M", "null")).build());
+        FileDescriptor a = build(file("a.proto", "a.v1").addDependency("z.proto")
+                .addMessageType(messageWithField("N", "false")).addMessageType(messageWithField("M", "true")).build(), z);
+        List<String> got = SchemaValidator.validateFile(a).stream().map(v -> v.file() + " " + v.element()).toList();
+        assertEquals(List.of("a.proto a.v1.M.true", "a.proto a.v1.N.false", "z.proto z.v1.M.null"), got);
+    }
+
+    // Two descriptors at the same path with different contents are two
+    // cache entries: the memo keys on descriptor identity, not on the path.
+    @Test
+    void memoIsPerDescriptorNotPerPath() {
+        FileDescriptor clean = build(file("same.proto", "same.v1").addMessageType(messageWithField("M", "ok")).build());
+        FileDescriptor dirty = build(file("same.proto", "same.v1").addMessageType(messageWithField("M", "null")).build());
+        assertEquals(List.of(), SchemaValidator.validateFile(clean));
+        assertEquals(1, SchemaValidator.validateFile(dirty).size());
+        assertEquals(List.of(), SchemaValidator.validateFile(clean), "the clean file's memo survived the dirty twin");
+        assertTrue(SchemaValidator.validateFile(dirty) == SchemaValidator.validateFile(dirty), "memoized: the same immutable list");
+    }
+
+    // proto3 `optional` sits in a synthetic oneof, which the oneof rules
+    // exclude: (pxf.required) there is fine. Built by hand with the raw
+    // option bytes protoc emits for an unresolved extension.
+    @Test
+    void requiredOnProto3OptionalIsClean() {
+        com.google.protobuf.DescriptorProtos.FieldOptions required = com.google.protobuf.DescriptorProtos.FieldOptions.newBuilder()
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(1314, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build())
+                .build();
+        FileDescriptorProto fp = file("opt.proto", "opt.v1").addMessageType(DescriptorProto.newBuilder().setName("O")
+                .addOneofDecl(OneofDescriptorProto.newBuilder().setName("_opt"))
+                .addField(FieldDescriptorProto.newBuilder().setName("opt").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                        .setType(Type.TYPE_STRING).setOneofIndex(0).setProto3Optional(true).setOptions(required))).build();
+        FileDescriptor fd = build(fp);
+        assertTrue(fd.getMessageTypes().get(0).getOneofs().get(0).isSynthetic(), "fixture must be a synthetic oneof");
+        assertEquals(List.of(), SchemaValidator.validateFile(fd));
+        // The same bytes on a real oneof member are the violation.
+        FileDescriptorProto bad = file("req.proto", "req.v1").addMessageType(DescriptorProto.newBuilder().setName("R")
+                .addOneofDecl(OneofDescriptorProto.newBuilder().setName("choice"))
+                .addField(FieldDescriptorProto.newBuilder().setName("a").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                        .setType(Type.TYPE_STRING).setOneofIndex(0).setOptions(required))
+                .addField(FieldDescriptorProto.newBuilder().setName("b").setNumber(2).setLabel(Label.LABEL_OPTIONAL)
+                        .setType(Type.TYPE_STRING).setOneofIndex(0))).build();
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(build(bad));
+        assertEquals(1, vs.size(), vs.toString());
+        assertEquals(SchemaValidator.Kind.REQUIRED_OPTION, vs.get(0).kind());
+        assertEquals("req.v1.R.a", vs.get(0).element());
+        assertEquals("choice", vs.get(0).name());
+    }
+
+    @Test
+    void violationDetailDefaultsToEmpty() {
+        SchemaValidator.Violation v = new SchemaValidator.Violation("t.proto", "p.v1.M.null", "null", SchemaValidator.Kind.FIELD);
+        assertEquals("", v.detail());
+        assertEquals("required field option", SchemaValidator.Kind.REQUIRED_OPTION.toString());
+        assertEquals("keyed field option", SchemaValidator.Kind.KEY_OPTION.toString());
+        assertEquals("default field option", SchemaValidator.Kind.DEFAULT_OPTION.toString());
     }
 }

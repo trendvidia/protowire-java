@@ -20,6 +20,32 @@ format changes.
 
 ### Added
 
+- **Bind-time placement checks, scoped to the import closure** (#54,
+  protowire v1.11; draft `-01` §3.13.1 "Schema Placement", §6.1.1
+  "Default Placement", §6.1.2 "Oneof Members", §3.15 "Scope of Bind-Time
+  Checks"). `SchemaValidator` rejects, at bind time and independently of
+  any document: `(pxf.key)` anywhere but on a repeated message-typed
+  field whose value names a singular string field of the element;
+  `(pxf.default)` on a `repeated` field, a `map<K,V>`, a group, or a
+  message type outside Timestamp, Duration, the nine `*Value` wrappers,
+  `pxf.BigInt`, `pxf.Decimal`, `pxf.BigFloat`; more than one
+  `(pxf.default)` per oneof; `(pxf.required)` on a oneof member. All
+  four checks — the reserved-name rule included — now cover the bound
+  file **and its transitive imports**, a file reached twice checked once,
+  each violation attributed to the file that declares it. `Kind` gains
+  `KEY_OPTION`, `DEFAULT_OPTION`, `REQUIRED_OPTION`; `Violation` gains a
+  `detail` component (the four-argument constructor stays); results are
+  memoized per descriptor at two grains, bounded, so the wider check is
+  faster than the single-file walk it replaces (median decode of
+  `testdata/bench-test.pxf` 11.3 µs vs 13.0 µs, three runs each).
+  `proto-annotations` gains `string key = 1316`. **This narrows accepted
+  schema input:** a placement no implementation could honor now fails
+  every file that transitively imports it (the spec's STABILITY.md,
+  v1.11); the diagnostic names the field; migration is deleting or moving
+  the annotation. The decoder's message header is now `PXF schema
+  bind-time violations:`. The lite tier has no descriptors to walk; the
+  codegen-time home for its checks is tracked on #54.
+
 - **Per-call decoder limits** (#79, draft `-01` § Mandatory Limits,
   HARDENING.md § Mandatory limits). Every decode entry point now enforces
   `MaxMessageSize` (64 MiB, checked before the first byte is read),
@@ -48,7 +74,15 @@ format changes.
   - `check-decode` accepts `--limit NAME=VALUE` (repeatable) and gains
     the SBE leg, so the corpus proves each cap with a small fixture.
 
+- `Ast.MapEntry` gains a `keyQuoted` component: whether the document
+  wrote the key as a string literal (`"true": …`) rather than bare
+  (`true: …`). The five-argument constructor stays and means bare, so
+  existing constructions compile unchanged. `Format.needsQuoting` and
+  `Format.identSafeEntryName` are now public: the one identifier-safe
+  rule string map keys and keyed entry names share.
+
 ### Fixed
+
 
 - **The SBE decoder rejects a malformed root block or group header
   instead of reading past it** (HARDENING.md § SBE steps 2–4, found while
@@ -60,60 +94,6 @@ format changes.
   group. The corpus's `sbe/short-block-length`, `group-count-overflow`
   and `group-zero-blocklength-nonzero-count` rows used to pass only
   because `check-decode` had no SBE leg and rejected everything.
-
-### Changed
-
-- **`Pb` conforms to the reference on the wire** (#77, #78; STABILITY.md
-  promise 2). The `pb` module zigzag-encoded every `int` / `long` — in
-  fields, list elements, map keys and values — where protowire-go's
-  `encoding/pb`, protobuf-go, protoc and the C++, TypeScript, C# and
-  Swift ports write a plain varint (`int32` / `int64`), sign-extended to
-  ten bytes for a negative value. Zigzag and plain agree on exactly one
-  value, zero, so every non-zero integer this module wrote differed from
-  the family (`30` was `3c`, not `1e`) and Go's `-1` read here as
-  `Long.MIN_VALUE`. Now byte-identical to protowire-go v1.7.0 on the same
-  struct, pinned by `PbGoldenTest` against a checked-in Go golden
-  (`pb/src/test/resources/golden/`, generator beside it):
-  - signed ints are plain varints; `@ProtoField(zigzag = true)` opts a
-    field into `sint32` / `sint64`, the analogue of Go's `zigzag` tag
-    option, inherited by list elements and map keys / values;
-  - a `List` of numeric or `boolean` elements is packed, zeros included;
-    other element types are one record per element, a zero element as
-    its zero record; the reader accepts packed and unpacked input;
-  - a map entry always carries its `key` and its `value`, zero-valued or
-    not (protowire#295): the gate's `zero-map-entry` vector is
-    `22062a040a001200`, where this port wrote `22022a00`; an entry lacking
-    either field still reads as the zero value;
-  - `pxf.Decimal.scale` is the plain `int32` varint `bignum.proto`
-    declares (protowire-go#92): `3.1415` is scale `4` on the wire, not `8`.
-
-  **Compatibility.** This is a fix, not a break — the port conforming to
-  the reference — but bytes written by earlier versions of this module for
-  any non-zero integer, packed list or `Decimal` scale were never readable
-  by any other port and are not readable by the fixed one either. Data
-  persisted through `Pb.marshal` before this release must be re-encoded
-  from source; the descriptor-driven modules (`:pxf`, `:envelope`,
-  protobuf-java generated code) are unaffected.
-- `dump-envelope`, `dump-envelope-android` and `dump-envelope-pxf-android`
-  gain `--vector NAME` (protowire#295): the spec repo's
-  `testdata/envelope/NAME.textproto` encoded by the port's own pb codec
-  (`:pb` for the JVM dumper, protobuf-javalite for the lite ones), for the
-  gate to compare with a golden; an unknown name exits 3 with
-  `not-implemented: NAME`.
-- The lite modules fetch `protoc-gen-pxf-java-meta` at protowire's release
-  tag `v1.12.0` instead of a commit hash (`gradle.properties`
-  `pxfJavaMeta.ref`); same plugin source, now a named release.
-
-### Added
-
-- `Ast.MapEntry` gains a `keyQuoted` component: whether the document
-  wrote the key as a string literal (`"true": …`) rather than bare
-  (`true: …`). The five-argument constructor stays and means bare, so
-  existing constructions compile unchanged. `Format.needsQuoting` and
-  `Format.identSafeEntryName` are now public: the one identifier-safe
-  rule string map keys and keyed entry names share.
-
-### Fixed
 
 - **`Format` keeps the quotes on a map key spelled like a keyword or an
   integer** (#82, protowire#306 option 2; draft `-01` § Entries and Keys,
@@ -214,6 +194,50 @@ format changes.
   `NumberFormatException` / `IllegalArgumentException` /
   `DateTimeParseException`. A bool default binds exactly `true` or
   `false`; `"yes"` used to bind as `false` silently.
+
+### Changed
+
+
+- **`Pb` conforms to the reference on the wire** (#77, #78; STABILITY.md
+  promise 2). The `pb` module zigzag-encoded every `int` / `long` — in
+  fields, list elements, map keys and values — where protowire-go's
+  `encoding/pb`, protobuf-go, protoc and the C++, TypeScript, C# and
+  Swift ports write a plain varint (`int32` / `int64`), sign-extended to
+  ten bytes for a negative value. Zigzag and plain agree on exactly one
+  value, zero, so every non-zero integer this module wrote differed from
+  the family (`30` was `3c`, not `1e`) and Go's `-1` read here as
+  `Long.MIN_VALUE`. Now byte-identical to protowire-go v1.7.0 on the same
+  struct, pinned by `PbGoldenTest` against a checked-in Go golden
+  (`pb/src/test/resources/golden/`, generator beside it):
+  - signed ints are plain varints; `@ProtoField(zigzag = true)` opts a
+    field into `sint32` / `sint64`, the analogue of Go's `zigzag` tag
+    option, inherited by list elements and map keys / values;
+  - a `List` of numeric or `boolean` elements is packed, zeros included;
+    other element types are one record per element, a zero element as
+    its zero record; the reader accepts packed and unpacked input;
+  - a map entry always carries its `key` and its `value`, zero-valued or
+    not (protowire#295): the gate's `zero-map-entry` vector is
+    `22062a040a001200`, where this port wrote `22022a00`; an entry lacking
+    either field still reads as the zero value;
+  - `pxf.Decimal.scale` is the plain `int32` varint `bignum.proto`
+    declares (protowire-go#92): `3.1415` is scale `4` on the wire, not `8`.
+
+  **Compatibility.** This is a fix, not a break — the port conforming to
+  the reference — but bytes written by earlier versions of this module for
+  any non-zero integer, packed list or `Decimal` scale were never readable
+  by any other port and are not readable by the fixed one either. Data
+  persisted through `Pb.marshal` before this release must be re-encoded
+  from source; the descriptor-driven modules (`:pxf`, `:envelope`,
+  protobuf-java generated code) are unaffected.
+- `dump-envelope`, `dump-envelope-android` and `dump-envelope-pxf-android`
+  gain `--vector NAME` (protowire#295): the spec repo's
+  `testdata/envelope/NAME.textproto` encoded by the port's own pb codec
+  (`:pb` for the JVM dumper, protobuf-javalite for the lite ones), for the
+  gate to compare with a golden; an unknown name exits 3 with
+  `not-implemented: NAME`.
+- The lite modules fetch `protoc-gen-pxf-java-meta` at protowire's release
+  tag `v1.12.0` instead of a commit hash (`gradle.properties`
+  `pxfJavaMeta.ref`); same plugin source, now a named release.
 
 ## [1.1.0] — 2026-09-07
 

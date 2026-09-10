@@ -35,10 +35,38 @@ class DefaultAnnotationTest {
         return UnmarshalOptions.defaults().unmarshalFull(doc.getBytes(StandardCharsets.UTF_8), b);
     }
 
+    // The schemas in annotated_invalid.proto stop binding once the
+    // placement checks run (#54); their runtime guards are still reached
+    // with skipValidate, which is the property that matters for a caller
+    // that bypasses the check.
+    private static Result decodeSkippingValidation(String doc, Message.Builder b) {
+        return UnmarshalOptions.defaults().withSkipValidate(true).unmarshalFull(doc.getBytes(StandardCharsets.UTF_8), b);
+    }
+
     private static PxfException assertRejected(String doc, Message.Builder b, String needle) {
         PxfException e = assertThrows(PxfException.class, () -> decodeFull(doc, b));
         assertTrue(e.getMessage().contains(needle), e.getMessage());
         return e;
+    }
+
+    private static PxfException assertRejectedSkippingValidation(String doc, Message.Builder b, String needle) {
+        PxfException e = assertThrows(PxfException.class, () -> decodeSkippingValidation(doc, b));
+        assertTrue(e.getMessage().contains(needle), e.getMessage());
+        return e;
+    }
+
+    // -- #54: the same schemas are rejected at bind time, before any document
+
+    @Test
+    void invalidPlacementsAreRejectedAtBindTime() {
+        for (Message.Builder b : java.util.List.<Message.Builder>of(RepeatedDefault.newBuilder(), MapDefault.newBuilder(), RequiredMember.newBuilder())) {
+            PxfException e = assertThrows(PxfException.class, () -> decodeFull("", b), b.getDescriptorForType().getFullName());
+            assertTrue(e.getMessage().contains("PXF schema bind-time violations:"), e.getMessage());
+        }
+        // The runtime rule still protects written input when validation is skipped (#53).
+        RequiredMember.Builder rm = RequiredMember.newBuilder();
+        decodeSkippingValidation("b = \"written\"", rm);
+        assertEquals("written", rm.getB());
     }
 
     // -- #52: placements one literal cannot denote --------------------------
@@ -48,14 +76,14 @@ class DefaultAnnotationTest {
     // ClassCastException out of the decoder.
     @Test
     void repeatedDefaultIsAPxfError() {
-        assertRejected("", RepeatedDefault.newBuilder(),
+        assertRejectedSkippingValidation("", RepeatedDefault.newBuilder(),
                 "default values not supported for repeated field \"tags\"");
     }
 
     // Every scalar arm has the same shape — not a string-only bug.
     @Test
     void repeatedIntDefaultIsAPxfError() {
-        assertRejected("", RepeatedIntDefault.newBuilder(),
+        assertRejectedSkippingValidation("", RepeatedIntDefault.newBuilder(),
                 "default values not supported for repeated field \"counts\"");
     }
 
@@ -64,7 +92,7 @@ class DefaultAnnotationTest {
     // must run first.
     @Test
     void mapDefaultNamesTheMapField() {
-        PxfException e = assertRejected("", MapDefault.newBuilder(),
+        PxfException e = assertRejectedSkippingValidation("", MapDefault.newBuilder(),
                 "default values not supported for map field \"labels\"");
         assertTrue(!e.getMessage().contains("Entry"), e.getMessage());
     }
@@ -74,7 +102,7 @@ class DefaultAnnotationTest {
     @Test
     void populatedRepeatedFieldDecodesDespiteTheAnnotation() {
         RepeatedDefault.Builder b = RepeatedDefault.newBuilder();
-        decodeFull("tags = [\"a\", \"b\"]", b);
+        decodeSkippingValidation("tags = [\"a\", \"b\"]", b);
         assertEquals(2, b.getTagsCount());
     }
 
@@ -149,7 +177,7 @@ class DefaultAnnotationTest {
     @Test
     void requiredOneofMemberAcceptsASiblingArm() {
         RequiredMember.Builder b = RequiredMember.newBuilder();
-        decodeFull("b = \"written\"", b);
+        decodeSkippingValidation("b = \"written\"", b);
         assertEquals(RequiredMember.ChoiceCase.B, b.getChoiceCase());
         assertEquals("written", b.getB());
     }
@@ -158,7 +186,7 @@ class DefaultAnnotationTest {
     // only coherent runtime reading is "the oneof must be set".
     @Test
     void requiredOneofMemberRejectsAnEmptyOneof() {
-        assertRejected("", RequiredMember.newBuilder(), "required field \"a\" is absent");
+        assertRejectedSkippingValidation("", RequiredMember.newBuilder(), "required field \"a\" is absent");
     }
 
     // -- The literal: checked at decode time, reported as a PxfException ----

@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 TrendVidia, LLC.
 //
-// Schemas carrying (pxf.default) / (pxf.required) for the post-decode
-// pass (FastDecoder.postDecode): the placements draft -01
-// §annotation-extensions "Default Placement" forbids (#52) and the oneof
-// rules of its "Oneof Members" subsection (#53). Kept apart from
+// Conformant schemas carrying (pxf.default) / (pxf.required) / (pxf.key)
+// for the post-decode pass (FastDecoder.postDecode, #53) and the keyed
+// form (#50). Every placement here binds: the bind-time checks (#54) walk
+// the whole file, so a violating message would poison the conformant
+// ones — those live in annotated_invalid.proto. Kept apart from
 // test.proto so the round-trip fixtures there stay annotation-free.
 syntax = "proto3";
 package test.v1;
@@ -15,25 +16,6 @@ option java_multiple_files = true;
 import "google/protobuf/wrappers.proto";
 import "pxf/annotations.proto";
 import "pxf/bignum.proto";
-
-// A (pxf.default) on a repeated field: one literal cannot populate a
-// list. protobuf-java's Builder.setField casts the boxed scalar to List,
-// which is the ClassCastException #52 is about.
-message RepeatedDefault {
-  repeated string tags = 1 [(pxf.default) = "ignored"];
-}
-
-// Every scalar arm of applyDefault has the same shape, so a repeated
-// int32 must fail the same way as a repeated string.
-message RepeatedIntDefault {
-  repeated int32 counts = 1 [(pxf.default) = "7"];
-}
-
-// A (pxf.default) on a map: the message must name the placement, not
-// protobuf's synthetic *Entry message.
-message MapDefault {
-  map<string, string> labels = 1 [(pxf.default) = "x"];
-}
 
 // The #53 repro: one annotated member is enough.
 message OneDefault {
@@ -56,16 +38,6 @@ message NullableSibling {
 // clear it, so its default keeps applying.
 message SyntheticOneof {
   optional string opt = 1 [(pxf.default) = "syn"];
-}
-
-// (pxf.required) on a oneof member. The spec forbids the placement at
-// bind time (#54); until that lands, the runtime must not reject a
-// document that chose a sibling arm.
-message RequiredMember {
-  oneof choice {
-    string a = 1 [(pxf.required) = true];
-    string b = 2;
-  }
 }
 
 // The oneof rule applies at every nesting level, keyed by path.
@@ -95,4 +67,15 @@ message BigNums {
   pxf.BigInt big_int = 1;
   pxf.Decimal decimal = 2;
   pxf.BigFloat big_float = 3;
+}
+
+// A conformant (pxf.key): a repeated message-typed field whose value
+// names a singular string field of the element message (#54 §3.13.1).
+message KeyedOk {
+  repeated Item items = 1 [(pxf.key) = "name"];
+}
+
+message Item {
+  string name = 1;
+  int32 value = 2;
 }

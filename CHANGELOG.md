@@ -20,6 +20,29 @@ format changes.
 
 ### Added
 
+- **Keyed repeated fields** (#50, draft `-01` §3.13, protowire#116). A
+  `repeated <Message>` field carrying `(pxf.key) = "<string field>"`
+  may be written as a block of named blocks — entry name = key-field
+  value, entry order = list order, the key field not repeated inside the
+  entry — and equivalently as `name = { … }`. The grammar accepts a
+  string at entry-name position everywhere (`field_entry = (identifier |
+  string), (assignment_tail | block_tail)`): `Ast.Assignment` gains
+  `keyQuoted` and `Ast.Block` gains `nameQuoted` (the five-argument
+  constructors stay and mean bare), and `Format` reproduces the
+  spelling. The schema layer: `FastDecoder` binds the keyed block (a
+  duplicate entry name, an empty name, a disagreeing explicit key
+  assignment, and an empty key in the anonymous form are decode errors;
+  a quoted entry name outside a keyed field's block is rejected);
+  `Encoder` emits the keyed form whenever every element's key is
+  present, non-empty and distinct, entry names bare when identifier-safe
+  and quoted otherwise, and falls back to the anonymous list otherwise;
+  new `KeyedCanonicalizer` and `Pxf.formatDocument(doc, descriptor)` are
+  the schema-aware `fmt` (anonymous → keyed when eligible, `name = {`
+  → `name {`, identifier-safe quoted names unquoted, redundant agreeing
+  key assignments dropped). The spec's sixteen `testdata/keyed/` fixtures
+  are vendored and pass: five accept, two fmt pairs (and their fixed
+  points), six reject. The lite tier rejects a quoted entry name until
+  its `PxfMeta` carries `(pxf.key)` (trendvidia/protowire#323).
 - **Bind-time placement checks, scoped to the import closure** (#54,
   protowire v1.11; draft `-01` §3.13.1 "Schema Placement", §6.1.1
   "Default Placement", §6.1.2 "Oneof Members", §3.15 "Scope of Bind-Time

@@ -37,6 +37,24 @@ final class Annotations {
         return readString(fd, EXT_KEY);
     }
 
+    /**
+     * The key field of a keyed repeated field: the singular string field
+     * of {@code fd}'s element message that its {@code (pxf.key)} names
+     * (draft -01 §3.13). Null when {@code fd} carries no {@code (pxf.key)}
+     * or its placement is invalid — {@code fd} is not a repeated
+     * message-typed field, the named field does not exist, or it is not a
+     * singular string field; {@link SchemaValidator} reports those as
+     * violations.
+     */
+    static FieldDescriptor keyField(FieldDescriptor fd) {
+        if (fd == null || !fd.isRepeated() || fd.isMapField() || fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) return null;
+        String name = getKey(fd);
+        if (name == null) return null;
+        FieldDescriptor kf = fd.getMessageType().findFieldByName(name);
+        if (kf == null || kf.isRepeated() || kf.getType() != FieldDescriptor.Type.STRING) return null;
+        return kf;
+    }
+
     private static boolean readBool(FieldDescriptor fd, int target) {
         ByteString opts = fd.getOptions().toByteString();
         if (opts.isEmpty()) return false;

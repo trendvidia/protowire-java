@@ -158,12 +158,31 @@ public final class Ast {
         String trailingComment();
     }
 
+    /**
+     * A {@code key = value} entry.
+     *
+     * @param keyQuoted whether the document wrote the key as a string
+     *     literal ({@code "us-east-1" = { … }}). The grammar admits a
+     *     string at entry-name position everywhere ({@code field_entry =
+     *     (identifier | string), (assignment_tail | block_tail)}, draft -01
+     *     §3.13); the schema layer restricts it to the entries of a keyed
+     *     repeated field's block, where the assignment spelling is the
+     *     unabbreviated form of a named entry. {@code key} always holds the
+     *     unquoted value; the flag preserves the source spelling for
+     *     {@link Format}.
+     */
     public record Assignment(
             Position pos,
             String key,
             Value value,
             List<Comment> leadingComments,
-            String trailingComment) implements Entry {}
+            String trailingComment,
+            boolean keyQuoted) implements Entry {
+        /** As the six-argument form with {@code keyQuoted = false}. */
+        public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment) {
+            this(pos, key, value, leadingComments, trailingComment, false);
+        }
+    }
 
     /**
      * A {@code key: value} entry of a map block.
@@ -192,12 +211,29 @@ public final class Ast {
         }
     }
 
+    /**
+     * A {@code name { entries }} entry: a nested message, or — inside a
+     * keyed repeated field's block — one element, named by its key.
+     *
+     * @param nameQuoted whether the document wrote the name as a string
+     *     literal ({@code "us-east-1" { … }}, draft -01 §3.13). {@code name}
+     *     always holds the unquoted (denoted) value; the flag preserves the
+     *     source spelling for {@link Format}. A quoted name is only
+     *     meaningful as the key of a keyed repeated field's entry — the
+     *     schema layer rejects it anywhere else.
+     */
     public record Block(
             Position pos,
             String name,
             List<Entry> entries,
             List<Comment> leadingComments,
-            String trailingComment) implements Entry {}
+            String trailingComment,
+            boolean nameQuoted) implements Entry {
+        /** As the six-argument form with {@code nameQuoted = false}. */
+        public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment) {
+            this(pos, name, entries, leadingComments, trailingComment, false);
+        }
+    }
 
     /** Right-hand-side value. */
     public sealed interface Value permits StringVal, IntVal, FloatVal, BoolVal, BytesVal, NullVal,

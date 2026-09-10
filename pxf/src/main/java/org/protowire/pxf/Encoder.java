@@ -61,9 +61,19 @@ final class Encoder {
 
     private void writeIndent(int level) { for (int i = 0; i < level; i++) buf.append(opts.indent()); }
 
+    /**
+     * The key field to omit from the NEXT encodeMessage call: the entry name
+     * of a keyed-block entry already carries its value (draft -01 §3.13).
+     * Consumed by that call so nested messages don't inherit the skip.
+     */
+    private FieldDescriptor skipKeyFd;
+
     private void encodeMessage(Message msg, int level) {
         Descriptor d = msg.getDescriptorForType();
+        FieldDescriptor skipKey = skipKeyFd;
+        skipKeyFd = null;
         for (FieldDescriptor fd : d.getFields()) {
+            if (skipKey != null && fd == skipKey) continue;
             if (nullMaskFd != null && pathPrefix.isEmpty() && fd.getNumber() == nullMaskFd.getNumber()) continue;
             String path = pathPrefix + fd.getName();
 
@@ -149,6 +159,15 @@ final class Encoder {
 
     private void encodeList(Message msg, FieldDescriptor fd, int level) {
         int n = msg.getRepeatedFieldCount(fd);
+        // Keyed repeated field (draft -01 §3.13): emit the keyed block form
+        // whenever every element's key is present, non-empty, and distinct;
+        // otherwise fall through to the anonymous list form (elements with
+        // absent or duplicate keys can only be represented anonymously).
+        FieldDescriptor keyFd = Annotations.keyField(fd);
+        if (keyFd != null && n > 0 && keyedFormEligible(msg, fd, keyFd)) {
+            encodeKeyedList(msg, fd, keyFd, level);
+            return;
+        }
         writeIndent(level);
         buf.append(fd.getName()).append(" = [\n");
         for (int i = 0; i < n; i++) {
@@ -180,6 +199,42 @@ final class Encoder {
         }
         writeIndent(level);
         buf.append("]\n");
+    }
+
+    private static boolean keyedFormEligible(Message msg, FieldDescriptor fd, FieldDescriptor keyFd) {
+        int n = msg.getRepeatedFieldCount(fd);
+        Set<String> seen = new HashSet<>();
+        for (int i = 0; i < n; i++) {
+            String key = (String) ((Message) msg.getRepeatedField(fd, i)).getField(keyFd);
+            if (key.isEmpty() || !seen.add(key)) return false;
+        }
+        return true;
+    }
+
+    /**
+     * The keyed block form: one named block per element, in list order.
+     * Entry names are written unquoted when identifier-safe and quoted
+     * otherwise; the key field is not additionally emitted inside the
+     * entry's block.
+     */
+    private void encodeKeyedList(Message msg, FieldDescriptor fd, FieldDescriptor keyFd, int level) {
+        int n = msg.getRepeatedFieldCount(fd);
+        writeIndent(level);
+        buf.append(fd.getName()).append(" {\n");
+        for (int i = 0; i < n; i++) {
+            Message sub = (Message) msg.getRepeatedField(fd, i);
+            String key = (String) sub.getField(keyFd);
+            writeIndent(level + 1);
+            if (Format.identSafeEntryName(key)) buf.append(key);
+            else buf.append('"').append(Format.escape(key)).append('"');
+            buf.append(" {\n");
+            skipKeyFd = keyFd;
+            encodeMessage(sub, level + 2);
+            writeIndent(level + 1);
+            buf.append("}\n");
+        }
+        writeIndent(level);
+        buf.append("}\n");
     }
 
     @SuppressWarnings("unchecked")

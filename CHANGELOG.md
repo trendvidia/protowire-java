@@ -20,6 +20,43 @@ format changes.
 
 ### Changed
 
+- **`Pb` conforms to the reference on the wire** (#77, #78; STABILITY.md
+  promise 2). The `pb` module zigzag-encoded every `int` / `long` — in
+  fields, list elements, map keys and values — where protowire-go's
+  `encoding/pb`, protobuf-go, protoc and the C++, TypeScript, C# and
+  Swift ports write a plain varint (`int32` / `int64`), sign-extended to
+  ten bytes for a negative value. Zigzag and plain agree on exactly one
+  value, zero, so every non-zero integer this module wrote differed from
+  the family (`30` was `3c`, not `1e`) and Go's `-1` read here as
+  `Long.MIN_VALUE`. Now byte-identical to protowire-go v1.7.0 on the same
+  struct, pinned by `PbGoldenTest` against a checked-in Go golden
+  (`pb/src/test/resources/golden/`, generator beside it):
+  - signed ints are plain varints; `@ProtoField(zigzag = true)` opts a
+    field into `sint32` / `sint64`, the analogue of Go's `zigzag` tag
+    option, inherited by list elements and map keys / values;
+  - a `List` of numeric or `boolean` elements is packed, zeros included;
+    other element types are one record per element, a zero element as
+    its zero record; the reader accepts packed and unpacked input;
+  - a map entry always carries its `key` and its `value`, zero-valued or
+    not (protowire#295): the gate's `zero-map-entry` vector is
+    `22062a040a001200`, where this port wrote `22022a00`; an entry lacking
+    either field still reads as the zero value;
+  - `pxf.Decimal.scale` is the plain `int32` varint `bignum.proto`
+    declares (protowire-go#92): `3.1415` is scale `4` on the wire, not `8`.
+
+  **Compatibility.** This is a fix, not a break — the port conforming to
+  the reference — but bytes written by earlier versions of this module for
+  any non-zero integer, packed list or `Decimal` scale were never readable
+  by any other port and are not readable by the fixed one either. Data
+  persisted through `Pb.marshal` before this release must be re-encoded
+  from source; the descriptor-driven modules (`:pxf`, `:envelope`,
+  protobuf-java generated code) are unaffected.
+- `dump-envelope`, `dump-envelope-android` and `dump-envelope-pxf-android`
+  gain `--vector NAME` (protowire#295): the spec repo's
+  `testdata/envelope/NAME.textproto` encoded by the port's own pb codec
+  (`:pb` for the JVM dumper, protobuf-javalite for the lite ones), for the
+  gate to compare with a golden; an unknown name exits 3 with
+  `not-implemented: NAME`.
 - The lite modules fetch `protoc-gen-pxf-java-meta` at protowire's release
   tag `v1.12.0` instead of a commit hash (`gradle.properties`
   `pxfJavaMeta.ref`); same plugin source, now a named release.

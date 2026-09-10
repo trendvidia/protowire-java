@@ -1279,4 +1279,31 @@ final class LiteWireWriterTest {
             org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("invalid bool map key"), e.getMessage());
         }
     }
+
+    // With the parser's quoted flag (#82) the lite tier tells the two
+    // spellings apart: a quoted "1" / "0" is not a bool literal, and a bare
+    // true on a string-keyed map is a bool key, not the string.
+    @Test
+    void map_boolKey_quotedIntegerIsNotABoolLiteral() {
+        for (String sp : java.util.List.of("\"1\"", "\"0\"")) {
+            Ast.Document doc = Parser.parse("flags { " + sp + ": \"v\" }");
+            org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+                org.protowire.pxf.PxfException.class, () -> LiteWireWriter.encode(doc, boolMapHost()), sp);
+            org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("invalid bool map key " + sp), e.getMessage());
+        }
+    }
+
+    @Test
+    void map_stringKey_bareKeywordIsAnError_quotedBinds() {
+        PxfMeta entry = mapEntryMeta("test.Sample.LabelsEntry", 9 /* STRING */, 9 /* STRING */,
+                Map.of(), Map.of(), Map.of(), Map.of());
+        PxfMeta host = mapHostMeta("test.Sample", Map.of("labels", 1), Map.of(1, 11 /* MESSAGE */),
+                Set.of(1), Map.of(1, "test.Sample.LabelsEntry"), Map.of(1, entry), Set.of(1));
+        Ast.Document bare = Parser.parse("labels { true: \"v\" }");
+        org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireWriter.encode(bare, host));
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("write \"true\" for the string"), e.getMessage());
+        // "true": "v" → entry 0a 04 "true" 12 01 "v"
+        assertEquals("0a090a0474727565120176", hex(LiteWireWriter.encode(Parser.parse("labels { \"true\": \"v\" }"), host)));
+    }
 }

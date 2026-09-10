@@ -165,12 +165,32 @@ public final class Ast {
             List<Comment> leadingComments,
             String trailingComment) implements Entry {}
 
+    /**
+     * A {@code key: value} entry of a map block.
+     *
+     * @param keyQuoted whether the document wrote the key as a string
+     *     literal ({@code "true": …}) rather than bare ({@code true: …}).
+     *     The parser records it because the two spellings can denote
+     *     different keys — a bare {@code true} is a bool key, a quoted
+     *     {@code "true"} the string — and the formatter reproduces the
+     *     spelling wherever changing it would change what the key denotes
+     *     (draft -01 § Entries and Keys, "Canonical spelling of map keys";
+     *     protowire#306, #82). An entry built in code may pass {@code false}
+     *     through the five-argument constructor; {@link Format} then picks
+     *     the spelling that reads back as the same key.
+     */
     public record MapEntry(
             Position pos,
             String key,
             Value value,
             List<Comment> leadingComments,
-            String trailingComment) implements Entry {}
+            String trailingComment,
+            boolean keyQuoted) implements Entry {
+        /** As the six-argument form with {@code keyQuoted = false}. */
+        public MapEntry(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment) {
+            this(pos, key, value, leadingComments, trailingComment, false);
+        }
+    }
 
     public record Block(
             Position pos,

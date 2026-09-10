@@ -106,7 +106,11 @@ format changes.
 
 ### Fixed
 
-
+- A `pxf.Decimal` with a negative scale is written as `unscaled` followed
+  by `-scale` zeros (#85): `25`, scale `-3` is `25000`, as
+  `pxf/bignum.proto` defines the value and protowire-go writes it; this
+  port dropped the scale and wrote `25`. Bounded by
+  `MaxNumericLiteralDigits` on both sides, as before.
 - **The SBE decoder rejects a malformed root block or group header
   instead of reading past it** (HARDENING.md § SBE steps 2–4, found while
   adding the limits): a wire `blockLength` below the template's (root or

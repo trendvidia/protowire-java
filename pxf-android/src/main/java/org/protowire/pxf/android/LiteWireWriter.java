@@ -620,7 +620,7 @@ public final class LiteWireWriter {
                     "expected `key: value` map entry, got " + entry.getClass().getSimpleName() +
                     " in map field of " + meta.fullName());
             }
-            Ast.Value keyVal = mapKeyValue(me.key(), keyKind, me.pos());
+            Ast.Value keyVal = mapKeyValue(me.key(), me.keyQuoted(), keyKind, me.pos());
             Ast.Document entryDoc = Ast.Document.of("",
                 List.of(
                     new Ast.Assignment(me.pos(), "key", keyVal, List.of(), ""),
@@ -642,15 +642,25 @@ public final class LiteWireWriter {
      * Wraps a map-key string (as the parser stored it — unquoted for STRING,
      * digit-form for INT-family, "true"/"false" for BOOL) as the appropriate
      * {@link Ast.Value} for the synthetic entry document. Mirrors the
-     * full-runtime decoder's {@code decodeMapKey} contract.
+     * full-runtime decoder's {@code decodeMapKey} contract: {@code quoted}
+     * is whether the document spelled the key as a string literal, which
+     * decides what it denotes (#76, #82).
      */
-    private static Ast.Value mapKeyValue(String key, int keyKind, Position pos) {
+    private static Ast.Value mapKeyValue(String key, boolean quoted, int keyKind, Position pos) {
         return switch (keyKind) {
-            case K_STRING -> new Ast.StringVal(pos, key);
+            case K_STRING -> {
+                if (!quoted && ("true".equals(key) || "false".equals(key))) {
+                    // A bool key matches a map<bool,V> field and nothing
+                    // else; the string "true" is spelled quoted.
+                    throw new PxfException(pos, "invalid string map key " + key + ": the keyword " + key
+                        + " is a bool key; write \"" + key + "\" for the string");
+                }
+                yield new Ast.StringVal(pos, key);
+            }
             case K_INT32, K_INT64, K_UINT32, K_UINT64,
                  K_SINT32, K_SINT64,
                  K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> new Ast.IntVal(pos, key);
-            case K_BOOL -> new Ast.BoolVal(pos, boolMapKey(key, pos));
+            case K_BOOL -> new Ast.BoolVal(pos, boolMapKey(key, quoted, pos));
             default -> throw new IllegalArgumentException(
                 "unsupported map key kind: " + keyKind +
                 " (proto restricts map keys to integral, bool, or string types)");
@@ -659,15 +669,22 @@ public final class LiteWireWriter {
 
     /**
      * A bool map key's spellings (draft -01 §entries-and-keys, #76): the
-     * keyword {@code true} / {@code false}, the integers {@code 1} /
-     * {@code 0}, and the quoted literals {@code "true"} / {@code "false"}.
-     * Not {@code Boolean.parseBoolean}, which read every other spelling as
-     * false, silently. The AST keeps the key's text and not whether it was
-     * quoted, so this tier cannot yet tell a quoted {@code "1"} (not a bool
-     * literal) from a bare {@code 1}; that distinction arrives with the
-     * parser's quoted-key flag (#82).
+     * keyword {@code true} / {@code false} bare, the integers {@code 1} /
+     * {@code 0} bare, and the quoted literals {@code "true"} / {@code
+     * "false"}. Not {@code Boolean.parseBoolean}, which read every other
+     * spelling as false, silently; and not a quoted {@code "1"} / {@code
+     * "0"}, which is not a bool literal (#82 gave the AST the quoted flag
+     * that tells it from a bare {@code 1}).
      */
-    private static boolean boolMapKey(String key, Position pos) {
+    private static boolean boolMapKey(String key, boolean quoted, Position pos) {
+        if (quoted) {
+            return switch (key) {
+                case "true" -> true;
+                case "false" -> false;
+                default -> throw new PxfException(pos, "invalid bool map key \"" + key
+                    + "\": a bool key is true, false, 0, 1, \"true\" or \"false\"");
+            };
+        }
         return switch (key) {
             case "true", "1" -> true;
             case "false", "0" -> false;

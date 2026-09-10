@@ -61,8 +61,40 @@ format changes.
   tag `v1.12.0` instead of a commit hash (`gradle.properties`
   `pxfJavaMeta.ref`); same plugin source, now a named release.
 
+### Added
+
+- `Ast.MapEntry` gains a `keyQuoted` component: whether the document
+  wrote the key as a string literal (`"true": …`) rather than bare
+  (`true: …`). The five-argument constructor stays and means bare, so
+  existing constructions compile unchanged. `Format.needsQuoting` and
+  `Format.identSafeEntryName` are now public: the one identifier-safe
+  rule string map keys and keyed entry names share.
+
 ### Fixed
 
+- **`Format` keeps the quotes on a map key spelled like a keyword or an
+  integer** (#82, protowire#306 option 2; draft `-01` § Entries and Keys,
+  "Canonical spelling of map keys"). A string-keyed `{ "true": "v" }`
+  formatted to `{ true: "v" }`, which since protowire#284 is a bool key
+  and no longer binds on a string map — formatting turned a document that
+  binds into one that does not; `"123"` → `123` was the same shape. The
+  parser records whether a key was quoted and the formatter reproduces
+  that spelling wherever changing it would change what the key denotes:
+  a quoted key is unquoted only when identifier-safe and not `null` /
+  `true` / `false`; a bare key stays bare, including a bare `true` on a
+  bool map and a bare `404` on an integer map (every formatter in the
+  family used to quote the integer). The marshaller now writes `"true":`
+  for the string key it used to write bare. The lite tier gets the same
+  flag, which settles the two map-key verdicts #76 left open there: a
+  quoted `"1"` on a bool map is not a bool literal, a bare `true` on a
+  string map is a bool key.
+- **A dotted string map key is written bare** (#83, protowire#313): the
+  identifier-safe test is the identifier production, dots included, so
+  the marshaller writes `a.b:` (it wrote `"a.b":`) and the formatter
+  unquotes a quoted `"a.b"`; keys that fail ident-start (`".e"`,
+  `"1.5"`) stay quoted. The spec's three `fmt-*` map-key fixture pairs
+  are vendored and driven end to end (format, fixed point, bind,
+  marshaller spelling).
 - **A map key binds exactly the spellings the grammar admits** (#76,
   draft `-01` §entries-and-keys `map-key = identifier / string / integer
   / bool`, protowire#284). A bool key was read with

@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -41,6 +42,47 @@ class ParserMapKeyTest {
         List<Ast.Entry> es = mapEntries("m {\n  1: \"a\"\n  \"true\": \"b\"\n}\n");
         assertEquals("1", ((Ast.MapEntry) es.get(0)).key());
         assertEquals("true", ((Ast.MapEntry) es.get(1)).key());
+    }
+
+    // The parser records whether a key was written quoted: the two
+    // spellings of `true` denote different keys (#82).
+    @Test
+    void parserRecordsWhetherTheKeyWasQuoted() {
+        List<Ast.Entry> es = mapEntries("m {\n  true: \"a\"\n  \"true\": \"b\"\n  1: \"c\"\n  \"1\": \"d\"\n  plain: \"e\"\n  \"plain\": \"f\"\n}\n");
+        boolean[] want = {false, true, false, true, false, true};
+        for (int i = 0; i < want.length; i++) {
+            assertEquals(want[i], ((Ast.MapEntry) es.get(i)).keyQuoted(), "entry " + i);
+        }
+    }
+
+    // A MapEntry built in code carries no document spelling; the
+    // five-argument constructor is the pre-#82 shape and means "bare".
+    @Test
+    void fiveArgumentConstructorMeansBare() {
+        Ast.MapEntry e = new Ast.MapEntry(Position.UNKNOWN, "k", new Ast.StringVal(Position.UNKNOWN, "v"), List.of(), "");
+        assertFalse(e.keyQuoted());
+    }
+
+    // Format: a quoted key is unquoted only when identifier-safe and not a
+    // keyword; a bare key stays bare; a code-built entry is written so it
+    // reads back as the same key.
+    @Test
+    void formatSpellsKeysSoTheyReadBackAsTheSameKey() {
+        String src = "m {\n  \"true\": \"a\"\n  \"123\": \"b\"\n  \"plain\": \"c\"\n  true: \"d\"\n  0: \"e\"\n}\n";
+        String want = "m {\n  \"true\": \"a\"\n  \"123\": \"b\"\n  plain: \"c\"\n  true: \"d\"\n  0: \"e\"\n}\n";
+        assertEquals(want, Format.formatDocument(Parser.parse(src)));
+
+        Ast.Value v = new Ast.StringVal(Position.UNKNOWN, "v");
+        List<Ast.Entry> built = List.of(
+                new Ast.MapEntry(Position.UNKNOWN, "plain", v, List.of(), ""),
+                new Ast.MapEntry(Position.UNKNOWN, "true", v, List.of(), ""),
+                new Ast.MapEntry(Position.UNKNOWN, "42", v, List.of(), ""),
+                new Ast.MapEntry(Position.UNKNOWN, "my key", v, List.of(), ""),
+                new Ast.MapEntry(Position.UNKNOWN, "", v, List.of(), ""),
+                new Ast.MapEntry(Position.UNKNOWN, "null", v, List.of(), ""));
+        Ast.Document doc = Ast.Document.of("", List.of(new Ast.Block(Position.UNKNOWN, "m", built, List.of(), "")));
+        assertEquals("m {\n  plain: \"v\"\n  true: \"v\"\n  42: \"v\"\n  \"my key\": \"v\"\n  \"\": \"v\"\n  \"null\": \"v\"\n}\n",
+                Format.formatDocument(doc));
     }
 
     // A field assignment or a submessage block needs an identifier: the

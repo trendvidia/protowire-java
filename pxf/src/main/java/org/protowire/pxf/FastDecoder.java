@@ -31,7 +31,15 @@ final class FastDecoder {
     private String pathPrefix = "";
 
     FastDecoder(byte[] data, UnmarshalOptions opts, boolean trackPresence) {
-        this.lex = new Lexer(data);
+        // HARDENING.md MaxMessageSize: checked before the first byte is
+        // lexed, so peak memory is bounded by the caller's limit and not
+        // by whatever the peer sent (#79).
+        DecodeLimits lim = opts.limits();
+        if (data.length > lim.maxMessageSize()) {
+            throw new PxfException(new Position(1, 1, 0), Limits.messageSizeError(data.length, lim.maxMessageSize()));
+        }
+        this.lex = new Lexer(data, lim.maxBytesLiteralLength());
+        this.limits = lim;
         this.opts = opts;
         this.trackPresence = trackPresence;
         if (trackPresence) this.result = new Result();
@@ -424,10 +432,18 @@ final class FastDecoder {
     // #80). The counter is decremented on return so siblings see the
     // correct depth.
     private int depth;
+    private final DecodeLimits limits;
 
     private void enter(Position pp) {
-        if (++depth > Limits.MAX_NESTING_DEPTH) {
-            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + Limits.MAX_NESTING_DEPTH);
+        if (++depth > limits.maxNestingDepth()) {
+            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + limits.maxNestingDepth());
+        }
+    }
+
+    /** HARDENING.md MaxRepeatedCount, checked before the (n+1)th element is added. */
+    private void checkRepeated(Message.Builder b, FieldDescriptor fd, String what) {
+        if (b.getRepeatedFieldCount(fd) >= limits.maxRepeatedCount()) {
+            throw new PxfException(current.pos(), what + " field \"" + fd.getName() + "\" exceeds MaxRepeatedCount=" + limits.maxRepeatedCount());
         }
     }
 
@@ -567,13 +583,13 @@ final class FastDecoder {
         }
         if (WellKnown.isBigInt(md) && current.kind() == TokenKind.INT) {
             Message.Builder sub = b.newBuilderForField(fd);
-            WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value()));
+            WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value(), limits.maxNumericLiteralDigits()));
             b.setField(fd, sub.build());
             advance();
             return;
         }
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
-            Object[] parts = WellKnown.parseDecimal(current.value());
+            Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             Message.Builder sub = b.newBuilderForField(fd);
             // unscaled is BigInteger absolute value
             java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
@@ -588,7 +604,7 @@ final class FastDecoder {
         }
         if (WellKnown.isBigFloat(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
             Message.Builder sub = b.newBuilderForField(fd);
-            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value()));
+            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value(), limits.maxNumericLiteralDigits()));
             b.setField(fd, sub.build());
             advance();
             return;
@@ -645,6 +661,7 @@ final class FastDecoder {
             if (current.kind() == TokenKind.NULL) {
                 throw new PxfException(current.pos(), "null is not allowed in repeated field \"" + fd.getName() + "\"");
             }
+            checkRepeated(b, fd, "repeated");
             if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 Object elem = consumeListMsg(b, fd);
                 b.addRepeatedField(fd, elem);
@@ -685,12 +702,12 @@ final class FastDecoder {
         }
         if (WellKnown.isBigInt(md) && current.kind() == TokenKind.INT) {
             Message.Builder sub = parent.newBuilderForField(fd);
-            WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value()));
+            WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value(), limits.maxNumericLiteralDigits()));
             advance();
             return sub.build();
         }
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
-            Object[] parts = WellKnown.parseDecimal(current.value());
+            Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
             int scale = (Integer) parts[1];
             boolean neg = (Boolean) parts[2];
@@ -702,7 +719,7 @@ final class FastDecoder {
         }
         if (WellKnown.isBigFloat(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
             Message.Builder sub = parent.newBuilderForField(fd);
-            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value()));
+            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value(), limits.maxNumericLiteralDigits()));
             advance();
             return sub.build();
         }
@@ -726,6 +743,7 @@ final class FastDecoder {
 
         while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
             Position pos = current.pos();
+            checkRepeated(b, fd, "map");
             // map-key = identifier / string / integer / bool (draft -01
             // §abnf-grammar; the keyword spelling landed in protowire#284).
             TokenKind keyKind = current.kind();

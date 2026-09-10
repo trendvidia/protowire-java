@@ -59,9 +59,14 @@ public final class Pb {
     }
 
     public static <T> T unmarshal(byte[] data, Class<T> cls) throws IOException {
+        return unmarshal(data, cls, UnmarshalOptions.defaults());
+    }
+
+    /** As {@link #unmarshal(byte[], Class)} under per-call limits (#79). */
+    public static <T> T unmarshal(byte[] data, Class<T> cls, UnmarshalOptions opts) throws IOException {
         try {
             T obj = cls.getDeclaredConstructor().newInstance();
-            unmarshal(data, obj);
+            unmarshal(data, obj, opts);
             return obj;
         } catch (ReflectiveOperationException e) {
             throw new IOException("pb.unmarshal: cannot instantiate " + cls.getName(), e);
@@ -91,9 +96,30 @@ public final class Pb {
      */
     public static final int MAX_NUMERIC_LITERAL_DIGITS = 4096;
 
+    /**
+     * HARDENING.md {@code MaxMessageSize}: the total input to one decode
+     * call, 64 MiB, checked before the first byte is read (#79).
+     */
+    public static final int MAX_MESSAGE_SIZE = 64 << 20;
+
+    /**
+     * HARDENING.md {@code MaxRepeatedCount}: the element count of any
+     * repeated or map field, checked before the (n+1)th element is added.
+     * Equal to {@code MaxMessageSize}.
+     */
+    public static final int MAX_REPEATED_COUNT = MAX_MESSAGE_SIZE;
+
     public static void unmarshal(byte[] data, Object dest) throws IOException {
+        unmarshal(data, dest, UnmarshalOptions.defaults());
+    }
+
+    /** As {@link #unmarshal(byte[], Object)} under per-call limits (#79). */
+    public static void unmarshal(byte[] data, Object dest, UnmarshalOptions opts) throws IOException {
+        if (data.length > opts.maxMessageSize()) {
+            throw new IOException("input of " + data.length + " bytes exceeds MaxMessageSize=" + opts.maxMessageSize());
+        }
         CodedInputStream in = CodedInputStream.newInstance(data);
-        unmarshalStruct(in, dest, 0);
+        unmarshalStruct(in, dest, 0, opts);
     }
 
     /**
@@ -103,13 +129,13 @@ public final class Pb {
      * on the inner decoder's entry, so a fresh {@code CodedInputStream}
      * cannot reset it.
      */
-    private static Object unmarshalNested(byte[] data, Class<?> type, int depth) throws IOException {
-        if (depth > MAX_NESTING_DEPTH) {
-            throw new IOException("nesting depth exceeds MaxNestingDepth=" + MAX_NESTING_DEPTH);
+    private static Object unmarshalNested(byte[] data, Class<?> type, int depth, UnmarshalOptions opts) throws IOException {
+        if (depth > opts.maxNestingDepth()) {
+            throw new IOException("nesting depth exceeds MaxNestingDepth=" + opts.maxNestingDepth());
         }
         try {
             Object obj = type.getDeclaredConstructor().newInstance();
-            unmarshalStruct(CodedInputStream.newInstance(data), obj, depth);
+            unmarshalStruct(CodedInputStream.newInstance(data), obj, depth, opts);
             return obj;
         } catch (ReflectiveOperationException e) {
             throw new IOException("pb.unmarshal: cannot instantiate " + type.getName(), e);
@@ -344,7 +370,7 @@ public final class Pb {
 
     // -- unmarshal -----------------------------------------------------------
 
-    private static void unmarshalStruct(CodedInputStream in, Object dest, int depth) throws IOException {
+    private static void unmarshalStruct(CodedInputStream in, Object dest, int depth, UnmarshalOptions opts) throws IOException {
         StructInfo info = info(dest.getClass());
         while (true) {
             int tag = in.readTag();
@@ -357,15 +383,21 @@ public final class Pb {
                 continue;
             }
             try {
-                consumeField(in, dest, fi, wireType, depth);
+                consumeField(in, dest, fi, wireType, depth, opts);
             } catch (IllegalAccessException e) {
                 throw new IOException("field " + fi.field.getName() + ": " + e.getMessage(), e);
             }
         }
     }
 
-    private static void consumeField(CodedInputStream in, Object dest, FieldInfo fi, int wireType, int depth)
-            throws IOException, IllegalAccessException {
+    private static void checkRepeated(int size, UnmarshalOptions opts, String what) throws IOException {
+        if (size >= opts.maxRepeatedCount()) {
+            throw new IOException(what + " field exceeds MaxRepeatedCount=" + opts.maxRepeatedCount());
+        }
+    }
+
+    private static void consumeField(CodedInputStream in, Object dest, FieldInfo fi, int wireType, int depth,
+                                     UnmarshalOptions opts) throws IOException, IllegalAccessException {
         if (fi.kind == FieldKind.LIST) {
             @SuppressWarnings("unchecked")
             List<Object> list = (List<Object>) fi.field.get(dest);
@@ -384,12 +416,14 @@ public final class Pb {
                         : (fi.elementClass == double.class || fi.elementClass == Double.class)
                         ? WireFormat.WIRETYPE_FIXED64 : WireFormat.WIRETYPE_VARINT;
                 while (in.getBytesUntilLimit() > 0) {
-                    list.add(readScalar(in, fi.elementClass, elemWire, depth, fi.zigzag));
+                    checkRepeated(list.size(), opts, "repeated");
+                    list.add(readScalar(in, fi.elementClass, elemWire, depth, fi.zigzag, opts));
                 }
                 in.popLimit(limit);
                 return;
             }
-            list.add(readScalar(in, fi.elementClass, wireType, depth, fi.zigzag));
+            checkRepeated(list.size(), opts, "repeated");
+            list.add(readScalar(in, fi.elementClass, wireType, depth, fi.zigzag, opts));
             return;
         }
         if (fi.kind == FieldKind.MAP) {
@@ -402,8 +436,8 @@ public final class Pb {
             byte[] entryBytes = in.readByteArray();
             // A map entry is a nested message on the wire: one level, like
             // protowire-go's unmarshalField(entry, ..., depth+1).
-            if (depth + 1 > MAX_NESTING_DEPTH) {
-                throw new IOException("nesting depth exceeds MaxNestingDepth=" + MAX_NESTING_DEPTH);
+            if (depth + 1 > opts.maxNestingDepth()) {
+                throw new IOException("nesting depth exceeds MaxNestingDepth=" + opts.maxNestingDepth());
             }
             CodedInputStream entryIn = CodedInputStream.newInstance(entryBytes);
             Object key = scalarZero(fi.mapKeyClass);
@@ -414,17 +448,18 @@ public final class Pb {
                 int n = WireFormat.getTagFieldNumber(tag);
                 int wt = WireFormat.getTagWireType(tag);
                 if (n == 1) {
-                    key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1, fi.zigzag);
+                    key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1, fi.zigzag, opts);
                 } else if (n == 2) {
-                    val = readScalar(entryIn, fi.elementClass, wt, depth + 1, fi.zigzag);
+                    val = readScalar(entryIn, fi.elementClass, wt, depth + 1, fi.zigzag, opts);
                 } else {
                     entryIn.skipField(tag);
                 }
             }
+            if (!map.containsKey(key)) checkRepeated(map.size(), opts, "map");
             map.put(key, val);
             return;
         }
-        Object value = readScalar(in, fi.field.getType(), wireType, depth, fi.zigzag);
+        Object value = readScalar(in, fi.field.getType(), wireType, depth, fi.zigzag, opts);
         fi.field.set(dest, value);
     }
 
@@ -441,8 +476,8 @@ public final class Pb {
         return null;
     }
 
-    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType, int depth, boolean zigzag)
-            throws IOException {
+    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType, int depth, boolean zigzag,
+                                     UnmarshalOptions opts) throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             return in.readBool();
         }
@@ -474,11 +509,11 @@ public final class Pb {
             return unmarshalBigInteger(in.readByteArray());
         }
         if (type == BigDecimal.class) {
-            return unmarshalBigDecimal(in.readByteArray());
+            return unmarshalBigDecimal(in.readByteArray(), opts.maxNumericLiteralDigits());
         }
         // nested message
         byte[] sub = in.readByteArray();
-        return unmarshalNested(sub, type, depth + 1);
+        return unmarshalNested(sub, type, depth + 1, opts);
     }
 
     // -- zigzag --------------------------------------------------------------
@@ -539,6 +574,10 @@ public final class Pb {
     }
 
     static BigDecimal unmarshalBigDecimal(byte[] data) throws IOException {
+        return unmarshalBigDecimal(data, MAX_NUMERIC_LITERAL_DIGITS);
+    }
+
+    static BigDecimal unmarshalBigDecimal(byte[] data, int maxDigits) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
         byte[] abs = new byte[0];
         int scale = 0;
@@ -554,9 +593,8 @@ public final class Pb {
                 default -> in.skipField(tag);
             }
         }
-        if (scale > MAX_NUMERIC_LITERAL_DIGITS || scale < -MAX_NUMERIC_LITERAL_DIGITS) {
-            throw new IOException("pxf.Decimal scale " + scale
-                    + " exceeds MaxNumericLiteralDigits=" + MAX_NUMERIC_LITERAL_DIGITS);
+        if (scale > maxDigits || scale < -maxDigits) {
+            throw new IOException("pxf.Decimal scale " + scale + " exceeds MaxNumericLiteralDigits=" + maxDigits);
         }
         BigInteger unscaled = abs.length == 0 ? BigInteger.ZERO : new BigInteger(1, abs);
         BigDecimal bd = new BigDecimal(unscaled, scale);

@@ -12,7 +12,13 @@
 //   check-decode --format <pxf|pb|sbe|envelope> \
 //                --schema <fully.qualified.MessageType> \
 //                --proto  <path-to-adversarial.proto> \
-//                --input  <path>
+//                --input  <path> \
+//                [--limit NAME=VALUE]...
+//
+//   --limit lowers one HARDENING limit for this run (MaxMessageSize,
+//   MaxNestingDepth, MaxNumericLiteralDigits, MaxBytesLiteralLength,
+//   MaxRepeatedCount), so the corpus can prove a 64 MiB cap with a 2 KiB
+//   fixture (protowire#299). Applied through each codec's per-call options.
 //
 //   Exit 0 -> input was accepted
 //   Exit 1 -> input was rejected (clean error; "reject: <msg>" on stderr)
@@ -30,7 +36,10 @@ import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import org.protowire.pb.Pb;
 import org.protowire.pb.ProtoField;
+import org.protowire.pxf.DecodeLimits;
 import org.protowire.pxf.Pxf;
+import org.protowire.pxf.UnmarshalOptions;
+import org.protowire.sbe.Codec;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -72,6 +81,12 @@ public final class CheckDecode {
         public BigIntHolder() {}
     }
 
+    // The repeated field the MaxRepeatedCount fixtures bound.
+    public static final class ListHolder {
+        @ProtoField(1) public List<Integer> values = new ArrayList<>();
+        public ListHolder() {}
+    }
+
     // pxf.BigInt → BigInteger, pxf.Decimal → BigDecimal (Pb's big-number
     // mappings; the Decimal.scale bound is MAX_NUMERIC_LITERAL_DIGITS).
     // pxf.BigFloat has no Pb mapping and is skipped as an unknown field.
@@ -83,6 +98,7 @@ public final class CheckDecode {
 
     public static void main(String[] args) {
         String format = null, schema = null, proto = null, input = null;
+        DecodeLimits limits = DecodeLimits.defaults();
         for (int i = 0; i + 1 < args.length; i += 2) {
             String k = args[i];
             String v = args[i + 1];
@@ -91,6 +107,20 @@ public final class CheckDecode {
                 case "--schema" -> schema = v;
                 case "--proto"  -> proto  = v;
                 case "--input"  -> input  = v;
+                case "--limit"  -> {
+                    int eq = v.indexOf('=');
+                    if (eq < 0) {
+                        System.err.println("check-decode: --limit wants NAME=VALUE, got \"" + v + "\"");
+                        System.exit(2);
+                    }
+                    try {
+                        int n = Integer.parseInt(v.substring(eq + 1));
+                        limits = limits.with(v.substring(0, eq), n);
+                    } catch (IllegalArgumentException e) {
+                        System.err.println("check-decode: --limit " + v + ": " + e.getMessage());
+                        System.exit(2);
+                    }
+                }
                 default -> {
                     System.err.println("check-decode: unknown arg " + k);
                     System.exit(2);
@@ -99,12 +129,12 @@ public final class CheckDecode {
         }
         if (format == null || schema == null || input == null) {
             System.err.println("usage: check-decode --format <pxf|pb|sbe|envelope> "
-                    + "--schema <full.name> --proto <path> --input <path>");
+                    + "--schema <full.name> --proto <path> --input <path> [--limit NAME=VALUE]...");
             System.exit(2);
         }
 
         try {
-            run(format, schema, proto, input);
+            run(format, schema, proto, input, limits);
             System.exit(0);
         } catch (RejectException e) {
             System.err.println("reject: " + e.getMessage());
@@ -128,24 +158,24 @@ public final class CheckDecode {
         }
     }
 
-    private static void run(String format, String schema, String proto, String input) throws Exception {
+    private static void run(String format, String schema, String proto, String input, DecodeLimits limits) throws Exception {
         byte[] data = Files.readAllBytes(Paths.get(input));
         switch (format) {
-            case "pxf"      -> pxfDecode(data, schema, proto);
-            case "pb"       -> pbDecode(data, schema);
+            case "pxf"      -> pxfDecode(data, schema, proto, limits);
+            case "pb"       -> pbDecode(data, schema, limits);
+            case "sbe"      -> sbeDecode(data, schema, proto, limits);
             case "envelope" -> throw new RejectException("envelope decode not yet implemented in this reference");
-            case "sbe"      -> throw new RejectException("sbe decode not yet implemented in this reference");
             default         -> throw new RejectException("unsupported format: " + format);
         }
     }
 
-    private static void pxfDecode(byte[] data, String schema, String protoPath) throws Exception {
+    private static void pxfDecode(byte[] data, String schema, String protoPath, DecodeLimits limits) throws Exception {
         if (protoPath == null || protoPath.isEmpty()) {
             throw new RejectException("--proto is required for format=pxf");
         }
         Descriptor desc = loadDescriptor(protoPath, schema);
         try {
-            Pxf.unmarshal(data, desc);
+            UnmarshalOptions.defaults().withLimits(limits).unmarshal(data, desc);
         } catch (RuntimeException e) {
             // PxfException is the canonical clean-reject signal. Other
             // RuntimeExceptions from descriptor-driven decoding (e.g.
@@ -155,17 +185,39 @@ public final class CheckDecode {
         }
     }
 
-    private static void pbDecode(byte[] data, String schema) throws Exception {
+    // The SBE leg: the corpus schema carries (sbe.*) options, so the codec
+    // is built from the same descriptor set the PXF leg uses.
+    private static void sbeDecode(byte[] data, String schema, String protoPath, DecodeLimits limits) throws Exception {
+        if (protoPath == null || protoPath.isEmpty()) {
+            throw new RejectException("--proto is required for format=sbe");
+        }
+        Descriptor desc = loadDescriptor(protoPath, schema);
+        try {
+            Codec.of(desc.getFile())
+                    .withLimits(limits.maxMessageSize(), limits.maxRepeatedCount())
+                    .unmarshalDescriptor(data, desc);
+        } catch (RuntimeException e) {
+            throw new RejectException("sbe: " + messageOf(e));
+        }
+    }
+
+    private static void pbDecode(byte[] data, String schema, DecodeLimits limits) throws Exception {
         Object dest = switch (schema) {
             case "adversarial.v1.Tree"          -> new Tree();
             case "adversarial.v1.StringHolder"  -> new StringHolder();
             case "adversarial.v1.BytesHolder"   -> new BytesHolder();
             case "adversarial.v1.BigIntHolder"  -> new BigIntHolder();
             case "adversarial.v1.BigNumHolder"  -> new BigNumHolder();
+            case "adversarial.v1.ListHolder"    -> new ListHolder();
             default -> throw new RejectException("unknown schema for pb: " + schema);
         };
+        org.protowire.pb.UnmarshalOptions pbOpts = org.protowire.pb.UnmarshalOptions.defaults()
+                .withMaxMessageSize(limits.maxMessageSize())
+                .withMaxNestingDepth(limits.maxNestingDepth())
+                .withMaxNumericLiteralDigits(limits.maxNumericLiteralDigits())
+                .withMaxRepeatedCount(limits.maxRepeatedCount());
         try {
-            Pb.unmarshal(data, dest);
+            Pb.unmarshal(data, dest, pbOpts);
         } catch (IOException | RuntimeException e) {
             throw new RejectException("pb: " + messageOf(e));
         }

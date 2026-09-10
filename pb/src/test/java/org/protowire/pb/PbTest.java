@@ -336,4 +336,56 @@ class PbTest {
     private static byte[] varintField(int field, long v) {
         return concat(varint((long) field << 3), varint(v));
     }
+
+    // -- per-call limits (HARDENING § Mandatory limits, #79)
+
+    @Test
+    void maxMessageSizeIsCheckedBeforeDecoding() throws IOException {
+        Ints v = new Ints(); v.xs = new ArrayList<>();
+        for (int i = 0; i < 600; i++) v.xs.add(i);   // ≈ 1.2 KiB packed
+        byte[] wire = Pb.marshal(v);
+        assertTrue(wire.length > 1024 && wire.length < 4096, "wire is " + wire.length);
+        IOException e = assertThrows(IOException.class, () -> Pb.unmarshal(wire, Ints.class, UnmarshalOptions.defaults().withMaxMessageSize(1024)));
+        assertTrue(e.getMessage().contains("input of " + wire.length + " bytes exceeds MaxMessageSize=1024"), e.getMessage());
+        assertEquals(600, Pb.unmarshal(wire, Ints.class, UnmarshalOptions.defaults().withMaxMessageSize(4096)).xs.size());
+        assertEquals(64 << 20, Pb.MAX_MESSAGE_SIZE);
+        byte[] huge = new byte[Pb.MAX_MESSAGE_SIZE + 1];
+        e = assertThrows(IOException.class, () -> Pb.unmarshal(huge, new Ints()));
+        assertTrue(e.getMessage().contains("MaxMessageSize=" + Pb.MAX_MESSAGE_SIZE), e.getMessage());
+    }
+
+    @Test
+    void repeatedCountIsRefusedBeforeTheNextElementIsAdded() throws IOException {
+        Ints v = new Ints(); v.xs = new ArrayList<>();
+        for (int i = 0; i < 16; i++) v.xs.add(i);
+        byte[] packed = Pb.marshal(v);
+        IOException e = assertThrows(IOException.class, () -> Pb.unmarshal(packed, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(8)));
+        assertTrue(e.getMessage().contains("repeated field exceeds MaxRepeatedCount=8"), e.getMessage());
+        assertEquals(16, Pb.unmarshal(packed, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(16)).xs.size());
+
+        byte[] unpacked = new byte[0];
+        for (int i = 0; i < 16; i++) unpacked = concat(unpacked, varintField(1, i));
+        byte[] u = unpacked;
+        assertThrows(IOException.class, () -> Pb.unmarshal(u, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(8)));
+        assertEquals(16, Pb.unmarshal(u, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(16)).xs.size());
+
+        Ints m = new Ints();
+        for (int i = 0; i < 16; i++) m.m.put("k" + i, i);
+        byte[] mapWire = Pb.marshal(m);
+        e = assertThrows(IOException.class, () -> Pb.unmarshal(mapWire, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(8)));
+        assertTrue(e.getMessage().contains("map field exceeds MaxRepeatedCount=8"), e.getMessage());
+        assertEquals(16, Pb.unmarshal(mapWire, Ints.class, UnmarshalOptions.defaults().withMaxRepeatedCount(16)).m.size());
+    }
+
+    @Test
+    void nestingDepthAndDecimalScaleArePerCallToo() throws IOException {
+        IOException e = assertThrows(IOException.class, () -> Pb.unmarshal(nested(5), Node.class, UnmarshalOptions.defaults().withMaxNestingDepth(4)));
+        assertTrue(e.getMessage().contains("MaxNestingDepth=4"), e.getMessage());
+        assertEquals(5, depthOf(Pb.unmarshal(nested(5), Node.class, UnmarshalOptions.defaults().withMaxNestingDepth(5))));
+        e = assertThrows(IOException.class, () -> Pb.unmarshal(decimalWire(10), DecimalHolder.class, UnmarshalOptions.defaults().withMaxNumericLiteralDigits(9)));
+        assertTrue(e.getMessage().contains("MaxNumericLiteralDigits=9"), e.getMessage());
+        assertEquals(10, Pb.unmarshal(decimalWire(10), DecimalHolder.class, UnmarshalOptions.defaults().withMaxNumericLiteralDigits(10)).d.scale());
+        assertThrows(IllegalArgumentException.class, () -> UnmarshalOptions.defaults().with("MaxVarintBytes", 1));
+        assertThrows(IllegalArgumentException.class, () -> UnmarshalOptions.defaults().withMaxRepeatedCount(0));
+    }
 }

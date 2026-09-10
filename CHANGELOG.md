@@ -18,6 +18,49 @@ format changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Per-call decoder limits** (#79, draft `-01` § Mandatory Limits,
+  HARDENING.md § Mandatory limits). Every decode entry point now enforces
+  `MaxMessageSize` (64 MiB, checked before the first byte is read),
+  `MaxBytesLiteralLength` (a `b"…"` literal refused from its length before
+  it is decoded) and `MaxRepeatedCount` (a counter on repeated and map
+  elements; an SBE group's wire-declared `numInGroup` before any entry is
+  allocated), alongside the existing `MaxNestingDepth` and
+  `MaxNumericLiteralDigits` — and each is configurable per call:
+  - `:pxf-runtime` — `Limits` gains `MAX_MESSAGE_SIZE`,
+    `MAX_BYTES_LITERAL_LENGTH`, `MAX_REPEATED_COUNT`; new record
+    `DecodeLimits` (`defaults()`, `with*`, `with(name, value)` by
+    HARDENING name); `Parser.parse(byte[], DecodeLimits)`.
+  - `:pxf` — `UnmarshalOptions` gains a `limits` component
+    (`withLimits`; the three-argument constructor stays and means
+    defaults); `WellKnown.parseBigInt` / `parseDecimal` / `parseBigFloat`
+    gain a digit-cap overload.
+  - `:pb` — `Pb.MAX_MESSAGE_SIZE`, `Pb.MAX_REPEATED_COUNT`; new record
+    `org.protowire.pb.UnmarshalOptions`; `Pb.unmarshal(data, dest, opts)`
+    and `Pb.unmarshal(data, cls, opts)`.
+  - `:sbe-runtime` / `:sbe` — `SbeConstants.MAX_MESSAGE_SIZE`,
+    `MAX_REPEATED_COUNT`; `SbeWireCodec.unmarshal(…, maxMessageSize,
+    maxRepeatedCount)`; `Codec.withLimits(maxMessageSize, maxRepeatedCount)`
+    returning a codec over the same templates.
+  - `:pxf-android` — `LiteWireReader.toAst(wire, meta, [registry,]
+    DecodeLimits)`.
+  - `check-decode` accepts `--limit NAME=VALUE` (repeatable) and gains
+    the SBE leg, so the corpus proves each cap with a small fixture.
+
+### Fixed
+
+- **The SBE decoder rejects a malformed root block or group header
+  instead of reading past it** (HARDENING.md § SBE steps 2–4, found while
+  adding the limits): a wire `blockLength` below the template's (root or
+  group entry), a group whose `numInGroup × blockLength` outruns the
+  bytes present (the product is bounded without being formed, since
+  `0xFFFF × 0xFFFF` overflows `int`), and a zero entry block with a
+  non-zero count are each an `IllegalArgumentException` naming the
+  group. The corpus's `sbe/short-block-length`, `group-count-overflow`
+  and `group-zero-blocklength-nonzero-count` rows used to pass only
+  because `check-decode` had no SBE leg and rejected everything.
+
 ### Changed
 
 - **`Pb` conforms to the reference on the wire** (#77, #78; STABILITY.md

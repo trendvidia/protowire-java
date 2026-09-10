@@ -37,16 +37,34 @@ public final class Parser {
      * nested block is accepted, the 101st is rejected.
      */
     private int depth;
+    private final DecodeLimits limits;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
 
     private Parser(byte[] input) {
-        this.lex = new Lexer(input);
+        this(input, DecodeLimits.defaults());
+    }
+
+    private Parser(byte[] input, DecodeLimits limits) {
+        // HARDENING.md MaxMessageSize: checked before the first byte is
+        // lexed (#79). Of the per-call limits, a parse applies
+        // MaxMessageSize, MaxNestingDepth and MaxBytesLiteralLength; the
+        // others are about binding to a schema, which a parse does not do.
+        if (input.length > limits.maxMessageSize()) {
+            throw new PxfException(new Position(1, 1, 0), Limits.messageSizeError(input.length, limits.maxMessageSize()));
+        }
+        this.limits = limits;
+        this.lex = new Lexer(input, limits.maxBytesLiteralLength());
         advance();
     }
 
     /** Parse a UTF-8 byte buffer of PXF text into an AST. */
     public static Ast.Document parse(byte[] input) {
         return new Parser(input).parseDocument();
+    }
+
+    /** Parse under per-call limits (draft -01 § Mandatory Limits). */
+    public static Ast.Document parse(byte[] input, DecodeLimits limits) {
+        return new Parser(input, limits).parseDocument();
     }
 
     public static Ast.Document parse(String input) {
@@ -487,8 +505,8 @@ public final class Parser {
 
     /** Enters one nesting level or rejects: HARDENING.md § Recursion. */
     private void enter(Position pp) {
-        if (++depth > Limits.MAX_NESTING_DEPTH) {
-            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + Limits.MAX_NESTING_DEPTH);
+        if (++depth > limits.maxNestingDepth()) {
+            throw new PxfException(pp, "nesting depth exceeds MaxNestingDepth=" + limits.maxNestingDepth());
         }
     }
 

@@ -17,14 +17,27 @@ import com.google.protobuf.Message;
  *                       (draft §3.13). Default-off (i.e. validation runs)
  *                       is the safe choice because reserved-name traps are
  *                       silent; pre-validating callers opt in to the skip
+ * @param limits         the draft's per-call limits (§ Mandatory Limits,
+ *                       #79); {@link DecodeLimits#defaults()} is the
+ *                       cross-port constants
  */
-public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown, boolean skipValidate) {
+public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown, boolean skipValidate, DecodeLimits limits) {
+
+    /** As the four-argument form with {@link DecodeLimits#defaults()}. */
+    public UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown, boolean skipValidate) {
+        this(typeResolver, discardUnknown, skipValidate, DecodeLimits.defaults());
+    }
+
+    public UnmarshalOptions {
+        if (limits == null) limits = DecodeLimits.defaults();
+    }
 
     public static UnmarshalOptions defaults() { return new UnmarshalOptions(null, false, false); }
 
-    public UnmarshalOptions withTypeResolver(TypeResolver r) { return new UnmarshalOptions(r, discardUnknown, skipValidate); }
-    public UnmarshalOptions withDiscardUnknown(boolean v)    { return new UnmarshalOptions(typeResolver, v, skipValidate); }
-    public UnmarshalOptions withSkipValidate(boolean v)      { return new UnmarshalOptions(typeResolver, discardUnknown, v); }
+    public UnmarshalOptions withTypeResolver(TypeResolver r) { return new UnmarshalOptions(r, discardUnknown, skipValidate, limits); }
+    public UnmarshalOptions withDiscardUnknown(boolean v)    { return new UnmarshalOptions(typeResolver, v, skipValidate, limits); }
+    public UnmarshalOptions withSkipValidate(boolean v)      { return new UnmarshalOptions(typeResolver, discardUnknown, v, limits); }
+    public UnmarshalOptions withLimits(DecodeLimits l)       { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, l); }
 
     public DynamicMessage unmarshal(byte[] data, Descriptor desc) {
         DynamicMessage.Builder b = DynamicMessage.newBuilder(desc);

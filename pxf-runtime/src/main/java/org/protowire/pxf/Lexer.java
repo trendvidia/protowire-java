@@ -20,9 +20,17 @@ final class Lexer {
     int pos;
     int line = 1;
     int col = 1;
+    /**
+     * Bounds the decoded length of a {@code b"…"} literal, checked from the
+     * literal's length before it is decoded (HARDENING.md
+     * {@code MaxBytesLiteralLength}); the decoder sets it from its per-call
+     * limits (#79).
+     */
+    int maxBytesLiteral = Limits.MAX_BYTES_LITERAL_LENGTH;
 
     Lexer(byte[] input) { this.input = input; }
     Lexer(String input) { this(input.getBytes(StandardCharsets.UTF_8)); }
+    Lexer(byte[] input, int maxBytesLiteral) { this.input = input; this.maxBytesLiteral = maxBytesLiteral; }
 
     private byte peek() { return pos < input.length ? input[pos] : 0; }
     private byte peekAt(int off) {
@@ -428,6 +436,13 @@ final class Lexer {
         while (pos < input.length) {
             byte c = input[pos];
             if (c == '"') {
+                // Refused from its length before it is decoded: the base64
+                // decode below allocates the decoded bytes, so the cap must
+                // come first. Four base64 characters carry three bytes.
+                if ((pos - start) / 4 * 3 > maxBytesLiteral) {
+                    return new Token(TokenKind.ILLEGAL,
+                            "bytes literal decodes to more than MaxBytesLiteralLength=" + maxBytesLiteral + " bytes", pp);
+                }
                 String raw = new String(input, start, pos - start, StandardCharsets.UTF_8);
                 advance(); // closing "
                 try {

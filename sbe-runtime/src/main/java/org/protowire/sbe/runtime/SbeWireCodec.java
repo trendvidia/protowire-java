@@ -118,6 +118,21 @@ public final class SbeWireCodec {
     }
 
     public static void unmarshal(byte[] data, SbeFieldWriter writer, MessageTemplate t) {
+        unmarshal(data, writer, t, MAX_MESSAGE_SIZE, MAX_REPEATED_COUNT);
+    }
+
+    /**
+     * As {@link #unmarshal(byte[], SbeFieldWriter, MessageTemplate)} under
+     * per-call limits (HARDENING.md § Mandatory limits, #79):
+     * {@code maxMessageSize} is checked before the header is read,
+     * {@code maxRepeatedCount} against each group's wire-declared
+     * {@code numInGroup} before any entry is allocated.
+     */
+    public static void unmarshal(byte[] data, SbeFieldWriter writer, MessageTemplate t,
+                                 int maxMessageSize, int maxRepeatedCount) {
+        if (data.length > maxMessageSize) {
+            throw new IllegalArgumentException("sbe: input of " + data.length + " bytes exceeds MaxMessageSize=" + maxMessageSize);
+        }
         if (data.length < HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
         ByteBuffer buf = ByteBuffer.wrap(data).order(ORDER);
         int blockLength = Short.toUnsignedInt(buf.getShort(0));
@@ -125,13 +140,19 @@ public final class SbeWireCodec {
         if (templateId != t.templateId) {
             throw new IllegalArgumentException("sbe: template id mismatch: got " + templateId + ", want " + t.templateId);
         }
+        // HARDENING.md § SBE step 2: a wire blockLength below the template's
+        // would have field reads slice past the block. Schema evolution may
+        // push it higher, which is fine.
+        if (blockLength < t.blockLength) {
+            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength);
+        }
         int blockEnd = HEADER_SIZE + blockLength;
         if (data.length < blockEnd) throw new IllegalArgumentException("sbe: data too short for root block");
 
         for (FieldTemplate ft : t.fields) readField(buf, HEADER_SIZE, ft, writer);
 
         int pos = blockEnd;
-        for (GroupTemplate gt : t.groups) pos += readGroup(buf, pos, gt, writer);
+        for (GroupTemplate gt : t.groups) pos += readGroup(buf, pos, gt, writer, maxRepeatedCount);
     }
 
     static void readField(ByteBuffer buf, int blockStart, FieldTemplate ft, SbeFieldWriter writer) {
@@ -168,10 +189,30 @@ public final class SbeWireCodec {
         }
     }
 
-    static int readGroup(ByteBuffer buf, int pos, GroupTemplate gt, SbeFieldWriter writer) {
+    static int readGroup(ByteBuffer buf, int pos, GroupTemplate gt, SbeFieldWriter writer, int maxRepeatedCount) {
         if (buf.capacity() < pos + GROUP_HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for group header");
         int blockLength = Short.toUnsignedInt(buf.getShort(pos));
         int count = Short.toUnsignedInt(buf.getShort(pos + 2));
+        // HARDENING.md § SBE steps 3-4: an entry block below the template's
+        // would have field reads slice past the entry (and a zero one with
+        // a non-zero count is unbounded allocation for no bytes); the
+        // declared count is bounded against the bytes actually present
+        // without forming the product, which can overflow int
+        // (0xFFFF × 0xFFFF); and against MaxRepeatedCount before any entry
+        // is allocated (#79).
+        if (blockLength < gt.blockLength) {
+            throw new IllegalArgumentException("sbe: group " + gt.name + " wire blockLength " + blockLength
+                    + " < schema blockLength " + gt.blockLength);
+        }
+        int remaining = buf.capacity() - pos - GROUP_HEADER_SIZE;
+        if (blockLength > 0 && count > remaining / blockLength) {
+            throw new IllegalArgumentException("sbe: group " + gt.name + " declares " + count + " entries × "
+                    + blockLength + " bytes, " + remaining + " bytes remaining");
+        }
+        if (count > maxRepeatedCount) {
+            throw new IllegalArgumentException("sbe: group " + gt.name + " declares " + count
+                    + " entries, MaxRepeatedCount=" + maxRepeatedCount);
+        }
         int total = GROUP_HEADER_SIZE + count * blockLength;
         for (int i = 0; i < count; i++) {
             int entryStart = pos + GROUP_HEADER_SIZE + i * blockLength;

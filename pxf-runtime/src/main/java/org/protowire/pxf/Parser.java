@@ -427,18 +427,21 @@ public final class Parser {
 
         return switch (current.kind()) {
             case EQUALS -> {
-                // `=` denotes a field assignment on a proto message; the key
-                // must be an identifier (= proto field name). Map-style keys
-                // (string/integer) are only valid with `:`. See
-                // docs/grammar.ebnf → field_entry.
-                if (keyKind != TokenKind.IDENT) {
+                // `=` denotes a field assignment on a proto message: the key
+                // is an identifier (= proto field name), or a string — the
+                // grammar admits a quoted entry name everywhere (field_entry
+                // = (identifier | string), (assignment_tail | block_tail),
+                // draft -01 §3.13); the schema layer restricts it to keyed
+                // repeated fields' blocks. Integer / bool keys are map keys
+                // and take only ':'. See docs/grammar.ebnf → field_entry.
+                if (keyKind != TokenKind.IDENT && keyKind != TokenKind.STRING) {
                     throw new PxfException(pp,
-                            "field assignment with '=' requires an identifier key, got " + keyKind
+                            "field assignment with '=' requires an identifier or string key, got " + keyKind
                                     + " (\"" + key + "\"); use ':' for map entries");
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.Assignment(pp, key, v, leading, "");
+                yield new Ast.Assignment(pp, key, v, leading, "", keyKind == TokenKind.STRING);
             }
             case COLON -> {
                 // Map entry. Only allowed inside a `{ ... }` block, never at
@@ -453,16 +456,17 @@ public final class Parser {
                 yield new Ast.MapEntry(pp, key, v, leading, "", keyKind == TokenKind.STRING);
             }
             case LBRACE -> {
-                // `{ ... }` denotes a submessage field; same identifier-only
-                // rule as `=` applies. See docs/grammar.ebnf → field_entry.
-                if (keyKind != TokenKind.IDENT) {
+                // `{ ... }` denotes a submessage field, or a named entry of
+                // a keyed repeated field; same identifier-or-string rule as
+                // `=`. See docs/grammar.ebnf → field_entry.
+                if (keyKind != TokenKind.IDENT && keyKind != TokenKind.STRING) {
                     throw new PxfException(pp,
-                            "submessage block requires an identifier key, got " + keyKind
+                            "submessage block requires an identifier or string key, got " + keyKind
                                     + " (\"" + key + "\")");
                 }
                 advance();
                 List<Ast.Entry> body = parseBody();
-                yield new Ast.Block(pp, key, body, leading, "");
+                yield new Ast.Block(pp, key, body, leading, "", keyKind == TokenKind.STRING);
             }
             default -> throw new PxfException(current.pos(),
                     "expected '=', ':', or '{' after \"" + key + "\", got " + current.kind());

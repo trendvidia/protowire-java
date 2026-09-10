@@ -464,9 +464,101 @@ final class FastDecoder {
 
     // -- core --------------------------------------------------------------
 
+    // -- keyed repeated fields (draft -01 §3.13) ----------------------------
+
+    /**
+     * The key-field checks for the immediate body of one element of a keyed
+     * repeated field: an explicit assignment to the key field must not be
+     * empty, and in the named (keyed-block) form must agree with the entry
+     * name. Set by the caller for exactly the next {@code decodeFieldsInner}
+     * body, which consumes it so nested submessages do not inherit it.
+     */
+    private record KeyedElem(String field, String keyName, String entryName, boolean named) {
+        void checkExplicitKey(String value, Position pos) {
+            if (value.isEmpty()) {
+                throw new PxfException(pos, "explicit empty-string assignment to key field \"" + keyName
+                        + "\" of keyed field \"" + field + "\": the empty string is not a valid key");
+            }
+            if (named && !value.equals(entryName)) {
+                throw new PxfException(pos, "key field \"" + keyName + "\" = \"" + value + "\" conflicts with entry name \""
+                        + entryName + "\" in keyed field \"" + field + "\"");
+            }
+        }
+    }
+
+    private KeyedElem keyedElem;
+
+    private static PxfException quotedNameUnkeyed(Position pos, String name) {
+        return new PxfException(pos, "quoted entry name \"" + name
+                + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+    }
+
+    /**
+     * Decodes the block form of a keyed repeated field: a sequence of named
+     * entries — {@code name { … }} or equivalently {@code name = { … }} —
+     * where each entry name (unquoted value, for string-literal names)
+     * populates the element's key field and entry order is list order.
+     * Duplicate entry names within the block, the empty string as a name,
+     * and a disagreeing explicit key-field assignment inside an entry are
+     * decode errors. The opening {@code {} has been consumed; the closing
+     * {@code }} is consumed before returning. Mirrors protowire-go's
+     * {@code decodeKeyedBlockBody}.
+     */
+    private void decodeKeyedBlockBody(Message.Builder b, FieldDescriptor fd, FieldDescriptor keyFd) {
+        enter(current.pos());
+        try {
+            java.util.Set<String> seen = null;
+            while (true) {
+                switch (current.kind()) {
+                    case RBRACE -> { advance(); return; }
+                    case EOF -> throw new PxfException(current.pos(), "expected '}' to close keyed field \"" + fd.getName() + "\", got EOF");
+                    case IDENT, STRING -> { }
+                    default -> throw new PxfException(current.pos(), "expected entry name (identifier or string) in keyed field \""
+                            + fd.getName() + "\", got " + current.kind());
+                }
+                Position namePos = current.pos();
+                String name = current.value();
+                if (name.isEmpty()) {
+                    throw new PxfException(namePos, "empty entry name in keyed field \"" + fd.getName() + "\": the empty string is not a valid key");
+                }
+                if (seen == null) seen = new java.util.HashSet<>();
+                if (!seen.add(name)) {
+                    throw new PxfException(namePos, "duplicate key \"" + name + "\" in keyed field \"" + fd.getName() + "\"");
+                }
+                advance();
+                switch (current.kind()) {
+                    case LBRACE -> advance();
+                    case EQUALS -> {
+                        advance();
+                        if (current.kind() != TokenKind.LBRACE) {
+                            throw new PxfException(current.pos(), "keyed entry \"" + name + "\" of field \"" + fd.getName()
+                                    + "\" must have a block value ('{ ... }'): the element type is a message");
+                        }
+                        advance();
+                    }
+                    default -> throw new PxfException(current.pos(), "expected '{' or '=' after entry name \"" + name
+                            + "\" in keyed field \"" + fd.getName() + "\", got " + current.kind());
+                }
+                checkRepeated(b, fd, "repeated");
+                Message.Builder sub = b.newBuilderForField(fd);
+                sub.setField(keyFd, name);
+                keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), name, true);
+                decodeFields(sub, true);
+                b.addRepeatedField(fd, sub.build());
+            }
+        } finally {
+            depth--;
+        }
+    }
+
     private void decodeFieldsInner(Message.Builder b, boolean inBlock) {
         Descriptor desc = b.getDescriptorForType();
         Map<String, String> setOneofs = null;
+        // A non-null keyedElem applies to exactly this body: the immediate
+        // entries of one element of a keyed repeated field. Consume it so
+        // nested submessages don't inherit the key-field checks.
+        KeyedElem ke = keyedElem;
+        keyedElem = null;
 
         while (true) {
             if (inBlock && current.kind() == TokenKind.RBRACE) { advance(); return; }
@@ -478,12 +570,21 @@ final class FastDecoder {
             if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
                 throw new PxfException(pos, "expected identifier, string, or integer, got " + current.kind() + " (\"" + current.value() + "\")");
             }
+            boolean keyQuoted = current.kind() == TokenKind.STRING;
             String key = current.value();
             advance();
 
             switch (current.kind()) {
                 case EQUALS -> {
                     advance();
+                    if (keyQuoted) {
+                        // The grammar accepts a string at entry-name position
+                        // everywhere; the schema layer restricts it to keyed
+                        // repeated fields' blocks (draft -01 §3.13), which have
+                        // their own decode loop — in message context a quoted
+                        // name never names a field.
+                        throw quotedNameUnkeyed(pos, key);
+                    }
                     FieldDescriptor fd = desc.findFieldByName(key);
                     if (fd == null) {
                         if (opts.discardUnknown()) { skipValue(); continue; }
@@ -499,11 +600,19 @@ final class FastDecoder {
                         advance();
                         continue;
                     }
+                    if (ke != null && fd.getName().equals(ke.keyName()) && current.kind() == TokenKind.STRING) {
+                        // Explicit assignment to the element's key field: the
+                        // empty string is never a valid key, and in the named
+                        // (keyed-block) form the value must agree with the
+                        // entry name (draft -01 §3.13).
+                        ke.checkExplicitKey(current.value(), current.pos());
+                    }
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
                     decodeFieldValue(b, fd);
                 }
                 case LBRACE -> {
                     advance();
+                    if (keyQuoted) throw quotedNameUnkeyed(pos, key);
                     FieldDescriptor fd = desc.findFieldByName(key);
                     if (fd == null) {
                         if (opts.discardUnknown()) { skipBraced(); continue; }
@@ -513,6 +622,21 @@ final class FastDecoder {
                         throw new PxfException(pos, "field \"" + key + "\" is not a message type, cannot use block syntax");
                     }
                     if (fd.isRepeated() && !fd.isMapField()) {
+                        // Keyed repeated field (draft -01 §3.13): the block form
+                        // is a sequence of named entries, one per element.
+                        FieldDescriptor keyFd = Annotations.keyField(fd);
+                        if (keyFd != null) {
+                            if (trackPresence) result.markPresent(pathPrefix + fd.getName());
+                            decodeKeyedBlockBody(b, fd, keyFd);
+                            continue;
+                        }
+                        if (current.kind() == TokenKind.STRING) {
+                            // The block spells the keyed form on a field with no
+                            // (pxf.key); report the quoted entry name — the more
+                            // specific schema violation — rather than the
+                            // generic shape error.
+                            throw quotedNameUnkeyed(current.pos(), current.value());
+                        }
                         throw new PxfException(pos, "repeated field \"" + key + "\" must use list syntax: " + key + " = [...]");
                     }
                     if (fd.isMapField()) {
@@ -550,7 +674,21 @@ final class FastDecoder {
 
     private void decodeFieldValue(Message.Builder b, FieldDescriptor fd) {
         if (fd.isMapField())  { decodeMap(b, fd); return; }
-        if (fd.isRepeated())  { decodeList(b, fd); return; }
+        if (fd.isRepeated()) {
+            // Keyed repeated field written `name = { ... }`: a block-tail is
+            // an abbreviation of `= { ... }` (draft -01 §3.13), so the
+            // assignment spelling of the keyed block form is equally valid.
+            if (current.kind() == TokenKind.LBRACE) {
+                FieldDescriptor keyFd = Annotations.keyField(fd);
+                if (keyFd != null) {
+                    advance();
+                    decodeKeyedBlockBody(b, fd, keyFd);
+                    return;
+                }
+            }
+            decodeList(b, fd);
+            return;
+        }
         if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) { decodeMsgValue(b, fd); return; }
         b.setField(fd, consumeScalar(fd));
     }
@@ -728,6 +866,10 @@ final class FastDecoder {
         }
         advance();
         Message.Builder sub = parent.newBuilderForField(fd);
+        // An element of a keyed repeated field in the anonymous list form:
+        // its immediate body owes the empty-key rule (draft -01 §3.13).
+        FieldDescriptor keyFd = Annotations.keyField(fd);
+        if (keyFd != null) keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), "", false);
         decodeFields(sub, true);
         return sub.build();
     }

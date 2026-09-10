@@ -26,6 +26,17 @@ public final class Pxf {
         return Format.formatDocument(doc).getBytes(StandardCharsets.UTF_8);
     }
 
+    /**
+     * The schema-aware {@code fmt}: {@link KeyedCanonicalizer#canonicalize}
+     * against {@code desc}, then {@link #formatDocument}. Keyed repeated
+     * fields (draft -01 §3.13) come out in their canonical block form; a
+     * document that does not resolve against the schema is formatted as it
+     * is.
+     */
+    public static byte[] formatDocument(Ast.Document doc, Descriptor desc) {
+        return formatDocument(KeyedCanonicalizer.canonicalize(doc, desc));
+    }
+
     // -- decode (fused fast path) -----------------------------------------
 
     public static byte[] marshal(Message msg) { return new Encoder(MarshalOptions.defaults()).encode(msg); }

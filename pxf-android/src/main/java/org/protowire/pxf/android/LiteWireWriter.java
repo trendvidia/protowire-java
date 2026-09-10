@@ -172,6 +172,14 @@ public final class LiteWireWriter {
         for (Ast.Entry entry : entries) {
             switch (entry) {
                 case Ast.Assignment a -> {
+                    if (a.keyQuoted()) {
+                        // Grammar accepts a string at entry-name position
+                        // everywhere; the schema layer restricts it to keyed
+                        // repeated fields' blocks (draft -01 §3.13), which
+                        // this tier has no (pxf.key) metadata for yet.
+                        throw new PxfException(a.pos(), "quoted entry name \"" + a.key()
+                            + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+                    }
                     Integer num = fieldNumbers.get(a.key());
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + a.key());
@@ -203,6 +211,10 @@ public final class LiteWireWriter {
                     recordSet(num, oneofOf, setFields, oneofSet);
                 }
                 case Ast.Block b -> {
+                    if (b.nameQuoted()) {
+                        throw new PxfException(b.pos(), "quoted entry name \"" + b.name()
+                            + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+                    }
                     Integer num = fieldNumbers.get(b.name());
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + b.name());

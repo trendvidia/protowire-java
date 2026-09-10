@@ -75,7 +75,9 @@ public final class Format {
                 case Ast.Assignment a -> {
                     writeComments(sb, a.leadingComments(), level);
                     writeIndent(sb, level);
-                    sb.append(a.key()).append(" = ");
+                    if (a.keyQuoted()) sb.append('"').append(escape(a.key())).append('"');
+                    else sb.append(a.key());
+                    sb.append(" = ");
                     formatValue(sb, a.value(), level);
                     if (!a.trailingComment().isEmpty()) sb.append(' ').append(a.trailingComment());
                     sb.append('\n');
@@ -93,7 +95,9 @@ public final class Format {
                 case Ast.Block b -> {
                     writeComments(sb, b.leadingComments(), level);
                     writeIndent(sb, level);
-                    sb.append(b.name()).append(" {\n");
+                    if (b.nameQuoted()) sb.append('"').append(escape(b.name())).append('"');
+                    else sb.append(b.name());
+                    sb.append(" {\n");
                     formatEntries(sb, b.entries(), level + 1);
                     writeIndent(sb, level);
                     sb.append("}\n");

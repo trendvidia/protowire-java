@@ -90,9 +90,9 @@ class ParserMapKeyTest {
     @Test
     void keywordTakesOnlyTheColonTail() {
         PxfException e = assertThrows(PxfException.class, () -> Parser.parse("true = 1\n"));
-        assertTrue(e.getMessage().contains("requires an identifier key, got bool"), e.getMessage());
+        assertTrue(e.getMessage().contains("requires an identifier or string key, got bool"), e.getMessage());
         e = assertThrows(PxfException.class, () -> Parser.parse("true { }\n"));
-        assertTrue(e.getMessage().contains("requires an identifier key, got bool"), e.getMessage());
+        assertTrue(e.getMessage().contains("requires an identifier or string key, got bool"), e.getMessage());
     }
 
     // fmt reproduces the keyword bare.

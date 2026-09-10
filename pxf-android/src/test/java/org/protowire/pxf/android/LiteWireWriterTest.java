@@ -1306,4 +1306,17 @@ final class LiteWireWriterTest {
         // "true": "v" → entry 0a 04 "true" 12 01 "v"
         assertEquals("0a090a0474727565120176", hex(LiteWireWriter.encode(Parser.parse("labels { \"true\": \"v\" }"), host)));
     }
+
+    // A quoted entry name parses everywhere (draft -01 §3.13) but is only
+    // meaningful inside a keyed repeated field's block, which this tier has
+    // no (pxf.key) metadata for yet: rejected, never silently a field name.
+    @Test
+    void quotedEntryNameIsRejected() {
+        PxfMeta meta = meta(Map.of("name", 1), Map.of(1, 9 /* STRING */), Set.of(), Set.of());
+        for (String doc : java.util.List.of("\"name\" = \"v\"", "\"name\" { }")) {
+            org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+                org.protowire.pxf.PxfException.class, () -> LiteWireWriter.encode(Parser.parse(doc), meta), doc);
+            org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("quoted entry name \"name\" is only valid inside a keyed repeated field's block"), e.getMessage());
+        }
+    }
 }

@@ -1,0 +1,89 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Schemas carrying (pxf.default) / (pxf.required) for the post-decode
+// pass (FastDecoder.postDecode): the placements draft -01
+// §annotation-extensions "Default Placement" forbids (#52) and the oneof
+// rules of its "Oneof Members" subsection (#53). Kept apart from
+// test.proto so the round-trip fixtures there stay annotation-free.
+syntax = "proto3";
+package test.v1;
+
+option java_package = "org.protowire.pxf.testproto";
+option java_multiple_files = true;
+
+import "google/protobuf/wrappers.proto";
+import "pxf/annotations.proto";
+
+// A (pxf.default) on a repeated field: one literal cannot populate a
+// list. protobuf-java's Builder.setField casts the boxed scalar to List,
+// which is the ClassCastException #52 is about.
+message RepeatedDefault {
+  repeated string tags = 1 [(pxf.default) = "ignored"];
+}
+
+// Every scalar arm of applyDefault has the same shape, so a repeated
+// int32 must fail the same way as a repeated string.
+message RepeatedIntDefault {
+  repeated int32 counts = 1 [(pxf.default) = "7"];
+}
+
+// A (pxf.default) on a map: the message must name the placement, not
+// protobuf's synthetic *Entry message.
+message MapDefault {
+  map<string, string> labels = 1 [(pxf.default) = "x"];
+}
+
+// The #53 repro: one annotated member is enough.
+message OneDefault {
+  oneof choice {
+    string a = 1;
+    string b = 2 [(pxf.default) = "bbb"];
+  }
+  string outside = 3 [(pxf.default) = "out"];
+}
+
+// A member bound to null counts as present.
+message NullableSibling {
+  oneof choice {
+    google.protobuf.StringValue w = 1;
+    string b = 2 [(pxf.default) = "bbb"];
+  }
+}
+
+// proto3 `optional` sits in a synthetic single-member oneof; nothing can
+// clear it, so its default keeps applying.
+message SyntheticOneof {
+  optional string opt = 1 [(pxf.default) = "syn"];
+}
+
+// (pxf.required) on a oneof member. The spec forbids the placement at
+// bind time (#54); until that lands, the runtime must not reject a
+// document that chose a sibling arm.
+message RequiredMember {
+  oneof choice {
+    string a = 1 [(pxf.required) = true];
+    string b = 2;
+  }
+}
+
+// The oneof rule applies at every nesting level, keyed by path.
+message NestedOneDefault {
+  OneDefault inner = 1;
+}
+
+// A bool default has exactly two spellings.
+message BoolDefault {
+  bool flag = 1 [(pxf.default) = "true"];
+  bool off = 2 [(pxf.default) = "false"];
+}
+
+message BadBoolDefault {
+  bool flag = 1 [(pxf.default) = "yes"];
+}
+
+// The literal is checked at decode time, not bind time ("Default
+// Placement": the constraint is on placement, not on the literal).
+message BadIntDefault {
+  int32 n = 1 [(pxf.default) = "abc"];
+}

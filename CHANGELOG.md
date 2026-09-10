@@ -24,6 +24,34 @@ format changes.
   tag `v1.12.0` instead of a commit hash (`gradle.properties`
   `pxfJavaMeta.ref`); same plugin source, now a named release.
 
+### Fixed
+
+- **A oneof member's `(pxf.default)` no longer destroys the arm the
+  document chose** (#53). `FastDecoder.postDecode` read "absent" per
+  field, but setting any member of a oneof clears the others, so a
+  member is absent precisely when a sibling was chosen — `a = "written"`
+  decoded to `b = "bbb"`, case `b`, the written value cleared. Both
+  `(pxf.default)` and `(pxf.required)` now read the oneof's presence
+  (draft `-01` §annotation-extensions "Oneof Members"): a default applies
+  only when no member is present, a member bound to `null` counts as
+  present, and a document that chooses a sibling of a `(pxf.required)`
+  member is no longer rejected. A proto3 `optional` field's synthetic
+  oneof is excluded, so its default keeps applying. This is the one
+  place decoded output changes: identical to protowire-go ≥ v1.4.0.
+  The bind-time halves of that section — at most one default per oneof,
+  no `(pxf.required)` on a member — are #54.
+- **`(pxf.default)` on a `repeated` or `map` field is a `PxfException`**
+  (#52), `default values not supported for repeated field "tags"`, instead
+  of a `ClassCastException` leaking out of protobuf-java's `setField`.
+  The map message names the field rather than protobuf's synthetic
+  `*Entry` type.
+- A `(pxf.default)` literal the field cannot hold (`"abc"` on an `int32`,
+  bad base64 on `bytes`, a malformed timestamp) is reported as
+  `invalid (pxf.default) literal "abc" for field "n"` instead of a raw
+  `NumberFormatException` / `IllegalArgumentException` /
+  `DateTimeParseException`. A bool default binds exactly `true` or
+  `false`; `"yes"` used to bind as `false` silently.
+
 ## [1.1.0] — 2026-09-07
 
 Minor release: the lite tier (protobuf-javalite) reaches Maven Central,

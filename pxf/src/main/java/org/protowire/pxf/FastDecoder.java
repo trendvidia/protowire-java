@@ -890,6 +890,19 @@ final class FastDecoder {
             String path = pathPref + fd.getName();
             boolean present = result.presentFieldsView().contains(path);
             if (!present) {
+                // Draft -01 §annotation-extensions "Oneof Members": setting
+                // any member of a oneof clears the others, so inside one a
+                // member is absent precisely when a sibling was chosen, and
+                // the per-field reading of "absent" destroys the arm the
+                // document wrote (#53). Both annotations read the oneof's
+                // presence instead — from the document's presence set, not
+                // the builder, so a default applied earlier in this pass
+                // cannot suppress a later one. A member bound to null is
+                // present (null suppresses defaults). (pxf.required) on a
+                // oneof member is a bind-time rejection per the same
+                // section; until this port has that check (#54) the only
+                // coherent runtime reading is "the oneof must be set".
+                if (siblingPresent(fd, pathPref)) continue;
                 if (Annotations.isRequired(fd)) {
                     throw new PxfException(Position.UNKNOWN, "required field \"" + path + "\" is absent");
                 }
@@ -904,25 +917,78 @@ final class FastDecoder {
         }
     }
 
-    private void applyDefault(Message.Builder b, FieldDescriptor fd, String def) {
-        switch (fd.getJavaType()) {
-            case STRING  -> b.setField(fd, def);
-            case BOOLEAN -> b.setField(fd, "true".equals(def));
-            case INT     -> b.setField(fd, Integer.parseInt(def));
-            case LONG    -> b.setField(fd, Long.parseLong(def));
-            case FLOAT   -> b.setField(fd, Float.parseFloat(def));
-            case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
-            case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
-            case ENUM -> {
-                EnumValueDescriptor ev = fd.getEnumType().findValueByName(def);
-                if (ev == null) {
-                    int n = Integer.parseInt(def);
-                    ev = fd.getEnumType().findValueByNumberCreatingIfUnknown(n);
-                }
-                b.setField(fd, ev);
-            }
-            case MESSAGE -> applyMessageDefault(b, fd, def);
+    /**
+     * Whether another member of {@code fd}'s oneof was present in the
+     * document, at the nesting level {@code pathPref} names. False for a
+     * field outside any oneof, and for a proto3 {@code optional} field:
+     * its synthetic single-member oneof has no sibling to be cleared by,
+     * so it keeps plain per-field presence.
+     */
+    private boolean siblingPresent(FieldDescriptor fd, String pathPref) {
+        OneofDescriptor oo = fd.getContainingOneof();
+        if (oo == null || oo.isSynthetic()) return false;
+        for (FieldDescriptor sib : oo.getFields()) {
+            if (sib != fd && result.presentFieldsView().contains(pathPref + sib.getName())) return true;
         }
+        return false;
+    }
+
+    private void applyDefault(Message.Builder b, FieldDescriptor fd, String def) {
+        // Draft -01 §annotation-extensions "Default Placement": one literal
+        // cannot denote a map or a list, so the placement is meaningless
+        // and must be reported as such — never handed to Builder.setField,
+        // which casts a boxed scalar to List and leaks ClassCastException
+        // (#52). Map first: isRepeated() is true for map fields too.
+        if (fd.isMapField()) {
+            throw new PxfException(Position.UNKNOWN,
+                    "default values not supported for map field \"" + fd.getName() + "\"");
+        }
+        if (fd.isRepeated()) {
+            throw new PxfException(Position.UNKNOWN,
+                    "default values not supported for repeated field \"" + fd.getName() + "\"");
+        }
+        // The literal itself is checked here, not at bind time ("Default
+        // Placement": the constraint is on placement, not on the literal),
+        // so a literal the field cannot hold is a decode-time PxfException
+        // naming the field — never a NumberFormatException or a Base64
+        // IllegalArgumentException out of the decoder.
+        try {
+            switch (fd.getJavaType()) {
+                case STRING  -> b.setField(fd, def);
+                case BOOLEAN -> b.setField(fd, parseBoolDefault(fd, def));
+                case INT     -> b.setField(fd, Integer.parseInt(def));
+                case LONG    -> b.setField(fd, Long.parseLong(def));
+                case FLOAT   -> b.setField(fd, Float.parseFloat(def));
+                case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
+                case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
+                case ENUM -> {
+                    EnumValueDescriptor ev = fd.getEnumType().findValueByName(def);
+                    if (ev == null) {
+                        int n = Integer.parseInt(def);
+                        ev = fd.getEnumType().findValueByNumberCreatingIfUnknown(n);
+                    }
+                    b.setField(fd, ev);
+                }
+                case MESSAGE -> applyMessageDefault(b, fd, def);
+            }
+        } catch (IllegalArgumentException | java.time.DateTimeException e) {
+            throw new PxfException(Position.UNKNOWN,
+                    "invalid (pxf.default) literal \"" + def + "\" for field \"" + fd.getName() + "\": " + e.getMessage());
+        }
+    }
+
+    /**
+     * A bool literal has exactly two spellings. Anything else is an error,
+     * never {@code false}: the Java convention of reading every non-"true"
+     * as false is the defect family of #76, on the default path.
+     */
+    private static boolean parseBoolDefault(FieldDescriptor fd, String def) {
+        return switch (def) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> throw new PxfException(Position.UNKNOWN,
+                    "invalid (pxf.default) literal \"" + def + "\" for bool field \"" + fd.getName() + "\": expected true or false");
+        };
     }
 
     private void applyMessageDefault(Message.Builder b, FieldDescriptor fd, String def) {
@@ -955,7 +1021,7 @@ final class FastDecoder {
     private Object parseScalarDefault(FieldDescriptor fd, String def) {
         return switch (fd.getJavaType()) {
             case STRING  -> def;
-            case BOOLEAN -> "true".equals(def);
+            case BOOLEAN -> parseBoolDefault(fd, def);
             case INT     -> Integer.parseInt(def);
             case LONG    -> Long.parseLong(def);
             case FLOAT   -> Float.parseFloat(def);

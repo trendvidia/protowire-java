@@ -176,9 +176,11 @@ public final class Format {
      * The identifier-safe test shared by string map keys and keyed entry
      * names: the {@code identifier} production of draft -01
      * ({@code ident-start = ALPHA / "_"}, {@code ident-part = ALPHA / DIGIT
-     * / "_"}) minus the value keywords {@code null} / {@code true} /
-     * {@code false}. Such a key is written bare and reads back as the same
-     * string; anything else is quoted.
+     * / "_" / "."}, dots included — protowire#313, #83) minus the value
+     * keywords {@code null} / {@code true} / {@code false}. Such a key is
+     * written bare and reads back as the same string; anything else is
+     * quoted — so {@code a.b} is bare and {@code ".e"}, {@code "1.5"} and
+     * {@code "404"}, which fail ident-start, stay quoted.
      */
     public static boolean identSafeEntryName(String s) {
         if (s.isEmpty() || "true".equals(s) || "false".equals(s) || "null".equals(s)) return false;
@@ -194,7 +196,7 @@ public final class Format {
     }
 
     private static boolean isIdentPart(char c) {
-        return isIdentStart(c) || (c >= '0' && c <= '9');
+        return isIdentStart(c) || (c >= '0' && c <= '9') || c == '.';
     }
 
     /**

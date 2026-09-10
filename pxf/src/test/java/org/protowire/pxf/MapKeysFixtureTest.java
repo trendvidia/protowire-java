@@ -133,4 +133,21 @@ class MapKeysFixtureTest {
         Pxf.unmarshal(out.getBytes(StandardCharsets.UTF_8), b);
         assertEquals(back.getByLabelMap(), b.getByLabelMap());
     }
+
+    // A dotted string key is identifier-safe (the identifier production
+    // admits "." in ident-part), so the marshaller writes it bare and fmt
+    // unquotes a quoted one; keys that fail ident-start (".e", "1.5") stay
+    // quoted (protowire#313, #83).
+    @Test
+    void dottedKeysPair() throws IOException {
+        assertFormatsTo("fmt-dotted-keys");
+        for (String name : List.of("fmt-dotted-keys.pxf", "fmt-dotted-keys.expected.pxf")) {
+            Map<String, String> m = labels(name).getByLabelMap();
+            assertEquals(Map.of("a.b", "quoted dotted", "c.d", "bare dotted", ".e", "leading dot", "1.5", "float-shaped"), m, name);
+        }
+        String out = new String(Pxf.marshal(labels("fmt-dotted-keys.expected.pxf")), StandardCharsets.UTF_8);
+        for (String line : List.of("a.b: \"quoted dotted\"", "c.d: \"bare dotted\"", "\".e\": \"leading dot\"", "\"1.5\": \"float-shaped\"")) {
+            assertTrue(out.contains(line), line + " not in:\n" + out);
+        }
+    }
 }

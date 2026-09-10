@@ -14,6 +14,7 @@ option java_multiple_files = true;
 
 import "google/protobuf/wrappers.proto";
 import "pxf/annotations.proto";
+import "pxf/bignum.proto";
 
 // A (pxf.default) on a repeated field: one literal cannot populate a
 // list. protobuf-java's Builder.setField casts the boxed scalar to List,
@@ -86,4 +87,12 @@ message BadBoolDefault {
 // Placement": the constraint is on placement, not on the literal).
 message BadIntDefault {
   int32 n = 1 [(pxf.default) = "abc"];
+}
+
+// The three big-number targets, the shape of the corpus's
+// adversarial.v1.BigNumHolder (MaxNumericLiteralDigits, #81).
+message BigNums {
+  pxf.BigInt big_int = 1;
+  pxf.Decimal decimal = 2;
+  pxf.BigFloat big_float = 3;
 }

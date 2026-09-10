@@ -26,6 +26,40 @@ format changes.
 
 ### Fixed
 
+- **The lexer reads fractional and `µs` duration literals** (#55):
+  `1.5ms`, `1.234567ms`, `312.5µs`, `1h30m0.5s`, `-1.5s` — the forms the
+  Go, Rust, C++ and TypeScript encoders write for any Duration that is
+  not a whole multiple of its largest unit (draft `-01` §3.3
+  `duration-segment = 1*DIGIT [ "." 1*DIGIT ] time-unit`, `micro-us =
+  %xC2.B5 %x73`). The number path used to take the float branch on `.`
+  before looking for a unit, and its unit scan was ASCII-only. Pinned
+  unchanged: `1.5` FLOAT, `1.5x` FLOAT + IDENT, `1.ms` FLOAT `1.` + IDENT,
+  `1.5e3ms` FLOAT + IDENT, `5min` invalid, U+03BC GREEK SMALL LETTER MU not
+  a unit. Behind the token, `TimeFormats.parseGoDuration` is now exact
+  (it went through a `double`, so `1.001ms` read as 1000999 ns) and
+  `formatGoDuration` no longer writes `--2562047h-47m…` for
+  `Long.MIN_VALUE`. The lite tier shares both and inherits the fix.
+- **The recursion counter starts at the root as depth 0** (#80,
+  protowire#301): `FastDecoder`, `Pb.unmarshal` and `LiteWireReader`
+  counted the root as depth 1 and refused the hundredth level. A document
+  whose deepest point is exactly `MaxNestingDepth` (100) descents — every
+  `{` or `[` in PXF, every submessage or map entry in PB — is now
+  accepted and one more rejected, matching the AST parser and
+  protowire-go ≥ v1.6. The corpus rows `pxf/deep-nesting-100`,
+  `pxf/deep-nesting-lists-100` and `pb/deep-submessage-100` pass.
+- **`MaxNumericLiteralDigits` is enforced** (#81, HARDENING.md § Mandatory
+  limits): a PXF numeric literal with more than 4096 digits is rejected
+  before any big-number parser sees it (`numeric literal has 5000 digits;
+  MaxNumericLiteralDigits=4096`), one with exactly 4096 is accepted; the
+  check sits in `WellKnown.parseBigInt` / `parseDecimal` / `parseBigFloat`
+  so a `(pxf.default)` literal is under the same limit. The same constant
+  bounds a `pxf.Decimal`'s `scale` on both signs: `Pb.unmarshal` refuses
+  it before constructing the `BigDecimal`, and `WellKnown.readDecimalStr`
+  before materialising `|scale|` digits (it used to prepend them one
+  string at a time — 2^31 of them for a five-byte input). New constants
+  `Limits.MAX_NUMERIC_LITERAL_DIGITS` and `Pb.MAX_NUMERIC_LITERAL_DIGITS`;
+  `check-decode` links `adversarial.v1.BigNumHolder` for the pb rows.
+  The Java row of protowire's `cross_security_check.sh` is 23/23.
 - **A oneof member's `(pxf.default)` no longer destroys the arm the
   document chose** (#53). `FastDecoder.postDecode` read "absent" per
   field, but setting any member of a oneof clears the others, so a

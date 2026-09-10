@@ -483,13 +483,54 @@ final class Lexer {
         if (!neg && digitCount == 4 && pos < input.length && peek() == '-') {
             return lexTimestamp(pp, start);
         }
-        if (pos < input.length && (peek() == '.' || peek() == 'e' || peek() == 'E')) {
-            return lexFloat(pp, start);
+        // Fraction: '.' followed by at least one digit. Floats and durations
+        // both admit one (draft §3.3: duration-segment = 1*DIGIT [ "." 1*DIGIT ]
+        // time-unit), so it is consumed here and the two are told apart by
+        // what follows it. A '.' with no digit after it is not a
+        // duration-segment; the float branch below keeps it as it always has.
+        boolean frac = false;
+        if (peek() == '.' && isDigit(peekAt(1))) {
+            frac = true;
+            advance(); // .
+            while (pos < input.length && isDigit(peek())) advance();
         }
-        if (pos < input.length && isDurationUnit(peek())) {
+        // Duration: magnitude followed by a time unit (§3.10). Checked before
+        // the float branch so "1.5ms" is one DURATION token rather than FLOAT
+        // "1.5" followed by IDENT "ms" — which is what every other port's
+        // encoder writes for a Duration that is not a whole multiple of its
+        // largest unit (#55; protowire-go#75).
+        if (atDurationUnit()) {
             return lexDuration(pp, start);
         }
+        // Float: fraction, or 'e'/'E' exponent, or a bare trailing '.'
+        if (frac || (pos < input.length && (peek() == '.' || peek() == 'e' || peek() == 'E'))) {
+            return lexFloat(pp, start);
+        }
         return new Token(TokenKind.INT, slice(start, pos), pp);
+    }
+
+    /**
+     * Whether the input at the current position begins a time-unit (draft
+     * §3.3): one of the ASCII unit letters, or the two-byte UTF-8 encoding
+     * of "µ" (U+00B5 MICRO SIGN, {@code C2 B5}) that opens micro-us. Only
+     * the first byte(s) are inspected; {@link #lexDuration} consumes the
+     * candidate and the duration parser decides whether it was a unit at
+     * all. Does not advance.
+     */
+    private boolean atDurationUnit() {
+        if (pos >= input.length) return false;
+        return isDurationUnit(peek()) || atMicroSign();
+    }
+
+    /**
+     * Whether the next two bytes are the UTF-8 encoding of U+00B5 MICRO
+     * SIGN — the only non-ASCII byte sequence the duration grammar admits
+     * ({@code micro-us = %xC2.B5 %x73}). U+03BC GREEK SMALL LETTER MU
+     * ({@code CE BC}), which the duration parser would also accept, is
+     * deliberately not recognised. Does not advance.
+     */
+    private boolean atMicroSign() {
+        return peek() == (byte) 0xC2 && peekAt(1) == (byte) 0xB5;
     }
 
     private Token lexFloat(Position pp, int start) {
@@ -522,8 +563,28 @@ final class Lexer {
         return new Token(TokenKind.TIMESTAMP, raw, pp);
     }
 
+    /**
+     * Consumes a duration literal — one or more segments of digits, an
+     * optional "." fraction, and a unit (§3.3) — from {@code start}, and
+     * validates the whole with {@link TimeFormats#parseGoDuration}. The
+     * scan is deliberately loose (any run of digits, unit letters, "."
+     * followed by a digit, and "µ") so that a malformed literal such as
+     * "5min" is reported as one invalid duration rather than tokenised as
+     * a duration plus an identifier.
+     */
     private Token lexDuration(Position pp, int start) {
-        while (pos < input.length && (isDigit(peek()) || isLowerAlpha(peek()))) advance();
+        while (pos < input.length) {
+            if (isDigit(peek()) || isLowerAlpha(peek())) {
+                advance();
+            } else if (peek() == '.' && isDigit(peekAt(1))) {
+                advance();
+            } else if (atMicroSign()) {
+                advance();
+                advance();
+            } else {
+                break;
+            }
+        }
         String raw = slice(start, pos);
         try {
             TimeFormats.parseGoDuration(raw);

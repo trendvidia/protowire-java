@@ -107,7 +107,9 @@ final class FastDecoder {
             throw new PxfException(firstTablePos,
                     "@dataset directive cannot coexist with top-level field entries (draft §3.4.4)");
         }
-        decodeFields(b, false);
+        // The root is depth 0 (HARDENING.md § Recursion counts descents from
+        // it), so the top-level entries are decoded without an enter().
+        decodeFieldsInner(b, false);
         if (trackPresence) postDecode(b, "");
     }
 
@@ -415,10 +417,12 @@ final class FastDecoder {
 
     // -- nesting depth (HARDENING.md § Recursion) --------------------------
     // Mirrors protowire-go encoding/pxf/decode_fast.go: every entry into
-    // decodeFields, decodeList or decodeMap is one level of recursive
-    // descent; the top-level call is depth 1, the first nested submessage
-    // depth 2, and so on. The counter is decremented on return so siblings
-    // see the correct depth.
+    // decodeFields, decodeList or decodeMap — every `{` or `[` — is one
+    // descent from a root at depth 0, so the first nested block is depth
+    // 1 and a document whose deepest point is exactly MaxNestingDepth
+    // descents is accepted while one more is rejected (protowire#301,
+    // #80). The counter is decremented on return so siblings see the
+    // correct depth.
     private int depth;
 
     private void enter(Position pp) {

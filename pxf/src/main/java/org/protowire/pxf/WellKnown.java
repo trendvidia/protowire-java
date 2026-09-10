@@ -136,6 +136,15 @@ public final class WellKnown {
         com.google.protobuf.ByteString abs = (com.google.protobuf.ByteString) m.getField(d.findFieldByName("unscaled"));
         int scale = (Integer) m.getField(d.findFieldByName("scale"));
         boolean neg = (Boolean) m.getField(d.findFieldByName("negative"));
+        // A Decimal is unscaled × 10^(-scale), so writing it out materialises
+        // |scale| digits — work proportional to a value the input sets in
+        // five bytes. A scale is a digit count, which is why the literal
+        // digit cap is the bound rather than a new one (HARDENING.md
+        // § Mandatory limits, protowire#279).
+        if (scale > Limits.MAX_NUMERIC_LITERAL_DIGITS || scale < -Limits.MAX_NUMERIC_LITERAL_DIGITS) {
+            throw new PxfException(Position.UNKNOWN,
+                    "pxf.Decimal scale " + scale + " exceeds MaxNumericLiteralDigits=" + Limits.MAX_NUMERIC_LITERAL_DIGITS);
+        }
         BigInteger unscaled = abs.size() == 0 ? BigInteger.ZERO : new BigInteger(1, abs.toByteArray());
         String digits = unscaled.toString(10);
         StringBuilder sb = new StringBuilder();
@@ -176,10 +185,14 @@ public final class WellKnown {
         return v.toPlainString();
     }
 
-    public static BigInteger parseBigInt(String s) { return new BigInteger(s, 10); }
+    public static BigInteger parseBigInt(String s) {
+        checkLiteralDigits(s);
+        return new BigInteger(s, 10);
+    }
 
     /** parseDecimal returns [unscaled (BigInteger, abs), scale (Integer), negative (Boolean)]. */
     public static Object[] parseDecimal(String s) {
+        checkLiteralDigits(s);
         boolean neg = false;
         if (!s.isEmpty() && s.charAt(0) == '-') { neg = true; s = s.substring(1); }
         int dot = s.indexOf('.');
@@ -192,7 +205,33 @@ public final class WellKnown {
         return new Object[] { unscaled, scale, neg };
     }
 
-    public static BigDecimal parseBigFloat(String s) { return new BigDecimal(s); }
+    public static BigDecimal parseBigFloat(String s) {
+        checkLiteralDigits(s);
+        return new BigDecimal(s);
+    }
+
+    /**
+     * HARDENING.md § Mandatory limits, {@code MaxNumericLiteralDigits}: the
+     * digit count of a literal about to be handed to a big-number parser
+     * (#81). Enforced in the parse helpers rather than the lexer so that a
+     * {@code (pxf.default)} literal, which never passes through the lexer,
+     * is under the same limit. A literal short enough to be within the
+     * limit needs no counting at all, and that is every literal a real
+     * document carries.
+     */
+    static void checkLiteralDigits(String s) {
+        int max = Limits.MAX_NUMERIC_LITERAL_DIGITS;
+        if (s.length() <= max) return;
+        int n = 0;
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c >= '0' && c <= '9') n++;
+        }
+        if (n > max) {
+            throw new PxfException(Position.UNKNOWN,
+                    "numeric literal has " + n + " digits; MaxNumericLiteralDigits=" + max);
+        }
+    }
 
     /** Strip a leading 0x00 sign byte produced by {@link BigInteger#toByteArray()}. */
     private static byte[] trimSign(byte[] b) {

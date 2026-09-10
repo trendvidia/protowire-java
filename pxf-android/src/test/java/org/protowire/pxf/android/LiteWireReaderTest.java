@@ -428,25 +428,26 @@ final class LiteWireReaderTest {
 
     @Test
     void nesting_upToTheLimitIsAccepted() {
-        // Top-level message is depth 1 (as in :pb); 99 nested = depth 100.
-        assertEquals(99, depthOf(LiteWireReader.toAst(nested(99), TREE)));
+        // Top-level message is depth 0 (as in :pb, protowire#301); 100 nested
+        // = 100 descents, accepted.
+        assertEquals(100, depthOf(LiteWireReader.toAst(nested(100), TREE)));
     }
 
     @Test
     void nesting_pastTheLimitIsRejected() {
-        assertDepthRejected(nested(100));
+        assertDepthRejected(nested(101));
     }
 
     @Test
     void nesting_mapEntriesCountAsLevels() {
-        // 97 nested (depth 98) + map entry (99) + value message (100): accepted.
+        // 98 nested (depth 98) + map entry (99) + value message (100): accepted.
         byte[] entry = new byte[0];
         java.io.ByteArrayOutputStream o = new java.io.ByteArrayOutputStream();
         o.writeBytes(lengthDelimited(1, "k".getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         o.writeBytes(lengthDelimited(2, entry));
         byte[] wire = lengthDelimited(3, o.toByteArray());
-        for (int i = 0; i < 97; i++) wire = lengthDelimited(1, wire);
-        assertEquals(97, depthOf(LiteWireReader.toAst(wire, TREE)));
+        for (int i = 0; i < 98; i++) wire = lengthDelimited(1, wire);
+        assertEquals(98, depthOf(LiteWireReader.toAst(wire, TREE)));
         assertDepthRejected(lengthDelimited(1, wire));
     }
 

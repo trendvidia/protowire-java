@@ -20,21 +20,21 @@ Maven:
 <dependency>
   <groupId>org.protowire</groupId>
   <artifactId>protowire-pxf</artifactId>
-  <version>1.1.0</version>
+  <version>1.2.0</version>
 </dependency>
 ```
 
 Gradle (Kotlin DSL):
 
 ```kotlin
-implementation("org.protowire:protowire-pxf:1.1.0")
+implementation("org.protowire:protowire-pxf:1.2.0")
 // or pick the modules you need:
 //   JVM (protobuf-java):   protowire-pb, protowire-pxf, protowire-sbe, protowire-envelope, protowire-proto-annotations
 //   descriptor-free:       protowire-pxf-runtime, protowire-sbe-runtime
 //   lite (protobuf-javalite): protowire-pxf-android, protowire-pb-android, protowire-sbe-android, protowire-envelope-android
 ```
 
-All published artifacts share one version line (`1.1.x`); ports at the
+All published artifacts share one version line (`1.2.x`); ports at the
 same minor implement the same wire contract.
 
 ## Modules

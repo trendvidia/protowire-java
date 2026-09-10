@@ -18,6 +18,23 @@ format changes.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-09-10
+
+Minor release: the port adopts protowire v1.11 and v1.12 across the
+family's gates — the bind-time placement checks scoped to the import
+closure, keyed repeated fields, the map-key grammar, the per-call
+mandatory limits — and its `pb` codec is measured against the Go
+reference for the first time. The Java rows of protowire's
+`cross_security_check.sh` (35/35) and `cross_envelope_check.sh` (all
+three dumpers held to the `zero-map-entry` golden) pass with no
+declared omissions. No public API is removed; every new record component
+keeps its previous constructor. Two things a consumer should read before
+upgrading: `Pb` bytes written by earlier versions for any non-zero
+integer, packed list or `Decimal` scale are not readable by the fixed
+codec (they never were by any other port — see "Changed"), and accepted
+schema input narrows where a `(pxf.*)` annotation sits where no
+implementation could honor it (see "Added", #54).
+
 ### Added
 
 - **A descriptor compiled against a retired extension number is diagnosed

@@ -297,4 +297,43 @@ class PbTest {
             assertTrue(e.getMessage().contains("MaxNumericLiteralDigits=4096"), e.getMessage());
         }
     }
+
+    // -- what a reader must accept: both layouts, both list encodings (#77, #78)
+
+    public static class Ints {
+        @ProtoField(1) List<Integer> xs;
+        @ProtoField(2) Map<String, Integer> m = new HashMap<>();
+        @ProtoField(3) int n;
+        public Ints() {}
+    }
+
+    @Test
+    void unpackedRepeatedIntsDecode() throws IOException {
+        // Three unpacked records: 08 01 08 00 08 ff…01 (-1 sign-extended).
+        byte[] wire = concat(concat(varintField(1, 1), varintField(1, 0)), varintField(1, -1L));
+        assertEquals(List.of(1, 0, -1), Pb.unmarshal(wire, Ints.class).xs);
+    }
+
+    @Test
+    void mapEntryLackingKeyOrValueReadsAsZero() throws IOException {
+        // The pre-v1.13 layout: zero-valued key / value omitted from the entry.
+        byte[] onlyValue = lengthDelimited(2, varintField(2, 7));   // {"": 7}
+        byte[] onlyKey = lengthDelimited(2, lengthDelimited(1, "k".getBytes(java.nio.charset.StandardCharsets.UTF_8))); // {"k": 0}
+        byte[] empty = lengthDelimited(2, new byte[0]);              // {"": 0}
+        Ints got = Pb.unmarshal(concat(onlyValue, onlyKey), Ints.class);
+        assertEquals(7, got.m.get(""));
+        assertEquals(0, got.m.get("k"));
+        assertEquals(0, Pb.unmarshal(empty, Ints.class).m.get(""));
+    }
+
+    @Test
+    void signedIntIsAPlainVarintByDefault() throws IOException {
+        Ints plain = new Ints(); plain.n = -1;   // field 3: tag 0x18, then ten bytes
+        assertEquals("18ffffffffffffffffff01", java.util.HexFormat.of().formatHex(Pb.marshal(plain)));
+        assertEquals(-1, Pb.unmarshal(Pb.marshal(plain), Ints.class).n);
+    }
+
+    private static byte[] varintField(int field, long v) {
+        return concat(varint((long) field << 3), varint(v));
+    }
 }

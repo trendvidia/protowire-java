@@ -8,6 +8,12 @@
 //   dump-envelope                        canonical Envelope → pb hex
 //   dump-envelope --pb  FDS MESSAGE DOC  PXF DOC decoded against MESSAGE in FDS → pb hex
 //   dump-envelope --sbe FDS MESSAGE DOC  same → SBE hex
+//   dump-envelope --vector NAME          a wire vector from the spec repo's
+//                                        testdata/envelope/, encoded by this
+//                                        port's schema-free pb codec (:pb),
+//                                        compared with a golden (promise 2,
+//                                        protowire#295). Exit 3 with
+//                                        "not-implemented: NAME" otherwise.
 //
 // The fixture modes apply the PXF annotations the descriptor carries, which
 // is how the gate proves this port reads (pxf.required) = 1314,
@@ -33,6 +39,8 @@ import java.util.Map;
 import org.protowire.envelope.v1.AppError;
 import org.protowire.envelope.v1.Envelope;
 import org.protowire.envelope.v1.FieldError;
+import org.protowire.pb.Pb;
+import org.protowire.pb.ProtoField;
 import org.protowire.pxf.Pxf;
 import org.protowire.pxf.PxfException;
 import org.protowire.sbe.Codec;
@@ -45,10 +53,52 @@ public final class DumpEnvelope {
             dumpEnvelope();
             return;
         }
+        if (args.length == 2 && args[0].equals("--vector")) {
+            dumpVector(args[1]);
+            return;
+        }
         if (args.length != 4 || !(args[0].equals("--pb") || args[0].equals("--sbe"))) {
-            fatal(2, "usage: dump-envelope [--pb|--sbe FDS MESSAGE DOC]");
+            fatal(2, "usage: dump-envelope [--pb|--sbe FDS MESSAGE DOC | --vector NAME]");
         }
         dumpFixture(args[0], args[1], args[2], args[3]);
+    }
+
+    // The envelope.v1 shapes as :pb structs, so a vector measures this
+    // port's hand-rolled codec rather than protobuf-java's generated code
+    // (which the canonical envelope above goes through). Only the fields
+    // the vectors populate.
+    public static final class PbEnvelope {
+        @ProtoField(4) public PbAppError error;
+        public PbEnvelope() {}
+    }
+
+    public static final class PbAppError {
+        @ProtoField(5) public Map<String, String> metadata = new HashMap<>();
+        public PbAppError() {}
+    }
+
+    /**
+     * Prints a wire vector the gate checks against a golden. The named
+     * vectors are the spec repo's {@code testdata/envelope/NAME.textproto}.
+     */
+    private static void dumpVector(String name) {
+        PbEnvelope env = new PbEnvelope();
+        switch (name) {
+            case "zero-map-entry" -> {
+                // error { metadata { key: "" value: "" } }
+                env.error = new PbAppError();
+                env.error.metadata.put("", "");
+            }
+            default -> {
+                System.err.println("not-implemented: " + name);
+                System.exit(3);
+            }
+        }
+        try {
+            System.out.println(hex(Pb.marshal(env)));
+        } catch (Exception e) {
+            fatal(2, e.toString());
+        }
     }
 
     private static void dumpEnvelope() {

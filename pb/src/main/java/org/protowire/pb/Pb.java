@@ -25,11 +25,25 @@ import java.util.concurrent.ConcurrentHashMap;
  * Schema-free protobuf binary marshaling for plain Java classes.
  *
  * <p>Field numbers come from the {@link ProtoField} annotation. Encoding follows proto3 semantics:
- * zero-value fields are omitted. The wire format is standard protobuf binary.
+ * zero-value singular fields are omitted. The wire format is standard protobuf binary, byte for
+ * byte what protowire-go's {@code encoding/pb} writes for the same struct (STABILITY.md promise
+ * 2; #77):
+ *
+ * <ul>
+ *   <li>Signed integers are proto3 {@code int32} / {@code int64} — a plain varint, sign-extended
+ *       to ten bytes for a negative value. {@link ProtoField#zigzag()} opts a field into
+ *       {@code sint32} / {@code sint64} instead, like Go's {@code zigzag} tag option.</li>
+ *   <li>A {@link List} of numeric or boolean elements is encoded packed, one length-delimited
+ *       record carrying every element, zeros included; other element types are one record per
+ *       element. Both packed and unpacked input decode.</li>
+ *   <li>A map entry always carries its {@code key} and its {@code value}, zero-valued or not — the
+ *       layout protoc, protobuf-go and C++ protobuf write (protowire#295; #78). An entry lacking
+ *       either still decodes, to the zero value.</li>
+ * </ul>
  *
  * <p>Supported types: {@code boolean}, all integer primitives + boxed, {@code float}, {@code double},
  * {@link String}, {@code byte[]}, {@link BigInteger}, {@link BigDecimal}, nested classes, {@link List}
- * of any of the above.
+ * of any of the above, {@link Map} with scalar keys.
  */
 public final class Pb {
 
@@ -104,7 +118,8 @@ public final class Pb {
 
     // -- struct info cache ---------------------------------------------------
 
-    private record FieldInfo(Field field, int number, FieldKind kind, Class<?> elementClass, Class<?> mapKeyClass) {}
+    private record FieldInfo(Field field, int number, FieldKind kind, Class<?> elementClass, Class<?> mapKeyClass,
+                             boolean zigzag) {}
 
     private record StructInfo(List<FieldInfo> ordered, Map<Integer, FieldInfo> byNumber) {}
 
@@ -124,7 +139,7 @@ public final class Pb {
             FieldKind kind = FieldKind.classify(f);
             Class<?> elem = elementClass(f, kind);
             Class<?> mapKey = kind == FieldKind.MAP ? mapKeyClass(f) : null;
-            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem, mapKey);
+            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem, mapKey, pf.zigzag());
             ordered.add(fi);
             byNumber.put(pf.value(), fi);
         }
@@ -179,104 +194,149 @@ public final class Pb {
 
         if (fi.kind == FieldKind.LIST) {
             List<?> list = (List<?>) value;
+            if (list.isEmpty()) return;
+            // Repeated numeric scalars: packed (proto3 default) — one
+            // LEN-typed record carrying the concatenated element encodings,
+            // every element emitted since packed encoding has no per-element
+            // presence. Other element types: one record per element, a zero
+            // element written as its zero record so the list length survives.
+            if (isPackable(fi.elementClass)) {
+                marshalPacked(out, fi.number, fi.elementClass, list, fi.zigzag);
+                return;
+            }
             for (Object elem : list) {
-                if (elem == null) continue;
-                marshalScalar(out, fi.number, fi.elementClass, elem);
+                marshalScalar(out, fi.number, fi.elementClass, elem == null ? scalarZero(fi.elementClass) : elem,
+                        fi.zigzag, true);
             }
             return;
         }
 
         if (fi.kind == FieldKind.MAP) {
             // proto3 maps: each entry is a length-prefixed MapEntry message
-            // with key at field 1 and value at field 2.
+            // with key at field 1 and value at field 2. Both fields are
+            // always written, zero-valued or not — presence lives in the
+            // entry, not in its fields — which is the layout protobuf-go,
+            // protoc and C++ protobuf write (protowire#295, #78). Keys and
+            // values inherit the field's zigzag flag.
             Map<?, ?> map = (Map<?, ?>) value;
             if (map.isEmpty()) return;
             for (Map.Entry<?, ?> e : map.entrySet()) {
                 ByteArrayOutputStream entryBuf = new ByteArrayOutputStream();
                 CodedOutputStream entryOut = CodedOutputStream.newInstance(entryBuf);
-                if (e.getKey() != null) {
-                    marshalScalarIfNonZero(entryOut, 1, fi.mapKeyClass, e.getKey());
-                }
-                if (e.getValue() != null) {
-                    marshalScalarIfNonZero(entryOut, 2, fi.elementClass, e.getValue());
-                }
+                Object k = e.getKey() == null ? scalarZero(fi.mapKeyClass) : e.getKey();
+                Object v = e.getValue() == null ? scalarZero(fi.elementClass) : e.getValue();
+                marshalScalar(entryOut, 1, fi.mapKeyClass, k, fi.zigzag, true);
+                marshalScalar(entryOut, 2, fi.elementClass, v, fi.zigzag, true);
                 entryOut.flush();
                 out.writeByteArray(fi.number, entryBuf.toByteArray());
             }
             return;
         }
 
-        marshalScalar(out, fi.number, fi.field.getType(), value);
+        marshalScalar(out, fi.number, fi.field.getType(), value, fi.zigzag, false);
     }
 
-    /** Emit a scalar only when its value is non-zero (proto3 zero-skip). Used by map-entry encoding. */
-    private static void marshalScalarIfNonZero(CodedOutputStream out, int num, Class<?> type, Object v) throws IOException {
-        if (isZero(type, v)) return;
-        marshalScalar(out, num, type, v);
+    /**
+     * Whether a {@link List} of this element type is encoded packed: the
+     * numeric scalars and bool, which proto3 packs by default. String,
+     * bytes, big numbers, messages and maps are never packed.
+     */
+    private static boolean isPackable(Class<?> type) {
+        return type == boolean.class || type == Boolean.class
+                || type == int.class || type == Integer.class
+                || type == long.class || type == Long.class
+                || type == short.class || type == Short.class
+                || type == byte.class || type == Byte.class
+                || type == float.class || type == Float.class
+                || type == double.class || type == Double.class;
     }
 
-    private static boolean isZero(Class<?> type, Object v) {
-        if (v == null) return true;
-        if (type == boolean.class || type == Boolean.class) return !((Boolean) v);
-        if (type == String.class) return ((String) v).isEmpty();
-        if (type == byte[].class) return ((byte[]) v).length == 0;
-        if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
-            return ((Number) v).doubleValue() == 0d;
+    private static boolean isSignedInt(Class<?> type) {
+        return type == int.class || type == Integer.class
+                || type == long.class || type == Long.class
+                || type == short.class || type == Short.class
+                || type == byte.class || type == Byte.class;
+    }
+
+    private static void marshalPacked(CodedOutputStream out, int num, Class<?> type, List<?> list, boolean zigzag)
+            throws IOException {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        CodedOutputStream payload = CodedOutputStream.newInstance(buf);
+        for (Object elem : list) {
+            Object v = elem == null ? scalarZero(type) : elem;
+            if (type == boolean.class || type == Boolean.class) {
+                payload.writeBoolNoTag((Boolean) v);
+            } else if (isSignedInt(type)) {
+                long n = ((Number) v).longValue();
+                payload.writeUInt64NoTag(zigzag ? zigzagEncode(n) : n);
+            } else if (type == float.class || type == Float.class) {
+                payload.writeFloatNoTag(((Number) v).floatValue());
+            } else {
+                payload.writeDoubleNoTag(((Number) v).doubleValue());
+            }
         }
-        return false;
+        payload.flush();
+        out.writeByteArray(num, buf.toByteArray());
     }
 
-    private static void marshalScalar(CodedOutputStream out, int num, Class<?> type, Object v) throws IOException {
+    /**
+     * Writes one scalar or message value. A singular field ({@code element}
+     * false) skips its zero value, as proto3 does; a list element or a map
+     * key / value ({@code element} true) is always written.
+     */
+    private static void marshalScalar(CodedOutputStream out, int num, Class<?> type, Object v,
+                                      boolean zigzag, boolean element) throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             boolean b = (Boolean) v;
-            if (!b) return;
-            out.writeBool(num, true);
-        } else if (type == int.class || type == Integer.class
-                || type == short.class || type == Short.class
-                || type == byte.class || type == Byte.class) {
+            if (!b && !element) return;
+            out.writeBool(num, b);
+        } else if (isSignedInt(type)) {
             long n = ((Number) v).longValue();
-            if (n == 0) return;
-            // proto3 zigzag for signed ints (matching Go's pb)
+            if (n == 0 && !element) return;
+            // proto3 int32 / int64: a plain varint, sign-extended to 64 bits
+            // for a negative value — what protowire-go's pb, protobuf-go and
+            // protoc write. Zigzag (sint32 / sint64) only on opt-in (#77).
             out.writeTag(num, WireFormat.WIRETYPE_VARINT);
-            out.writeUInt64NoTag(zigzagEncode(n));
-        } else if (type == long.class || type == Long.class) {
-            long n = ((Number) v).longValue();
-            if (n == 0) return;
-            out.writeTag(num, WireFormat.WIRETYPE_VARINT);
-            out.writeUInt64NoTag(zigzagEncode(n));
+            out.writeUInt64NoTag(zigzag ? zigzagEncode(n) : n);
         } else if (type == float.class || type == Float.class) {
             float f = ((Number) v).floatValue();
-            if (f == 0f) return;
+            if (f == 0f && !element) return;
             out.writeFloat(num, f);
         } else if (type == double.class || type == Double.class) {
             double d = ((Number) v).doubleValue();
-            if (d == 0d) return;
+            if (d == 0d && !element) return;
             out.writeDouble(num, d);
         } else if (type == String.class) {
             String s = (String) v;
-            if (s.isEmpty()) return;
+            if (s.isEmpty() && !element) return;
             out.writeString(num, s);
         } else if (type == byte[].class) {
             byte[] b = (byte[]) v;
-            if (b.length == 0) return;
+            if (b.length == 0 && !element) return;
             out.writeByteArray(num, b);
         } else if (type == BigInteger.class) {
             BigInteger bi = (BigInteger) v;
-            if (bi.signum() == 0) return;
+            if (bi.signum() == 0 && !element) return;
             byte[] msg = marshalBigInteger(bi);
             out.writeByteArray(num, msg);
         } else if (type == BigDecimal.class) {
             BigDecimal bd = (BigDecimal) v;
-            if (bd.signum() == 0) return;
+            if (bd.signum() == 0 && !element) return;
             byte[] msg = marshalBigDecimal(bd);
             out.writeByteArray(num, msg);
         } else if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
             // unsigned variants would land here only if user used custom types — fallback
             long n = ((Number) v).longValue();
-            if (n == 0) return;
+            if (n == 0 && !element) return;
             out.writeUInt64(num, n);
         } else {
-            // nested message
+            // nested message; an absent (null) singular message is omitted,
+            // a null element is its zero record.
+            if (v == null) {
+                if (!element) return;
+                out.writeByteArray(num, new byte[0]);
+                return;
+            }
             byte[] msg = marshal(v);
             out.writeByteArray(num, msg);
         }
@@ -313,7 +373,23 @@ public final class Pb {
                 list = new ArrayList<>();
                 fi.field.set(dest, list);
             }
-            list.add(readScalar(in, fi.elementClass, wireType, depth));
+            // Packed repeated numerics (proto3 default): a LEN-typed record
+            // carrying concatenated element encodings. Each element is read
+            // with its natural encoding; unpacked records decode as before.
+            if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(fi.elementClass)) {
+                int len = in.readRawVarint32();
+                int limit = in.pushLimit(len);
+                int elemWire = (fi.elementClass == float.class || fi.elementClass == Float.class)
+                        ? WireFormat.WIRETYPE_FIXED32
+                        : (fi.elementClass == double.class || fi.elementClass == Double.class)
+                        ? WireFormat.WIRETYPE_FIXED64 : WireFormat.WIRETYPE_VARINT;
+                while (in.getBytesUntilLimit() > 0) {
+                    list.add(readScalar(in, fi.elementClass, elemWire, depth, fi.zigzag));
+                }
+                in.popLimit(limit);
+                return;
+            }
+            list.add(readScalar(in, fi.elementClass, wireType, depth, fi.zigzag));
             return;
         }
         if (fi.kind == FieldKind.MAP) {
@@ -338,9 +414,9 @@ public final class Pb {
                 int n = WireFormat.getTagFieldNumber(tag);
                 int wt = WireFormat.getTagWireType(tag);
                 if (n == 1) {
-                    key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1);
+                    key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1, fi.zigzag);
                 } else if (n == 2) {
-                    val = readScalar(entryIn, fi.elementClass, wt, depth + 1);
+                    val = readScalar(entryIn, fi.elementClass, wt, depth + 1, fi.zigzag);
                 } else {
                     entryIn.skipField(tag);
                 }
@@ -348,7 +424,7 @@ public final class Pb {
             map.put(key, val);
             return;
         }
-        Object value = readScalar(in, fi.field.getType(), wireType, depth);
+        Object value = readScalar(in, fi.field.getType(), wireType, depth, fi.zigzag);
         fi.field.set(dest, value);
     }
 
@@ -365,21 +441,21 @@ public final class Pb {
         return null;
     }
 
-    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType, int depth) throws IOException {
+    private static Object readScalar(CodedInputStream in, Class<?> type, int wireType, int depth, boolean zigzag)
+            throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             return in.readBool();
         }
-        if (type == int.class || type == Integer.class) {
-            return (int) zigzagDecode(in.readRawVarint64());
-        }
-        if (type == short.class || type == Short.class) {
-            return (short) zigzagDecode(in.readRawVarint64());
-        }
-        if (type == byte.class || type == Byte.class) {
-            return (byte) zigzagDecode(in.readRawVarint64());
-        }
-        if (type == long.class || type == Long.class) {
-            return zigzagDecode(in.readRawVarint64());
+        if (isSignedInt(type)) {
+            // proto3 int32 / int64 read the varint as a two's-complement
+            // value (a negative int32 arrives sign-extended to ten bytes and
+            // narrows back); sint32 / sint64 decode zigzag on opt-in (#77).
+            long raw = in.readRawVarint64();
+            long n = zigzag ? zigzagDecode(raw) : raw;
+            if (type == int.class || type == Integer.class) return (int) n;
+            if (type == short.class || type == Short.class) return (short) n;
+            if (type == byte.class || type == Byte.class) return (byte) n;
+            return n;
         }
         if (type == float.class || type == Float.class) {
             return in.readFloat();
@@ -451,8 +527,11 @@ public final class Pb {
         boolean negative = bd.signum() < 0;
         if (absBytes.length > 0) out.writeByteArray(1, absBytes);
         if (scale != 0) {
+            // `int32 scale = 2` in pxf/bignum.proto: a PLAIN varint, with a
+            // negative value sign-extended to 64 bits. Zigzag is sint32,
+            // which this field is not (protowire-go#92; #77).
             out.writeTag(2, WireFormat.WIRETYPE_VARINT);
-            out.writeUInt64NoTag(zigzagEncode(scale));
+            out.writeUInt64NoTag(scale);
         }
         if (negative) out.writeBool(3, true);
         out.flush();
@@ -470,7 +549,7 @@ public final class Pb {
             int num = WireFormat.getTagFieldNumber(tag);
             switch (num) {
                 case 1 -> abs = in.readByteArray();
-                case 2 -> scale = (int) zigzagDecode(in.readRawVarint64());
+                case 2 -> scale = (int) in.readRawVarint64();
                 case 3 -> negative = in.readBool();
                 default -> in.skipField(tag);
             }

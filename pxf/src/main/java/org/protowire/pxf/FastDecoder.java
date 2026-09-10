@@ -905,6 +905,19 @@ final class FastDecoder {
     }
 
     private void applyDefault(Message.Builder b, FieldDescriptor fd, String def) {
+        // Draft -01 §annotation-extensions "Default Placement": one literal
+        // cannot denote a map or a list, so the placement is meaningless
+        // and must be reported as such — never handed to Builder.setField,
+        // which casts a boxed scalar to List and leaks ClassCastException
+        // (#52). Map first: isRepeated() is true for map fields too.
+        if (fd.isMapField()) {
+            throw new PxfException(Position.UNKNOWN,
+                    "default values not supported for map field \"" + fd.getName() + "\"");
+        }
+        if (fd.isRepeated()) {
+            throw new PxfException(Position.UNKNOWN,
+                    "default values not supported for repeated field \"" + fd.getName() + "\"");
+        }
         switch (fd.getJavaType()) {
             case STRING  -> b.setField(fd, def);
             case BOOLEAN -> b.setField(fd, "true".equals(def));

@@ -160,7 +160,16 @@ public final class WellKnown {
         String digits = unscaled.toString(10);
         StringBuilder sb = new StringBuilder();
         if (neg) sb.append('-');
-        if (scale <= 0) { sb.append(digits); return sb.toString(); }
+        if (scale < 0) {
+            // value = unscaled × 10^(-scale): a negative scale is trailing
+            // zeros (bounded above, so at most MaxNumericLiteralDigits of
+            // them). This port's own writers never produce one; bytes from
+            // another producer can (#85).
+            sb.append(digits);
+            if (unscaled.signum() != 0) sb.append("0".repeat(-scale));
+            return sb.toString();
+        }
+        if (scale == 0) { sb.append(digits); return sb.toString(); }
         while (digits.length() <= scale) digits = "0" + digits;
         sb.append(digits, 0, digits.length() - scale).append('.').append(digits, digits.length() - scale, digits.length());
         return sb.toString();

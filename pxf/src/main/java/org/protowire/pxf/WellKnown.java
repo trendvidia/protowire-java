@@ -185,14 +185,20 @@ public final class WellKnown {
         return v.toPlainString();
     }
 
-    public static BigInteger parseBigInt(String s) {
-        checkLiteralDigits(s);
+    public static BigInteger parseBigInt(String s) { return parseBigInt(s, Limits.MAX_NUMERIC_LITERAL_DIGITS); }
+
+    /** As {@link #parseBigInt(String)} under a per-call digit cap. */
+    public static BigInteger parseBigInt(String s, int maxDigits) {
+        checkLiteralDigits(s, maxDigits);
         return new BigInteger(s, 10);
     }
 
     /** parseDecimal returns [unscaled (BigInteger, abs), scale (Integer), negative (Boolean)]. */
-    public static Object[] parseDecimal(String s) {
-        checkLiteralDigits(s);
+    public static Object[] parseDecimal(String s) { return parseDecimal(s, Limits.MAX_NUMERIC_LITERAL_DIGITS); }
+
+    /** As {@link #parseDecimal(String)} under a per-call digit cap. */
+    public static Object[] parseDecimal(String s, int maxDigits) {
+        checkLiteralDigits(s, maxDigits);
         boolean neg = false;
         if (!s.isEmpty() && s.charAt(0) == '-') { neg = true; s = s.substring(1); }
         int dot = s.indexOf('.');
@@ -205,8 +211,11 @@ public final class WellKnown {
         return new Object[] { unscaled, scale, neg };
     }
 
-    public static BigDecimal parseBigFloat(String s) {
-        checkLiteralDigits(s);
+    public static BigDecimal parseBigFloat(String s) { return parseBigFloat(s, Limits.MAX_NUMERIC_LITERAL_DIGITS); }
+
+    /** As {@link #parseBigFloat(String)} under a per-call digit cap. */
+    public static BigDecimal parseBigFloat(String s, int maxDigits) {
+        checkLiteralDigits(s, maxDigits);
         return new BigDecimal(s);
     }
 
@@ -219,8 +228,7 @@ public final class WellKnown {
      * limit needs no counting at all, and that is every literal a real
      * document carries.
      */
-    static void checkLiteralDigits(String s) {
-        int max = Limits.MAX_NUMERIC_LITERAL_DIGITS;
+    static void checkLiteralDigits(String s, int max) {
         if (s.length() <= max) return;
         int n = 0;
         for (int i = 0; i < s.length(); i++) {

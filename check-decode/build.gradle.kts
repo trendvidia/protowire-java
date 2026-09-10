@@ -8,6 +8,7 @@ plugins {
 dependencies {
     implementation(project(":pxf"))
     implementation(project(":pb"))
+    implementation(project(":sbe"))
     implementation("com.google.protobuf:protobuf-java:3.25.5")
 }
 

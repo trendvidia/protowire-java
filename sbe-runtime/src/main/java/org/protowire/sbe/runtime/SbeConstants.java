@@ -19,6 +19,19 @@ public final class SbeConstants {
     public static final int GROUP_HEADER_SIZE = 4;
     public static final ByteOrder ORDER = ByteOrder.LITTLE_ENDIAN;
 
+    /**
+     * HARDENING.md {@code MaxMessageSize}: the total input to one decode
+     * call, 64 MiB, checked before the header is read (#79).
+     */
+    public static final int MAX_MESSAGE_SIZE = 64 << 20;
+
+    /**
+     * HARDENING.md {@code MaxRepeatedCount}: a repeating group's
+     * wire-declared {@code numInGroup}, checked before any entry is
+     * allocated. Equal to {@code MaxMessageSize}.
+     */
+    public static final int MAX_REPEATED_COUNT = MAX_MESSAGE_SIZE;
+
     public static final String ENC_INT8 = "int8";
     public static final String ENC_INT16 = "int16";
     public static final String ENC_INT32 = "int32";

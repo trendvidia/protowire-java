@@ -33,4 +33,35 @@ public final class Limits {
      * ({@code org.protowire.pb.Pb} carries its own copy).
      */
     public static final int MAX_NUMERIC_LITERAL_DIGITS = 4096;
+
+    /**
+     * {@code MaxMessageSize}: the total input to one decode or parse call,
+     * 64 MiB, checked before the first byte is read — peak memory is
+     * otherwise a multiple of whatever the peer sends (#79). A stream's
+     * frame cap may be lower and applies first.
+     */
+    public static final int MAX_MESSAGE_SIZE = 64 << 20;
+
+    /**
+     * {@code MaxBytesLiteralLength}: the decoded length of one {@code b"…"}
+     * literal, checked from the literal's length before it is decoded.
+     * Equal to {@code MaxMessageSize}.
+     */
+    public static final int MAX_BYTES_LITERAL_LENGTH = MAX_MESSAGE_SIZE;
+
+    /**
+     * {@code MaxRepeatedCount}: the element count of any repeated or map
+     * field, checked as a counter on PXF and PB elements and on an SBE
+     * group's wire-declared {@code numInGroup} before allocating for it.
+     * Equal to {@code MaxMessageSize}.
+     */
+    public static final int MAX_REPEATED_COUNT = MAX_MESSAGE_SIZE;
+
+    /**
+     * Whether {@code n} bytes of input exceed {@code maxMessageSize}; the
+     * shared message for the four decoders.
+     */
+    public static String messageSizeError(int n, int maxMessageSize) {
+        return "input of " + n + " bytes exceeds MaxMessageSize=" + maxMessageSize;
+    }
 }

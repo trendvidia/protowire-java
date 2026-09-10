@@ -480,4 +480,41 @@ final class LiteWireReaderTest {
         org.junit.jupiter.api.Assertions.assertThrows(
             org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(bad, TREE));
     }
+
+    // -- per-call limits (HARDENING § Mandatory limits, #79) ----------------
+
+    @Test
+    void limits_maxMessageSizeIsCheckedBeforeReading() {
+        byte[] wire = nested(3);
+        org.protowire.pxf.DecodeLimits low = org.protowire.pxf.DecodeLimits.defaults().withMaxMessageSize(wire.length - 1);
+        org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(wire, TREE, low));
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("exceeds MaxMessageSize=" + (wire.length - 1)), e.getMessage());
+        assertEquals(3, depthOf(LiteWireReader.toAst(wire, TREE,
+            org.protowire.pxf.DecodeLimits.defaults().withMaxMessageSize(wire.length))));
+    }
+
+    @Test
+    void limits_repeatedCountIsRefusedBeforeTheNextElement() {
+        // 16 map entries under kids (field 3), each { key "kN" }.
+        byte[] wire = new byte[0];
+        for (int i = 0; i < 16; i++) {
+            byte[] entry = lengthDelimited(1, ("k" + i).getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            wire = concatBytes(wire, lengthDelimited(3, entry));
+        }
+        byte[] w = wire;
+        org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+            org.protowire.pxf.PxfException.class, () -> LiteWireReader.toAst(w, TREE,
+                org.protowire.pxf.DecodeLimits.defaults().withMaxRepeatedCount(8)));
+        org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("map field \"kids\" exceeds MaxRepeatedCount=8"), e.getMessage());
+        Ast.Document doc = LiteWireReader.toAst(w, TREE,
+            org.protowire.pxf.DecodeLimits.defaults().withMaxRepeatedCount(16));
+        assertEquals(1, doc.entries().size());
+    }
+
+    private static byte[] concatBytes(byte[] a, byte[] b) {
+        byte[] out = java.util.Arrays.copyOf(a, a.length + b.length);
+        System.arraycopy(b, 0, out, a.length, b.length);
+        return out;
+    }
 }

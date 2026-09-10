@@ -29,6 +29,33 @@ import org.protowire.sbe.runtime.SbeWireCodec;
 public final class Codec {
     final Map<String, MessageTemplate> byName = new HashMap<>();
     final Map<Integer, MessageTemplate> byId = new HashMap<>();
+    // The draft's per-call limits (HARDENING.md § Mandatory limits, #79),
+    // fixed on the instance so the Codec stays safe for concurrent use;
+    // withLimits returns a Codec sharing the templates.
+    private int maxMessageSize = SbeConstants.MAX_MESSAGE_SIZE;
+    private int maxRepeatedCount = SbeConstants.MAX_REPEATED_COUNT;
+
+    /**
+     * A codec over the same templates that decodes under the given limits:
+     * {@code MaxMessageSize} checked before the header is read,
+     * {@code MaxRepeatedCount} against each group's declared
+     * {@code numInGroup} before any entry is allocated. Both must be
+     * positive.
+     */
+    public Codec withLimits(int maxMessageSize, int maxRepeatedCount) {
+        if (maxMessageSize <= 0 || maxRepeatedCount <= 0) {
+            throw new IllegalArgumentException("sbe: limits must be positive");
+        }
+        Codec c = new Codec();
+        c.byName.putAll(byName);
+        c.byId.putAll(byId);
+        c.maxMessageSize = maxMessageSize;
+        c.maxRepeatedCount = maxRepeatedCount;
+        return c;
+    }
+
+    public int maxMessageSize() { return maxMessageSize; }
+    public int maxRepeatedCount() { return maxRepeatedCount; }
 
     public static Codec of(FileDescriptor... files) {
         Codec c = new Codec();
@@ -63,14 +90,14 @@ public final class Codec {
     public void unmarshal(byte[] data, Message.Builder b) {
         MessageTemplate t = byName.get(b.getDescriptorForType().getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + b.getDescriptorForType().getFullName());
-        SbeWireCodec.unmarshal(data, new MessageWriter(b), t);
+        SbeWireCodec.unmarshal(data, new MessageWriter(b), t, maxMessageSize, maxRepeatedCount);
     }
 
     public DynamicMessage unmarshalDescriptor(byte[] data, Descriptor desc) {
         MessageTemplate t = byName.get(desc.getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + desc.getFullName());
         DynamicMessage.Builder b = DynamicMessage.newBuilder(desc);
-        SbeWireCodec.unmarshal(data, new MessageWriter(b), t);
+        SbeWireCodec.unmarshal(data, new MessageWriter(b), t, maxMessageSize, maxRepeatedCount);
         return b.build();
     }
 

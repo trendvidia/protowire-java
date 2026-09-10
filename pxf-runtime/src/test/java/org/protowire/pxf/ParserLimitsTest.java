@@ -81,4 +81,40 @@ class ParserLimitsTest {
         assertDepthRejected(blocks(100_000));
         assertDepthRejected(lists(100_000));
     }
+
+    // -- per-call limits on a parse (#79): MaxMessageSize, MaxNestingDepth,
+    // MaxBytesLiteralLength — the three that are about the text rather than
+    // about binding it.
+
+    @Test
+    void parseUnderLoweredMessageSize() {
+        byte[] doc = "a = 1\n".repeat(200).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        PxfException e = assertThrows(PxfException.class,
+                () -> Parser.parse(doc, DecodeLimits.defaults().withMaxMessageSize(1024)));
+        assertTrue(e.getMessage().contains("input of " + doc.length + " bytes exceeds MaxMessageSize=1024"), e.getMessage());
+        assertNotNull(Parser.parse(doc, DecodeLimits.defaults().withMaxMessageSize(doc.length)));
+    }
+
+    @Test
+    void parseUnderLoweredNestingDepth() {
+        assertNotNull(Parser.parse(blocks(5).getBytes(java.nio.charset.StandardCharsets.UTF_8), DecodeLimits.defaults().withMaxNestingDepth(5)));
+        PxfException e = assertThrows(PxfException.class,
+                () -> Parser.parse(blocks(6).getBytes(java.nio.charset.StandardCharsets.UTF_8), DecodeLimits.defaults().withMaxNestingDepth(5)));
+        assertTrue(e.getMessage().contains("MaxNestingDepth=5"), e.getMessage());
+    }
+
+    @Test
+    void bytesLiteralIsRefusedFromItsLengthBeforeDecoding() {
+        byte[] raw = new byte[192];
+        String doc = "b = b\"" + java.util.Base64.getEncoder().encodeToString(raw) + "\"";
+        byte[] bytes = doc.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        PxfException e = assertThrows(PxfException.class,
+                () -> Parser.parse(bytes, DecodeLimits.defaults().withMaxBytesLiteralLength(128)));
+        assertTrue(e.getMessage().contains("bytes literal decodes to more than MaxBytesLiteralLength=128 bytes"), e.getMessage());
+        assertNotNull(Parser.parse(bytes, DecodeLimits.defaults().withMaxBytesLiteralLength(256)));
+        // The lexer's check sits before the base64 decode, from the literal's length.
+        Lexer l = new Lexer(bytes, 128);
+        l.next(); l.next(); // b, =
+        assertEquals(TokenKind.ILLEGAL, l.next().kind());
+    }
 }

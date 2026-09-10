@@ -207,28 +207,29 @@ class PbTest {
 
     @Test
     void submessagesUpToTheLimitAreAccepted() throws IOException {
-        // Top-level struct is depth 1 (protowire-go pb.go); 99 nested = depth 100.
+        // Top-level struct is depth 0 (HARDENING § Recursion, protowire#301);
+        // 100 nested = 100 descents, the corpus's pb/deep-submessage-100.
         Node n = new Node();
-        Pb.unmarshal(nested(99), n);
-        assertEquals(99, depthOf(n));
+        Pb.unmarshal(nested(100), n);
+        assertEquals(100, depthOf(n));
     }
 
     @Test
     void submessagesPastTheLimitAreRejected() {
-        assertDepthRejected(nested(100));
+        assertDepthRejected(nested(101));
     }
 
     @Test
     void mapEntriesCountAsLevels() throws IOException {
-        // 97 nested (depth 98) + map entry (99) + value struct (100): accepted.
+        // 98 nested (depth 98) + map entry (99) + value struct (100): accepted.
         byte[] entry = new byte[0];
         entry = concat(lengthDelimited(1, "k".getBytes(java.nio.charset.StandardCharsets.UTF_8)),
                        lengthDelimited(2, new byte[0]));
         byte[] wire = lengthDelimited(3, entry);
-        for (int i = 0; i < 97; i++) wire = lengthDelimited(1, wire);
+        for (int i = 0; i < 98; i++) wire = lengthDelimited(1, wire);
         Node n = new Node();
         Pb.unmarshal(wire, n);
-        assertEquals(97, depthOf(n));
+        assertEquals(98, depthOf(n));
         // One more level and the value struct sits at depth 101.
         assertDepthRejected(lengthDelimited(1, wire));
     }

@@ -13,10 +13,11 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * HARDENING.md § Recursion and § UTF-8 for the descriptor-driven decoder
- * (protowire-java#63). Depth counts every {@code decodeFields} /
- * {@code decodeList} / {@code decodeMap} entry, the top-level call being
- * depth 1, exactly like protowire-go's {@code decode_fast.go}: 99 nested
- * submessages are accepted (depth 100) and the 100th is rejected.
+ * (protowire-java#63, #80). Depth counts every {@code decodeFields} /
+ * {@code decodeList} / {@code decodeMap} entry as one descent from a root
+ * at depth 0, exactly like protowire-go's {@code decode_fast.go} and the
+ * corpus rows {@code pxf/deep-nesting-100} / {@code -101}: 100 nested
+ * submessages are accepted and the 101st is rejected.
  */
 class FastDecoderLimitsTest {
 
@@ -43,37 +44,38 @@ class FastDecoderLimitsTest {
 
     @Test
     void submessagesUpToTheLimitAreAccepted() {
-        assertEquals(99, depthOf(decode(nest(99))));
+        assertEquals(100, depthOf(decode(nest(100))));
     }
 
     @Test
     void submessagesPastTheLimitAreRejected() {
-        assertDepthRejected(nest(100));
+        assertDepthRejected(nest(101));
     }
 
     @Test
     void listElementsCountAsLevels() {
-        // 97 blocks (depth 98) + list (99) + element block (100): accepted.
-        Tree t = decode("child{".repeat(97) + "children = [ {} ]" + "}".repeat(97));
-        assertEquals(97, depthOf(t));
-        assertDepthRejected("child{".repeat(98) + "children = [ {} ]" + "}".repeat(98));
+        // 98 blocks (depth 98) + list (99) + element block (100): accepted.
+        Tree t = decode("child{".repeat(98) + "children = [ {} ]" + "}".repeat(98));
+        assertEquals(98, depthOf(t));
+        assertDepthRejected("child{".repeat(99) + "children = [ {} ]" + "}".repeat(99));
     }
 
     @Test
     void mapEntriesCountAsLevels() {
-        // 97 blocks (depth 98) + map (99) + value block (100): accepted.
-        decode("child{".repeat(97) + "kids = { a: {} }" + "}".repeat(97));
-        assertDepthRejected("child{".repeat(98) + "kids = { a: {} }" + "}".repeat(98));
+        // 98 blocks (depth 98) + map (99) + value block (100): accepted.
+        decode("child{".repeat(98) + "kids = { a: {} }" + "}".repeat(98));
+        assertDepthRejected("child{".repeat(99) + "kids = { a: {} }" + "}".repeat(99));
     }
 
     @Test
     void depthIsRestoredForSiblings() {
-        // First subtree reaches depth 99; the sibling list element then
-        // reaches depth 100 on its own count, not 99 + 100.
-        Tree t = decode(nest(98) + "\n" + "children = [ {" + nest(97) + "} ]");
-        assertEquals(98, depthOf(t));
+        // First subtree reaches depth 100; the sibling list element then
+        // reaches depth 100 on its own count (list 1 + block 1 + 98), not
+        // 100 + 100.
+        Tree t = decode(nest(100) + "\n" + "children = [ {" + nest(98) + "} ]");
+        assertEquals(100, depthOf(t));
         assertEquals(1, t.getChildrenCount());
-        assertEquals(97, depthOf(t.getChildren(0)));
+        assertEquals(98, depthOf(t.getChildren(0)));
     }
 
     @Test

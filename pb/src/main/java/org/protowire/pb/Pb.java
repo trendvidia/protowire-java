@@ -56,20 +56,22 @@ public final class Pb {
 
     /**
      * HARDENING.md {@code MaxNestingDepth}: the deepest submessage / map-entry
-     * nesting {@link #unmarshal} follows. Depth 100 is accepted; 101 is
-     * rejected. The counter is carried into every nested
+     * nesting {@link #unmarshal} follows, counted as descents from a root at
+     * depth 0 — every submessage and every map entry is one descent
+     * (HARDENING.md § Recursion, protowire#301). 100 descents are accepted;
+     * 101 are rejected. The counter is carried into every nested
      * {@code CodedInputStream} rather than reset with it.
      */
     public static final int MAX_NESTING_DEPTH = 100;
 
     public static void unmarshal(byte[] data, Object dest) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
-        unmarshalStruct(in, dest, 1);
+        unmarshalStruct(in, dest, 0);
     }
 
     /**
      * One level of descent into a length-delimited submessage. {@code depth}
-     * is the submessage's own depth (top-level struct = 1), exactly as in
+     * is the submessage's own depth (top-level struct = 0), exactly as in
      * protowire-go's {@code unmarshalStruct}: the counter is checked here,
      * on the inner decoder's entry, so a fresh {@code CodedInputStream}
      * cannot reset it.

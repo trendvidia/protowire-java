@@ -104,7 +104,7 @@ public final class LiteWireReader {
 
     public static Ast.Document toAst(byte[] wire, PxfMeta meta, PxfRegistry registry) {
         try {
-            List<Ast.Entry> entries = readEntries(CodedInputStream.newInstance(wire), meta, registry, 1);
+            List<Ast.Entry> entries = readEntries(CodedInputStream.newInstance(wire), meta, registry, 0);
             return Ast.Document.of("", entries);
         } catch (InvalidProtocolBufferException e) {
             // Malformed input (truncated record, bad varint, invalid UTF-8 in a
@@ -126,7 +126,8 @@ public final class LiteWireReader {
     private static List<Ast.Entry> readEntries(
             CodedInputStream in, PxfMeta meta, PxfRegistry registry, int depth) throws IOException {
         // HARDENING.md § Recursion: depth is the message's own level, the
-        // top-level call being 1 (as in :pb's Pb.unmarshal); it is passed
+        // top-level call being 0 and every nested message or map entry one
+        // descent (as in :pb's Pb.unmarshal, protowire#301); it is passed
         // down explicitly because every nested message and map entry is read
         // by a recursive call on the same stream under pushLimit.
         if (depth > Limits.MAX_NESTING_DEPTH) {

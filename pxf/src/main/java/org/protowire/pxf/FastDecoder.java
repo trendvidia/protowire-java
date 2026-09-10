@@ -947,24 +947,48 @@ final class FastDecoder {
             throw new PxfException(Position.UNKNOWN,
                     "default values not supported for repeated field \"" + fd.getName() + "\"");
         }
-        switch (fd.getJavaType()) {
-            case STRING  -> b.setField(fd, def);
-            case BOOLEAN -> b.setField(fd, "true".equals(def));
-            case INT     -> b.setField(fd, Integer.parseInt(def));
-            case LONG    -> b.setField(fd, Long.parseLong(def));
-            case FLOAT   -> b.setField(fd, Float.parseFloat(def));
-            case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
-            case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
-            case ENUM -> {
-                EnumValueDescriptor ev = fd.getEnumType().findValueByName(def);
-                if (ev == null) {
-                    int n = Integer.parseInt(def);
-                    ev = fd.getEnumType().findValueByNumberCreatingIfUnknown(n);
+        // The literal itself is checked here, not at bind time ("Default
+        // Placement": the constraint is on placement, not on the literal),
+        // so a literal the field cannot hold is a decode-time PxfException
+        // naming the field — never a NumberFormatException or a Base64
+        // IllegalArgumentException out of the decoder.
+        try {
+            switch (fd.getJavaType()) {
+                case STRING  -> b.setField(fd, def);
+                case BOOLEAN -> b.setField(fd, parseBoolDefault(fd, def));
+                case INT     -> b.setField(fd, Integer.parseInt(def));
+                case LONG    -> b.setField(fd, Long.parseLong(def));
+                case FLOAT   -> b.setField(fd, Float.parseFloat(def));
+                case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
+                case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
+                case ENUM -> {
+                    EnumValueDescriptor ev = fd.getEnumType().findValueByName(def);
+                    if (ev == null) {
+                        int n = Integer.parseInt(def);
+                        ev = fd.getEnumType().findValueByNumberCreatingIfUnknown(n);
+                    }
+                    b.setField(fd, ev);
                 }
-                b.setField(fd, ev);
+                case MESSAGE -> applyMessageDefault(b, fd, def);
             }
-            case MESSAGE -> applyMessageDefault(b, fd, def);
+        } catch (IllegalArgumentException | java.time.DateTimeException e) {
+            throw new PxfException(Position.UNKNOWN,
+                    "invalid (pxf.default) literal \"" + def + "\" for field \"" + fd.getName() + "\": " + e.getMessage());
         }
+    }
+
+    /**
+     * A bool literal has exactly two spellings. Anything else is an error,
+     * never {@code false}: the Java convention of reading every non-"true"
+     * as false is the defect family of #76, on the default path.
+     */
+    private static boolean parseBoolDefault(FieldDescriptor fd, String def) {
+        return switch (def) {
+            case "true" -> true;
+            case "false" -> false;
+            default -> throw new PxfException(Position.UNKNOWN,
+                    "invalid (pxf.default) literal \"" + def + "\" for bool field \"" + fd.getName() + "\": expected true or false");
+        };
     }
 
     private void applyMessageDefault(Message.Builder b, FieldDescriptor fd, String def) {
@@ -997,7 +1021,7 @@ final class FastDecoder {
     private Object parseScalarDefault(FieldDescriptor fd, String def) {
         return switch (fd.getJavaType()) {
             case STRING  -> def;
-            case BOOLEAN -> "true".equals(def);
+            case BOOLEAN -> parseBoolDefault(fd, def);
             case INT     -> Integer.parseInt(def);
             case LONG    -> Long.parseLong(def);
             case FLOAT   -> Float.parseFloat(def);

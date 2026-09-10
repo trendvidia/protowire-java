@@ -4,6 +4,9 @@ package org.protowire.pxf;
 
 import com.google.protobuf.Message;
 import org.junit.jupiter.api.Test;
+import org.protowire.pxf.testproto.BadBoolDefault;
+import org.protowire.pxf.testproto.BadIntDefault;
+import org.protowire.pxf.testproto.BoolDefault;
 import org.protowire.pxf.testproto.MapDefault;
 import org.protowire.pxf.testproto.NestedOneDefault;
 import org.protowire.pxf.testproto.NullableSibling;
@@ -156,6 +159,32 @@ class DefaultAnnotationTest {
     @Test
     void requiredOneofMemberRejectsAnEmptyOneof() {
         assertRejected("", RequiredMember.newBuilder(), "required field \"a\" is absent");
+    }
+
+    // -- The literal: checked at decode time, reported as a PxfException ----
+
+    @Test
+    void boolDefaultBindsBothSpellings() {
+        BoolDefault.Builder b = BoolDefault.newBuilder();
+        decodeFull("", b);
+        assertTrue(b.getFlag());
+        assertFalse(b.getOff());
+    }
+
+    // "yes" used to bind as false, silently ("true".equals(def)) — the
+    // #76 defect family on the default path.
+    @Test
+    void boolDefaultOtherSpellingIsAnError() {
+        assertRejected("", BadBoolDefault.newBuilder(),
+                "invalid (pxf.default) literal \"yes\" for bool field \"flag\"");
+    }
+
+    // "abc" on an int32 used to leak NumberFormatException out of the
+    // decoder.
+    @Test
+    void unparsableDefaultLiteralIsAPxfError() {
+        assertRejected("", BadIntDefault.newBuilder(),
+                "invalid (pxf.default) literal \"abc\" for field \"n\"");
     }
 
     // Presence is keyed by path, so the rule holds at every nesting level:

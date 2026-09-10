@@ -570,17 +570,22 @@ public final class LiteWireReader {
         in.popLimit(oldLimit);
 
         String  keyStr = "";
+        // A string key is spelled quoted unless identifier-safe (the
+        // marshaller rule, Format.needsQuoting); a bool or integer key is
+        // spelled bare. An entry lacking its key is the string "" (quoted).
+        boolean keyQuoted = true;
         Ast.Value valueVal = new Ast.StringVal(Position.UNKNOWN, "");
         for (Ast.Entry e : entryFields) {
             if (e instanceof Ast.Assignment a) {
                 if ("key".equals(a.key())) {
                     keyStr = mapKeyString(a.value());
+                    keyQuoted = a.value() instanceof Ast.StringVal && org.protowire.pxf.Format.needsQuoting(keyStr);
                 } else if ("value".equals(a.key())) {
                     valueVal = a.value();
                 }
             }
         }
-        return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "");
+        return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "", keyQuoted);
     }
 
     /** Coerces an Ast.Value of a primitive map-key kind back to its parser-style string form. */

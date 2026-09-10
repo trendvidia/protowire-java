@@ -432,7 +432,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.MapEntry(pp, key, v, leading, "");
+                yield new Ast.MapEntry(pp, key, v, leading, "", keyKind == TokenKind.STRING);
             }
             case LBRACE -> {
                 // `{ ... }` denotes a submessage field; same identifier-only

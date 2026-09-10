@@ -21,13 +21,20 @@ final class Annotations {
 
     static final int EXT_REQUIRED = 1314;
     static final int EXT_DEFAULT  = 1315;
+    static final int EXT_KEY      = 1316;
 
     static boolean isRequired(FieldDescriptor fd) {
         return readBool(fd, EXT_REQUIRED);
     }
 
+    /** The {@code (pxf.default)} literal, or null when the option is not set. */
     static String getDefault(FieldDescriptor fd) {
         return readString(fd, EXT_DEFAULT);
+    }
+
+    /** The {@code (pxf.key)} field name, or null when the option is not set. */
+    static String getKey(FieldDescriptor fd) {
+        return readString(fd, EXT_KEY);
     }
 
     private static boolean readBool(FieldDescriptor fd, int target) {

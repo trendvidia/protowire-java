@@ -99,6 +99,17 @@ public final class WellKnown {
         return Duration.ofSeconds(secs, nanos);
     }
 
+    /**
+     * The message types one PXF literal can denote — the set
+     * {@code applyMessageDefault} honors and draft -01
+     * §annotation-extensions "Default Placement" fixes: Timestamp,
+     * Duration, the nine {@code *Value} wrappers, {@code pxf.BigInt},
+     * {@code pxf.Decimal}, {@code pxf.BigFloat}, and nothing else.
+     */
+    public static boolean isDefaultableMessage(Descriptor md) {
+        return isTimestamp(md) || isDuration(md) || isWrapper(md) || isBigInt(md) || isDecimal(md) || isBigFloat(md);
+    }
+
     // -- bignum -----------------------------------------------------------
 
     public static void setBigInt(Message.Builder b, BigInteger bi) {

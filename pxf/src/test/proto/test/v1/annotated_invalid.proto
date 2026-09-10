@@ -1,0 +1,76 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Schemas that MUST NOT bind: every placement draft -01 forbids at bind
+// time (#54) — "Default Placement" (§6.1.1), "Oneof Members" (§6.1.2) and
+// the (pxf.key) rule (§3.13.1). One file, so SchemaValidatorTest can
+// assert the whole list; the runtime guards behind them (#52, #53) are
+// reached with skipValidate.
+syntax = "proto3";
+package test.v1;
+
+option java_package = "org.protowire.pxf.testproto";
+option java_multiple_files = true;
+
+import "google/protobuf/wrappers.proto";
+import "pxf/annotations.proto";
+
+// A (pxf.default) on a repeated field: one literal cannot populate a
+// list. protobuf-java's Builder.setField casts the boxed scalar to List,
+// which is the ClassCastException #52 is about.
+message RepeatedDefault {
+  repeated string tags = 1 [(pxf.default) = "ignored"];
+}
+
+// Every scalar arm of applyDefault has the same shape, so a repeated
+// int32 must fail the same way as a repeated string.
+message RepeatedIntDefault {
+  repeated int32 counts = 1 [(pxf.default) = "7"];
+}
+
+// A (pxf.default) on a map: the message must name the placement, not
+// protobuf's synthetic *Entry message.
+message MapDefault {
+  map<string, string> labels = 1 [(pxf.default) = "x"];
+}
+
+// (pxf.required) on a oneof member. The spec forbids the placement at
+// bind time (#54); until that lands, the runtime must not reject a
+// document that chose a sibling arm.
+message RequiredMember {
+  oneof choice {
+    string a = 1 [(pxf.required) = true];
+    string b = 2;
+  }
+}
+
+// Two (pxf.default) in one oneof: with two, declaration order would
+// decide which wins.
+message TwoDefaults {
+  oneof choice {
+    string a = 1 [(pxf.default) = "aaa"];
+    string b = 2 [(pxf.default) = "bbb"];
+  }
+}
+
+// A (pxf.default) on a message type no PXF literal denotes.
+message MessageDefault {
+  Plain inner = 1 [(pxf.default) = "x"];
+}
+
+message Plain {
+  string s = 1;
+}
+
+// (pxf.key) placements: on a singular field, on a repeated scalar, naming
+// a missing field, and naming a non-string field.
+message KeyedBad {
+  Plain single = 1 [(pxf.key) = "s"];
+  repeated string names = 2 [(pxf.key) = "s"];
+  repeated Plain missing = 3 [(pxf.key) = "nope"];
+  repeated Counted nonstring = 4 [(pxf.key) = "n"];
+}
+
+message Counted {
+  int32 n = 1;
+}

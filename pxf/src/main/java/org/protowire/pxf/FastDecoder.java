@@ -726,7 +726,10 @@ final class FastDecoder {
 
         while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
             Position pos = current.pos();
-            if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
+            // map-key = identifier / string / integer / bool (draft -01
+            // §abnf-grammar; the keyword spelling landed in protowire#284).
+            TokenKind keyKind = current.kind();
+            if (keyKind != TokenKind.IDENT && keyKind != TokenKind.STRING && keyKind != TokenKind.INT && keyKind != TokenKind.BOOL) {
                 throw new PxfException(pos, "expected map key, got " + current.kind());
             }
             String keyStr = current.value();
@@ -743,7 +746,7 @@ final class FastDecoder {
             }
 
             Message.Builder entry = b.newBuilderForField(fd);
-            entry.setField(keyFd, decodeMapKey(keyFd, keyStr, pos));
+            entry.setField(keyFd, decodeMapKey(fd, keyFd, keyStr, keyKind, pos));
 
             if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 if (current.kind() != TokenKind.LBRACE) {
@@ -766,17 +769,68 @@ final class FastDecoder {
         advance();
     }
 
-    private Object decodeMapKey(FieldDescriptor fd, String key, Position pos) {
-        try {
-            return switch (fd.getJavaType()) {
-                case STRING -> key;
-                case INT -> Integer.parseInt(key);
-                case LONG -> Long.parseLong(key);
-                case BOOLEAN -> Boolean.parseBoolean(key);
-                default -> throw new PxfException(pos, "unsupported map key kind: " + fd.getJavaType());
-            };
-        } catch (NumberFormatException e) {
-            throw new PxfException(pos, "invalid map key for kind " + fd.getJavaType() + ": " + key);
+    /**
+     * Binds one map key from its token. {@code keyKind} is the token the
+     * key was written as (identifier, string, integer or bool), which
+     * decides what a spelling denotes: a string key "is parsed as a
+     * literal of K's type", an integer key matches an integral K or a
+     * bool K "encoded as 0/1", the keyword matches a bool K and nothing
+     * else, and an identifier names a field — of which a map has none.
+     * Mirrors protowire-go's {@code decodeMapKey} (draft -01
+     * §entries-and-keys, protowire#284; #76).
+     */
+    private Object decodeMapKey(FieldDescriptor mapFd, FieldDescriptor fd, String key, TokenKind keyKind, Position pos) {
+        String field = mapFd.getName();
+        switch (fd.getType()) {
+            case STRING -> {
+                if (keyKind == TokenKind.BOOL) {
+                    // A bool key matches a map<bool,V> field and nothing
+                    // else; the string "true" is spelled quoted.
+                    throw new PxfException(pos, "invalid string map key " + key + " for field \"" + field
+                            + "\": the keyword " + key + " is a bool key; write \"" + key + "\" for the string");
+                }
+                return key;
+            }
+            case BOOL -> {
+                // A bool map key has three spellings in the grammar: the
+                // keyword true / false, bare; the bare integers 0 / 1; and
+                // the quoted literals "true" / "false". NOT
+                // Boolean.parseBoolean, which read everything that is not
+                // "true" as false — silently, for t, T, TRUE, yes, "1", "0"
+                // (#76). An identifier key on a bool K matches nothing, and
+                // "1" / "0" in quotes are not bool literals either.
+                switch (keyKind) {
+                    case BOOL -> { return "true".equals(key); }
+                    case STRING -> {
+                        if ("true".equals(key)) return true;
+                        if ("false".equals(key)) return false;
+                        throw new PxfException(pos, "invalid bool map key \"" + key + "\" for field \"" + field
+                                + "\": a bool key is true, false, 0, 1, \"true\" or \"false\"");
+                    }
+                    default -> {
+                        if ("1".equals(key)) return true;
+                        if ("0".equals(key)) return false;
+                        throw new PxfException(pos, "invalid bool map key " + key + " for field \"" + field
+                                + "\": a bool key is true, false, 0, 1, \"true\" or \"false\"");
+                    }
+                }
+            }
+            default -> {
+                // Integral K: the literal's text, whichever token carried
+                // it, parsed to the field's width and signedness.
+                String type = fd.getType().name().toLowerCase(java.util.Locale.ROOT);
+                try {
+                    return switch (fd.getType()) {
+                        case INT32, SINT32, SFIXED32 -> Integer.parseInt(key);
+                        case INT64, SINT64, SFIXED64 -> Long.parseLong(key);
+                        case UINT32, FIXED32 -> Integer.parseUnsignedInt(key);
+                        case UINT64, FIXED64 -> Long.parseUnsignedLong(key);
+                        default -> throw new PxfException(pos, "unsupported map key kind: " + fd.getType());
+                    };
+                } catch (NumberFormatException e) {
+                    throw new PxfException(pos, "invalid " + type + " map key: " + key);
+                }
+            }
         }
     }
 

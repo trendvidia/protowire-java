@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// One map per key type the grammar's map-key production can land on
+// (draft -01 §entries-and-keys; #76): the spelling rules differ by K.
+syntax = "proto3";
+package test.v1;
+
+option java_package = "org.protowire.pxf.testproto";
+option java_multiple_files = true;
+
+message MapKeys {
+  map<bool, string>   by_bool   = 1;
+  map<string, string> by_string = 2;
+  map<int32, string>  by_int32  = 3;
+  map<uint32, string> by_uint32 = 4;
+  map<int64, string>  by_int64  = 5;
+  map<uint64, string> by_uint64 = 6;
+  map<sint32, string> by_sint32 = 7;
+  map<fixed64, string> by_fixed64 = 8;
+}

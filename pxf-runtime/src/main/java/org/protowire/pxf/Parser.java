@@ -395,8 +395,13 @@ public final class Parser {
     private Ast.Entry parseEntry(boolean allowMapEntry) {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
-        if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
-            throw new PxfException(pp, "expected identifier, string, or integer, got " + current.kind() + " (\"" + current.value() + "\")");
+        // map-key = identifier / string / integer / bool (draft -01
+        // §abnf-grammar; the keyword spelling landed in protowire#284): a
+        // bare true / false is a key, and like an integer it takes only
+        // the ':' tail — the '=' and '{' arms below insist on an identifier.
+        if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING
+                && current.kind() != TokenKind.INT && current.kind() != TokenKind.BOOL) {
+            throw new PxfException(pp, "expected identifier, string, integer, or bool, got " + current.kind() + " (\"" + current.value() + "\")");
         }
         TokenKind keyKind = current.kind();
         String key = current.value();

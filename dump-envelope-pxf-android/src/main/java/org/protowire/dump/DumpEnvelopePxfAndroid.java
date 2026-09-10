@@ -9,6 +9,7 @@
 // path can't.
 package org.protowire.dump;
 
+import org.protowire.envelope.v1.AppError;
 import org.protowire.envelope.v1.Envelope;
 import org.protowire.envelope.v1.EnvelopePxfMeta;
 import org.protowire.pxf.Ast;
@@ -48,9 +49,13 @@ public final class DumpEnvelopePxfAndroid {
         "}\n";
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 2 && args[0].equals("--vector")) {
+            dumpVector(args[1]);
+            return;
+        }
         if (args.length != 0) {
             if (!FixtureModes.isFixtureInvocation(args)) {
-                System.err.println("usage: dump-envelope-pxf-android [--pb|--sbe FDS MESSAGE DOC]");
+                System.err.println("usage: dump-envelope-pxf-android [--pb|--sbe FDS MESSAGE DOC | --vector NAME]");
                 System.exit(2);
             }
             System.exit(FixtureModes.run(args[0], args[1], args[2], args[3]));
@@ -87,5 +92,26 @@ public final class DumpEnvelopePxfAndroid {
         StringBuilder sb = new StringBuilder(bytes.length * 2);
         for (byte b : bytes) sb.append(String.format("%02x", b));
         return sb.toString();
+    }
+
+    /**
+     * Prints a wire vector the gate checks against a golden (protowire#295,
+     * #78): the spec repo's {@code testdata/envelope/NAME.textproto}, encoded
+     * by protobuf-javalite — the codec this tier ships on. Exit 3 with
+     * {@code not-implemented: NAME} for a vector this dumper has not built.
+     */
+    private static void dumpVector(String name) {
+        Envelope env;
+        switch (name) {
+            case "zero-map-entry" -> env = Envelope.newBuilder()
+                .setError(AppError.newBuilder().putMetadata("", ""))
+                .build();
+            default -> {
+                System.err.println("not-implemented: " + name);
+                System.exit(3);
+                return;
+            }
+        }
+        System.out.println(FixtureModes.hex(env.toByteArray()));
     }
 }

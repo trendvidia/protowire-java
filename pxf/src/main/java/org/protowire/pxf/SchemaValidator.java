@@ -113,7 +113,16 @@ public final class SchemaValidator {
          * demands that one specific arm always be chosen, which makes every
          * other arm of the oneof undecodable.
          */
-        REQUIRED_OPTION("required field option");
+        REQUIRED_OPTION("required field option"),
+        /**
+         * An option carried at one of the extension numbers protowire retired
+         * when it moved into its registered block (STABILITY.md promise 3):
+         * the descriptor was compiled before protowire v1.12.0 and must be
+         * recompiled, because a reader that looks only at the registered
+         * numbers would otherwise silently see none of its annotations. The
+         * violation's name is the retired number.
+         */
+        RETIRED_NUMBER("retired option number");
 
         private final String label;
 
@@ -157,6 +166,7 @@ public final class SchemaValidator {
                         + detail + " (draft -01 §annotation-extensions)";
                 case REQUIRED_OPTION -> file + ": field \"" + element + "\": invalid (pxf.required): "
                         + detail + " (draft -01 §annotation-extensions)";
+                case RETIRED_NUMBER -> file + ": \"" + element + "\": " + detail + " (STABILITY.md promise 3)";
                 default -> file + ": " + kind + " \"" + element + "\" uses PXF-reserved name \""
                         + name + "\" (draft §3.13)";
             };
@@ -253,6 +263,9 @@ public final class SchemaValidator {
         List<Violation> out = new ArrayList<>();
         for (Descriptor m : fd.getMessageTypes()) walkMessage(fd.getName(), m, out);
         for (EnumDescriptor e : fd.getEnumTypes()) walkEnum(fd.getName(), e, out);
+        // Retired option numbers are looked for only in files that import
+        // protowire's annotations; see RetiredNumbers for why the gate exists.
+        if (RetiredNumbers.importsProtowire(fd)) RetiredNumbers.walk(fd.getName(), fd, out);
         List<Violation> result = List.copyOf(out);
         store(FILE_CACHE, FILE_COUNT, fd, result);
         return result;

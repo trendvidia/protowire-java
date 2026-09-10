@@ -20,6 +20,17 @@ format changes.
 
 ### Added
 
+- **A descriptor compiled against a retired extension number is diagnosed
+  as stale** (#91; STABILITY.md promise 3, protowire-go#98).
+  `SchemaValidator.Kind` gains `RETIRED_NUMBER`: an option at one of the
+  numbers protowire retired when it moved into its registered block
+  (`50000`–`50002` for PXF, the SBE, carrier and protocheck ranges), on
+  the Options kind the retired allocation used, in a file that imports
+  one of protowire's annotation files, is a violation naming the number,
+  what it was, what it is now and which file to recompile against — so
+  a pre-v1.12.0 descriptor fails to bind instead of silently losing
+  every annotation. A third party's `50001` in a file that never imports
+  protowire is that party's business.
 - **Keyed repeated fields** (#50, draft `-01` §3.13, protowire#116). A
   `repeated <Message>` field carrying `(pxf.key) = "<string field>"`
   may be written as a block of named blocks — entry name = key-field

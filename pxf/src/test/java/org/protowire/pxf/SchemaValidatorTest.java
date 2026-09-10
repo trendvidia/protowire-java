@@ -439,4 +439,82 @@ class SchemaValidatorTest {
         assertEquals("keyed field option", SchemaValidator.Kind.KEY_OPTION.toString());
         assertEquals("default field option", SchemaValidator.Kind.DEFAULT_OPTION.toString());
     }
+
+    // -- #91: retired option numbers (STABILITY.md promise 3) ------------------
+
+    private static com.google.protobuf.DescriptorProtos.FieldOptions unknownString(int num, String v) {
+        return com.google.protobuf.DescriptorProtos.FieldOptions.newBuilder()
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(num, com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                .addLengthDelimited(com.google.protobuf.ByteString.copyFromUtf8(v)).build()).build())
+                .build();
+    }
+
+    private static FileDescriptor annotationsFile() {
+        return org.protowire.proto.pxf.Annotations.getDescriptor();
+    }
+
+    @Test
+    void retiredFieldOptionNumberIsDiagnosedAsStale() {
+        // (pxf.default) at its pre-v1.12 number 50001, in a file that imports
+        // pxf/annotations.proto: the shape a descriptor compiled before the
+        // move has.
+        FileDescriptorProto fp = file("stale.proto", "stale.v1").addDependency("pxf/annotations.proto")
+                .addMessageType(DescriptorProto.newBuilder().setName("M")
+                        .addField(FieldDescriptorProto.newBuilder().setName("n").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                                .setType(Type.TYPE_INT32).setOptions(unknownString(50001, "7")))).build();
+        FileDescriptor fd = build(fp, annotationsFile());
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(fd);
+        assertEquals(1, vs.size(), vs.toString());
+        SchemaValidator.Violation v = vs.get(0);
+        assertEquals(SchemaValidator.Kind.RETIRED_NUMBER, v.kind());
+        assertEquals("stale.v1.M.n", v.element());
+        assertEquals("50001", v.name());
+        assertTrue(v.detail().contains("option number 50001 on FieldOptions was (pxf.default) before protowire v1.12.0 and is 1315 now"), v.detail());
+        assertTrue(v.detail().contains("recompiled against the current pxf/annotations.proto"), v.detail());
+        assertTrue(v.toString().contains("(STABILITY.md promise 3)"), v.toString());
+        assertEquals("retired option number", SchemaValidator.Kind.RETIRED_NUMBER.toString());
+        // The decoder refuses it by default; skipValidate bypasses as for every bind-time check.
+        PxfException e = assertThrows(PxfException.class,
+                () -> Pxf.unmarshal(new byte[0], DynamicMessage.newBuilder(fd.findMessageTypeByName("M"))));
+        assertTrue(e.getMessage().contains("50001"), e.getMessage());
+        UnmarshalOptions.defaults().withSkipValidate(true).unmarshal(new byte[0], DynamicMessage.newBuilder(fd.findMessageTypeByName("M")));
+    }
+
+    // The same bytes at the registered number are clean, and a 50001 in a
+    // file that never imports protowire's annotations is that file's own
+    // business.
+    @Test
+    void registeredNumberAndUnrelatedFilesAreClean() {
+        FileDescriptorProto current = file("current.proto", "current.v1").addDependency("pxf/annotations.proto")
+                .addMessageType(DescriptorProto.newBuilder().setName("M")
+                        .addField(FieldDescriptorProto.newBuilder().setName("n").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                                .setType(Type.TYPE_INT32).setOptions(unknownString(1315, "7")))).build();
+        assertEquals(List.of(), SchemaValidator.validateFile(build(current, annotationsFile())));
+        FileDescriptorProto unrelated = file("other.proto", "other.v1")
+                .addMessageType(DescriptorProto.newBuilder().setName("M")
+                        .addField(FieldDescriptorProto.newBuilder().setName("n").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                                .setType(Type.TYPE_INT32).setOptions(unknownString(50001, "7")))).build();
+        assertEquals(List.of(), SchemaValidator.validateFile(build(unrelated)));
+    }
+
+    // Each retired number counts only on the Options kind its allocation
+    // used: 50200 was (sbe.template_id) on MessageOptions, 50100
+    // (sbe.schema_id) on FileOptions; a 50200 on a field is not retired.
+    @Test
+    void retiredNumbersAreScopedToTheirOptionsKind() {
+        com.google.protobuf.DescriptorProtos.MessageOptions mo = com.google.protobuf.DescriptorProtos.MessageOptions.newBuilder()
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(50200, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(7).build()).build()).build();
+        com.google.protobuf.DescriptorProtos.FileOptions fo = com.google.protobuf.DescriptorProtos.FileOptions.newBuilder()
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(50100, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(1).build()).build()).build();
+        FileDescriptorProto fp = file("sbe_stale.proto", "sbestale.v1").addDependency("pxf/annotations.proto").setOptions(fo)
+                .addMessageType(DescriptorProto.newBuilder().setName("Order").setOptions(mo)
+                        .addField(FieldDescriptorProto.newBuilder().setName("n").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                                .setType(Type.TYPE_INT32).setOptions(unknownString(50200, "x")))).build();
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(build(fp, annotationsFile()));
+        List<String> got = vs.stream().map(v -> v.element() + "=" + v.name()).toList();
+        assertEquals(List.of("sbe_stale.proto=50100", "sbestale.v1.Order=50200"), got, vs.toString());
+    }
 }

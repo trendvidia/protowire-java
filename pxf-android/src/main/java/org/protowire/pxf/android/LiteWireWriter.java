@@ -8,6 +8,7 @@ import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
+import org.protowire.pxf.PxfException;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
 
@@ -649,10 +650,29 @@ public final class LiteWireWriter {
             case K_INT32, K_INT64, K_UINT32, K_UINT64,
                  K_SINT32, K_SINT64,
                  K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> new Ast.IntVal(pos, key);
-            case K_BOOL -> new Ast.BoolVal(pos, Boolean.parseBoolean(key));
+            case K_BOOL -> new Ast.BoolVal(pos, boolMapKey(key, pos));
             default -> throw new IllegalArgumentException(
                 "unsupported map key kind: " + keyKind +
                 " (proto restricts map keys to integral, bool, or string types)");
+        };
+    }
+
+    /**
+     * A bool map key's spellings (draft -01 §entries-and-keys, #76): the
+     * keyword {@code true} / {@code false}, the integers {@code 1} /
+     * {@code 0}, and the quoted literals {@code "true"} / {@code "false"}.
+     * Not {@code Boolean.parseBoolean}, which read every other spelling as
+     * false, silently. The AST keeps the key's text and not whether it was
+     * quoted, so this tier cannot yet tell a quoted {@code "1"} (not a bool
+     * literal) from a bare {@code 1}; that distinction arrives with the
+     * parser's quoted-key flag (#82).
+     */
+    private static boolean boolMapKey(String key, Position pos) {
+        return switch (key) {
+            case "true", "1" -> true;
+            case "false", "0" -> false;
+            default -> throw new PxfException(pos, "invalid bool map key " + key
+                + ": a bool key is true, false, 0, 1, \"true\" or \"false\"");
         };
     }
 

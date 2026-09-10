@@ -26,6 +26,23 @@ format changes.
 
 ### Fixed
 
+- **A map key binds exactly the spellings the grammar admits** (#76,
+  draft `-01` §entries-and-keys `map-key = identifier / string / integer
+  / bool`, protowire#284). A bool key was read with
+  `Boolean.parseBoolean`, so `1`, `t`, `TRUE`, `yes`, `"1"` and `"0"` all
+  bound the key `false`, silently, and a bare `true` was rejected. Now a
+  bool key is the keyword `true` / `false`, the integers `1` / `0`, or the
+  quoted literals `"true"` / `"false"`, and every other spelling is
+  `invalid bool map key t for field "by_flag": a bool key is true, false,
+  0, 1, "true" or "false"`. The keyword on a string-keyed map is an error
+  (`write "true" for the string`); integral keys parse to the field's
+  width and signedness (`uint32` / `uint64` / `fixed*` keys above the
+  signed range used to fail). The AST parser accepts the keyword as a
+  map key (with the `:` tail only), so `Format` and the lite tier see it;
+  `LiteWireWriter` binds the same spellings, except that it cannot yet
+  tell a quoted `"1"` from a bare `1` (the AST records the quoted flag
+  with #82). The spec's `testdata/map-keys` bool fixtures are vendored
+  under `pxf/src/test/resources/map-keys` and all sixteen verdicts pass.
 - **The lexer reads fractional and `µs` duration literals** (#55):
   `1.5ms`, `1.234567ms`, `312.5µs`, `1h30m0.5s`, `-1.5s` — the forms the
   Go, Rust, C++ and TypeScript encoders write for any Duration that is

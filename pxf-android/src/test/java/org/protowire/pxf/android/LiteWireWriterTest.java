@@ -1238,4 +1238,45 @@ final class LiteWireWriterTest {
         assertEquals(true, e.getMessage().contains("pxf.BigInt"));
         assertEquals(true, e.getMessage().contains("integer literal"));
     }
+
+    // -- bool map keys: the grammar's spellings, not Boolean.parseBoolean (#76)
+
+    private static PxfMeta boolMapHost() {
+        PxfMeta entry = mapEntryMeta("test.Sample.FlagsEntry",
+                8 /* BOOL */, 9 /* STRING */,
+                Map.of(), Map.of(), Map.of(), Map.of());
+        return mapHostMeta("test.Sample",
+                Map.of("flags", 1),
+                Map.of(1, 11 /* MESSAGE */),
+                Set.of(1),
+                Map.of(1, "test.Sample.FlagsEntry"),
+                Map.of(1, entry),
+                Set.of(1));
+    }
+
+    @Test
+    void map_boolKey_admittedSpellings() {
+        // Entry for key=true, value "v": 08 01 12 01 76; key=false carries
+        // the zero-valued key too (a map entry always writes both, #78):
+        // 08 00 12 01 76.
+        String t = "0a050801120176";
+        String f = "0a050800120176";
+        assertEquals(t, hex(LiteWireWriter.encode(Parser.parse("flags { true: \"v\" }"), boolMapHost())));
+        assertEquals(t, hex(LiteWireWriter.encode(Parser.parse("flags { 1: \"v\" }"), boolMapHost())));
+        assertEquals(t, hex(LiteWireWriter.encode(Parser.parse("flags { \"true\": \"v\" }"), boolMapHost())));
+        assertEquals(f, hex(LiteWireWriter.encode(Parser.parse("flags { false: \"v\" }"), boolMapHost())));
+        assertEquals(f, hex(LiteWireWriter.encode(Parser.parse("flags { 0: \"v\" }"), boolMapHost())));
+        assertEquals(f, hex(LiteWireWriter.encode(Parser.parse("flags { \"false\": \"v\" }"), boolMapHost())));
+    }
+
+    @Test
+    void map_boolKey_otherSpellingsAreErrorsNotFalse() {
+        // Every one of these used to bind as false, silently.
+        for (String sp : java.util.List.of("t", "T", "TRUE", "True", "f", "F", "FALSE", "False", "yes", "\"t\"", "\"TRUE\"")) {
+            Ast.Document doc = Parser.parse("flags { " + sp + ": \"v\" }");
+            org.protowire.pxf.PxfException e = org.junit.jupiter.api.Assertions.assertThrows(
+                org.protowire.pxf.PxfException.class, () -> LiteWireWriter.encode(doc, boolMapHost()), sp);
+            org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("invalid bool map key"), e.getMessage());
+        }
+    }
 }

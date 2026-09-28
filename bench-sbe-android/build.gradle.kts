@@ -20,7 +20,7 @@ plugins {
 
 dependencies {
     implementation(project(":lite-fixtures"))
-    implementation("com.google.protobuf:protobuf-javalite:4.36.1")
+    implementation("com.google.protobuf:protobuf-javalite:4.36.2")
     // protoc-gen-pxf-java-meta emits PxfMeta + PxfCodec for every message
     // alongside the SBE companions, so the bench's compile classpath
     // needs the PXF runtime classes too.
@@ -31,7 +31,7 @@ dependencies {
     // sbe/annotations.proto imports it). Both stay off the runtime
     // classpath.
     compileOnly(project(":proto-annotations"))
-    compileOnly("com.google.protobuf:protobuf-java:4.36.1")
+    compileOnly("com.google.protobuf:protobuf-java:4.36.2")
 }
 
 application {

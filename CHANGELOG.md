@@ -18,6 +18,8 @@ format changes.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-10-31
+
 ### Fixed
 
 - **`(pxf.required)` with `(pxf.default)` on one field is a bind-time

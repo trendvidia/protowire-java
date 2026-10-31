@@ -18,6 +18,15 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- `check-decode`'s `Tree` gains `branches` and `tags`, matching
+  protowire's `adversarial.proto` (protowire#449). Without them PB
+  skipped both fields as unknown, and the `pb/deep-map-101` and
+  `pb/deep-scalar-map-101` rows failed because nothing decoded a map
+  entry. The decoders needed no change: both already count a map's `{`
+  and every PB map entry.
+
 ## [1.2.0] — 2026-09-10
 
 Minor release: the port adopts protowire v1.11 and v1.12 across the

@@ -38,10 +38,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  *       {@code pxf.BigFloat} (§6.1.1 "Default Placement");</li>
  *   <li>carry {@code (pxf.default)} on more than one member of a oneof,
  *       or {@code (pxf.required)} on any member of one (§6.1.2 "Oneof
- *       Members").</li>
+ *       Members");</li>
+ *   <li>carry {@code (pxf.required) = true} with {@code (pxf.default)} on
+ *       one field (draft -01 "Required and Default"). {@code
+ *       (pxf.required) = false} requires nothing and stands beside a
+ *       default.</li>
  * </ul>
  *
- * <p>All four apply to the bound file <em>and its transitive imports</em>
+ * <p>All five apply to the bound file <em>and its transitive imports</em>
  * (§3.15 "Scope of Bind-Time Checks"): a misplaced annotation declared in
  * an imported {@code .proto} is reported through any descriptor that
  * imports it, attributed to the file that declares it. A file reached
@@ -111,7 +115,9 @@ public final class SchemaValidator {
          * A {@code (pxf.required)} annotation on a member of a oneof, which
          * draft -01 §6.1.2 "Oneof Members" forbids: read per field it
          * demands that one specific arm always be chosen, which makes every
-         * other arm of the oneof undecodable.
+         * other arm of the oneof undecodable. Also {@code (pxf.required)}
+         * beside {@code (pxf.default)} on one field, which "Required and
+         * Default" forbids.
          */
         REQUIRED_OPTION("required field option"),
         /**
@@ -142,8 +148,9 @@ public final class SchemaValidator {
      * @param name    the bare reserved identifier for the reserved-name
      *                kinds; the {@code (pxf.key)} value for
      *                {@link Kind#KEY_OPTION}; the {@code (pxf.default)}
-     *                literal for {@link Kind#DEFAULT_OPTION}; the containing
-     *                oneof's bare name for {@link Kind#REQUIRED_OPTION}
+     *                literal for {@link Kind#DEFAULT_OPTION}; for
+     *                {@link Kind#REQUIRED_OPTION} the containing oneof's bare
+     *                name, or the {@code (pxf.default)} literal beside it
      * @param kind    which check failed
      * @param detail  a human-readable explanation for the placement kinds;
      *                empty for the reserved-name kinds
@@ -285,9 +292,15 @@ public final class SchemaValidator {
             if (key != null) checkKeyOption(file, f, key, out);
             String def = Annotations.getDefault(f);
             if (def != null) checkDefaultOption(file, f, def, out);
+            boolean required = Annotations.isRequired(f);
+            if (required && def != null) {
+                out.add(new Violation(file, f.getFullName(), def, Kind.REQUIRED_OPTION,
+                        "(pxf.required) and (pxf.default) are exclusive on one field: the first rejects a "
+                                + "document where the field is absent, and the second treats it as supplied"));
+            }
             OneofDescriptor oo = realOneof(f);
             if (oo != null) {
-                if (Annotations.isRequired(f)) {
+                if (required) {
                     out.add(new Violation(file, f.getFullName(), oo.getName(), Kind.REQUIRED_OPTION,
                             "(pxf.required) is not valid on a member of oneof \"" + oo.getName()
                                     + "\": read per field it demands that one arm always be chosen, "

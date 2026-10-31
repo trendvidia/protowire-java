@@ -45,6 +45,11 @@ message NestedOneDefault {
   OneDefault inner = 1;
 }
 
+// (pxf.required) = false requires nothing, so it stands beside a default.
+message NotRequiredDefault {
+  string f = 1 [(pxf.required) = false, (pxf.default) = "x"];
+}
+
 // A bool default has exactly two spellings.
 message BoolDefault {
   bool flag = 1 [(pxf.default) = "true"];

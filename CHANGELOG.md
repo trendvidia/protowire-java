@@ -18,6 +18,16 @@ format changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`(pxf.required)` with `(pxf.default)` on one field is a bind-time
+  violation** (#108), as draft -01 "Required and Default" requires
+  (protowire#453). Such a schema used to bind, and a document omitting
+  the field had a meaning that could differ from other engines.
+  `SchemaValidator` now reports it as `REQUIRED_OPTION` over the import
+  closure, like the other bind-time checks. `(pxf.required) = false`
+  beside a default stays accepted. This narrows accepted schema input.
+
 ## [1.2.0] — 2026-09-10
 
 Minor release: the port adopts protowire v1.11 and v1.12 across the

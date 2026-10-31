@@ -17,8 +17,10 @@ import org.junit.jupiter.api.Test;
 import org.protowire.pxf.testproto.AllTypes;
 import org.protowire.pxf.testproto.KeyedBad;
 import org.protowire.pxf.testproto.KeyedOk;
+import org.protowire.pxf.testproto.NotRequiredDefault;
 import org.protowire.pxf.testproto.OneDefault;
 import org.protowire.pxf.testproto.RepeatedDefault;
+import org.protowire.pxf.testproto.RequiredWithDefault;
 
 import java.util.List;
 import java.util.Map;
@@ -284,6 +286,9 @@ class SchemaValidatorTest {
         assertKind(by, "test.v1.MessageDefault.inner", SchemaValidator.Kind.DEFAULT_OPTION, "not valid on message type test.v1.Plain: no PXF literal denotes it");
         assertEquals("ignored", by.get("test.v1.RepeatedDefault.tags").name());
         assertTrue(by.get("test.v1.RepeatedDefault.tags").toString().contains("invalid (pxf.default) = \"ignored\""), by.get("test.v1.RepeatedDefault.tags").toString());
+        // Required and Default
+        assertKind(by, "test.v1.RequiredWithDefault.f", SchemaValidator.Kind.REQUIRED_OPTION, "(pxf.required) and (pxf.default) are exclusive on one field");
+        assertEquals("x", by.get("test.v1.RequiredWithDefault.f").name());
         // Oneof Members (§6.1.2)
         assertKind(by, "test.v1.RequiredMember.a", SchemaValidator.Kind.REQUIRED_OPTION, "(pxf.required) is not valid on a member of oneof \"choice\"");
         assertEquals("choice", by.get("test.v1.RequiredMember.a").name());
@@ -297,7 +302,7 @@ class SchemaValidatorTest {
         assertKind(by, "test.v1.KeyedBad.missing", SchemaValidator.Kind.KEY_OPTION, "element message test.v1.Plain has no field \"nope\"");
         assertKind(by, "test.v1.KeyedBad.nonstring", SchemaValidator.Kind.KEY_OPTION, "key field test.v1.Counted.n must be a singular string field");
         assertTrue(by.get("test.v1.KeyedBad.single").toString().contains("invalid (pxf.key) = \"s\""));
-        assertEquals(11, vs.size(), vs.toString());
+        assertEquals(12, vs.size(), vs.toString());
     }
 
     private static void assertKind(Map<String, SchemaValidator.Violation> by, String element, SchemaValidator.Kind kind, String detail) {
@@ -429,6 +434,66 @@ class SchemaValidatorTest {
         assertEquals(SchemaValidator.Kind.REQUIRED_OPTION, vs.get(0).kind());
         assertEquals("req.v1.R.a", vs.get(0).element());
         assertEquals("choice", vs.get(0).name());
+    }
+
+    // -- Required and Default ---------------------------------------------------
+
+    private static com.google.protobuf.DescriptorProtos.FieldOptions requiredAndDefault(long required) {
+        return com.google.protobuf.DescriptorProtos.FieldOptions.newBuilder()
+                .setUnknownFields(com.google.protobuf.UnknownFieldSet.newBuilder()
+                        .addField(1314, com.google.protobuf.UnknownFieldSet.Field.newBuilder().addVarint(required).build())
+                        .addField(1315, com.google.protobuf.UnknownFieldSet.Field.newBuilder()
+                                .addLengthDelimited(com.google.protobuf.ByteString.copyFromUtf8("x")).build())
+                        .build())
+                .build();
+    }
+
+    private static FileDescriptorProto.Builder pairFile(String name, long required) {
+        return file(name, "pair.v1").addMessageType(DescriptorProto.newBuilder().setName("M")
+                .addField(FieldDescriptorProto.newBuilder().setName("f").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
+                        .setType(Type.TYPE_STRING).setOptions(requiredAndDefault(required))));
+    }
+
+    // The options arrive as raw bytes here, as they do from a descriptor set
+    // built without the extensions linked.
+    @Test
+    void requiredWithDefaultIsRefusedInRawOptionBytes() {
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(build(pairFile("pair.proto", 1).build()));
+        assertEquals(1, vs.size(), vs.toString());
+        assertEquals(SchemaValidator.Kind.REQUIRED_OPTION, vs.get(0).kind());
+        assertEquals("pair.v1.M.f", vs.get(0).element());
+        assertTrue(vs.get(0).toString().contains("(pxf.required) and (pxf.default) are exclusive on one field"), vs.get(0).toString());
+
+        assertEquals(List.of(), SchemaValidator.validateFile(build(pairFile("pair.proto", 0).build())));
+    }
+
+    // The same scope as the other bind-time checks: the import closure.
+    @Test
+    void requiredWithDefaultIsRefusedThroughAnImport() {
+        FileDescriptor dep = build(pairFile("dep.proto", 1).build());
+        FileDescriptor root = build(file("root.proto", "root.v1").addDependency("dep.proto")
+                .addMessageType(messageWithField("Root", "ok")).build(), dep);
+        List<SchemaValidator.Violation> vs = SchemaValidator.validateFile(root);
+        assertEquals(1, vs.size(), vs.toString());
+        assertEquals("dep.proto", vs.get(0).file());
+        assertEquals("pair.v1.M.f", vs.get(0).element());
+    }
+
+    // The schema is refused when it is bound, whatever the document says:
+    // this document supplies the field, so no absent-field path could object.
+    @Test
+    void requiredWithDefaultFailsTheBindEvenWhenTheFieldIsPresent() {
+        PxfException e = assertThrows(PxfException.class, () ->
+                Pxf.unmarshal("f = \"written\"".getBytes(java.nio.charset.StandardCharsets.UTF_8), RequiredWithDefault.newBuilder()));
+        assertTrue(e.getMessage().contains("(pxf.required) and (pxf.default) are exclusive on one field"), e.getMessage());
+    }
+
+    @Test
+    void notRequiredBesideADefaultBindsAndAppliesTheDefault() {
+        assertEquals(List.of(), SchemaValidator.validateDescriptor(NotRequiredDefault.getDescriptor()));
+        NotRequiredDefault.Builder b = NotRequiredDefault.newBuilder();
+        Pxf.unmarshalFull(new byte[0], b);
+        assertEquals("x", b.getF());
     }
 
     @Test

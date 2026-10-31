@@ -34,6 +34,7 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
+import com.google.protobuf.DynamicMessage;
 import org.protowire.pb.Pb;
 import org.protowire.pb.ProtoField;
 import org.protowire.pxf.DecodeLimits;
@@ -167,6 +168,7 @@ public final class CheckDecode {
         switch (format) {
             case "pxf"      -> pxfDecode(data, schema, proto, limits);
             case "pb"       -> pbDecode(data, schema, limits);
+            case "pb-render" -> pbRender(data, schema, proto);
             case "sbe"      -> sbeDecode(data, schema, proto, limits);
             case "envelope" -> throw new RejectException("envelope decode not yet implemented in this reference");
             default         -> throw new RejectException("unsupported format: " + format);
@@ -185,6 +187,24 @@ public final class CheckDecode {
             // RuntimeExceptions from descriptor-driven decoding (e.g.
             // IllegalArgumentException for bad UTF-8 or malformed numbers)
             // are also clean rejects under the contract.
+            throw new RejectException(messageOf(e));
+        }
+    }
+
+    // The producer's side of the bounds (HARDENING.md § Arbitrary-precision
+    // magnitudes): the stock protobuf runtime reads the bytes, storing the
+    // fields and bounding nothing, and they are then written as PXF. Pb.java
+    // is bypassed on purpose, or it would refuse the row and the encoder would
+    // go untested (protowire#448).
+    private static void pbRender(byte[] data, String schema, String protoPath) throws Exception {
+        if (protoPath == null || protoPath.isEmpty()) {
+            throw new RejectException("--proto is required for format=pb-render");
+        }
+        Descriptor desc = loadDescriptor(protoPath, schema);
+        DynamicMessage msg = DynamicMessage.parseFrom(desc, data);
+        try {
+            Pxf.marshal(msg);
+        } catch (RuntimeException e) {
             throw new RejectException(messageOf(e));
         }
     }

@@ -2,8 +2,8 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 //
 // Schemas that MUST NOT bind: every placement draft -01 forbids at bind
-// time (#54) — "Default Placement" (§6.1.1), "Oneof Members" (§6.1.2) and
-// the (pxf.key) rule (§3.13.1). One file, so SchemaValidatorTest can
+// time (#54) — "Default Placement" (§6.1.1), "Required and Default",
+// "Oneof Members" (§6.1.2) and the (pxf.key) rule (§3.13.1). One file, so SchemaValidatorTest can
 // assert the whole list; the runtime guards behind them (#52, #53) are
 // reached with skipValidate.
 syntax = "proto3";
@@ -32,6 +32,12 @@ message RepeatedIntDefault {
 // protobuf's synthetic *Entry message.
 message MapDefault {
   map<string, string> labels = 1 [(pxf.default) = "x"];
+}
+
+// (pxf.required) with (pxf.default): a document omitting the field would
+// have no single meaning.
+message RequiredWithDefault {
+  string f = 1 [(pxf.required) = true, (pxf.default) = "x"];
 }
 
 // (pxf.required) on a oneof member. The spec forbids the placement at

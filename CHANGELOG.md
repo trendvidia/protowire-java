@@ -28,6 +28,17 @@ format changes.
   closure, like the other bind-time checks. `(pxf.required) = false`
   beside a default stays accepted. This narrows accepted schema input.
 
+### Changed
+
+- **The vendored shared schemas are re-synced with [trendvidia/protos](https://github.com/trendvidia/protos) v0.1.2** ([trendvidia/protowire#447](https://github.com/trendvidia/protowire/issues/447)). They gain protos' file options, and `envelope.proto`'s `go_package` now names a published package. Declarations and field numbers are unchanged, and so is this port's public API.
+
+- `check-decode`'s `Tree` gains `branches` and `tags`, matching
+  protowire's `adversarial.proto` (protowire#449). Without them PB
+  skipped both fields as unknown, and the `pb/deep-map-101` and
+  `pb/deep-scalar-map-101` rows failed because nothing decoded a map
+  entry. The decoders needed no change: both already count a map's `{`
+  and every PB map entry.
+
 ## [1.2.0] — 2026-09-10
 
 Minor release: the port adopts protowire v1.11 and v1.12 across the

@@ -16,7 +16,7 @@ plugins {
 
 dependencies {
     api(project(":pxf-runtime"))
-    api("com.google.protobuf:protobuf-javalite:4.36.1")
+    api("com.google.protobuf:protobuf-javalite:4.36.2")
 
     configurations.all {
         exclude(group = "com.google.protobuf", module = "protobuf-java")

@@ -63,6 +63,10 @@ public final class CheckDecode {
     public static final class Tree {
         @ProtoField(1) public Tree child;
         @ProtoField(2) public String label = "";
+        // Without these two PB skips the fields as unknown, and the map rows
+        // (protowire#449) would pass without decoding a map entry.
+        @ProtoField(4) public Map<String, Tree> branches = new HashMap<>();
+        @ProtoField(5) public Map<String, String> tags = new HashMap<>();
         public Tree() {}
     }
 

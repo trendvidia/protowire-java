@@ -20,6 +20,8 @@ format changes.
 
 ### Changed
 
+- **The vendored shared schemas are re-synced with [trendvidia/protos](https://github.com/trendvidia/protos) v0.1.2** ([trendvidia/protowire#447](https://github.com/trendvidia/protowire/issues/447)). They gain protos' file options, and `envelope.proto`'s `go_package` now names a published package. Declarations and field numbers are unchanged, and so is this port's public API.
+
 - `check-decode`'s `Tree` gains `branches` and `tags`, matching
   protowire's `adversarial.proto` (protowire#449). Without them PB
   skipped both fields as unknown, and the `pb/deep-map-101` and

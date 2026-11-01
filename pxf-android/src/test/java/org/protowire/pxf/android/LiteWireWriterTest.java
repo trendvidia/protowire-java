@@ -7,6 +7,7 @@ import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
+import org.protowire.pxf.PxfException;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
 import org.protowire.pxf.SimplePxfRegistry;
@@ -1318,5 +1319,80 @@ final class LiteWireWriterTest {
                 org.protowire.pxf.PxfException.class, () -> LiteWireWriter.encode(Parser.parse(doc), meta), doc);
             org.junit.jupiter.api.Assertions.assertTrue(e.getMessage().contains("quoted entry name \"name\" is only valid inside a keyed repeated field's block"), e.getMessage());
         }
+    }
+
+    // --- the draft's reject rules, as far as this tier's tables reach ------
+
+    private record MapMeta(Map<Integer, PxfMeta> nestedMetas, Set<Integer> mapFields) implements PxfMeta {
+        @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("s", 1, "l", 2, "m", 3, "nums", 4); }
+        @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(1, 9, 2, 5, 3, 11, 4, 11); }
+        @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+        @Override public Set<Integer>          repeatedFields()     { return Set.of(2, 3, 4); }
+        @Override public Set<Integer>          packedFields()       { return Set.of(2); }
+        @Override public Map<Integer, String>  messageTypes()       { return Map.of(); }
+        @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+        @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+        @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+        @Override public int                   sbeTemplateId()      { return -1; }
+        @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+        @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+        @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+        @Override public String                fullName()           { return "test.Rules"; }
+    }
+
+    private static PxfMeta rulesMeta() {
+        PxfMeta strKey = meta(Map.of("key", 1, "value", 2), Map.of(1, 9, 2, 9), Set.of(), Set.of());
+        PxfMeta intKey = meta(Map.of("key", 1, "value", 2), Map.of(1, 5, 2, 9), Set.of(), Set.of());
+        return new MapMeta(Map.of(3, strKey, 4, intKey), Set.of(3, 4));
+    }
+
+    private static PxfException rulesReject(String doc, String text) {
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(Parser.parse(doc), rulesMeta()), doc);
+        assertEquals(true, e.getMessage().contains(text), doc + " -> " + e.getMessage());
+        return e;
+    }
+
+    @Test
+    void singularFieldBoundTwiceIsRejected() {
+        rulesReject("s = \"a\"\ns = \"b\"", "field \"s\" is already set");
+        rulesReject("s = \"a\"\ns = \"a\"", "field \"s\" is already set");
+        rulesReject("s = null\ns = \"b\"", "field \"s\" is already set");
+    }
+
+    @Test
+    void repeatedFieldBoundTwiceConcatenates() {
+        assertEquals("1202010212020304",
+                hex(LiteWireWriter.encode(Parser.parse("l = [1, 2]\nl = [3, 4]"), rulesMeta())));
+    }
+
+    @Test
+    void mapKeyBoundTwiceIsRejected() {
+        rulesReject("m = { a: \"1\" a: \"2\" }", "map field \"m\": key \"a\" is already set");
+        rulesReject("m = { a: \"1\" }\nm = { a: \"2\" }", "map field \"m\": key \"a\" is already set");
+        rulesReject("nums = { 1: \"x\" \"1\": \"y\" }", "map field \"nums\": key \"1\" is already set");
+    }
+
+    @Test
+    void mapBoundTwiceWithDistinctKeysMerges() {
+        byte[] b = LiteWireWriter.encode(Parser.parse("m = { a: \"1\" }\nm = { b: \"2\" }"), rulesMeta());
+        assertEquals(hex(LiteWireWriter.encode(Parser.parse("m = { a: \"1\" b: \"2\" }"), rulesMeta())), hex(b));
+    }
+
+    @Test
+    void nullOnAListOrAMapIsRejected() {
+        rulesReject("l = null", "null is not allowed on repeated field \"l\"");
+        rulesReject("m = null", "null is not allowed on map field \"m\"");
+        rulesReject("m = { a: null }", "null is not allowed as a map value in field \"m\"");
+    }
+
+    /**
+     * A documented divergence: the null rule on a plain scalar needs
+     * per-field presence, which {@link PxfMeta} does not carry
+     * (trendvidia/protowire#477), so this tier cannot tell {@code int32} from
+     * {@code optional int32}. This pin fails when it can.
+     */
+    @Test
+    void nullOnAScalarIsNotDecidableHere() {
+        assertEquals("", hex(LiteWireWriter.encode(Parser.parse("s = null"), rulesMeta())));
     }
 }

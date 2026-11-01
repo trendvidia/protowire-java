@@ -271,6 +271,13 @@ final class Lexer {
                     return new Token(TokenKind.ILLEGAL, "invalid UTF-8 in string literal", pp);
                 }
             }
+            if (ch == '\n') {
+                // Draft -01 § String Literals: a simple string holds no raw
+                // LF (protowire#350). \n is the escape, and a triple-quoted
+                // string is the multi-line form.
+                return new Token(TokenKind.ILLEGAL,
+                        "raw newline in string literal: write \\n, or use a triple-quoted string", pp);
+            }
             if (ch != '\\') {
                 out.write(ch);
                 continue;

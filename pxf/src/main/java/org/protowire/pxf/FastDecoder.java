@@ -13,8 +13,11 @@ import com.google.protobuf.Message;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Base64;
+import java.util.BitSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Fused single-pass decoder. Mirrors Go's {@code decode_fast.go}: lexes and writes directly into
@@ -457,9 +460,9 @@ final class FastDecoder {
         try { decodeListInner(b, fd); } finally { depth--; }
     }
 
-    private void decodeMap(Message.Builder b, FieldDescriptor fd) {
+    private void decodeMap(Message.Builder b, FieldDescriptor fd, Set<Object> keys) {
         enter(current.pos());
-        try { decodeMapInner(b, fd); } finally { depth--; }
+        try { decodeMapInner(b, fd, keys); } finally { depth--; }
     }
 
     // -- core --------------------------------------------------------------
@@ -554,6 +557,12 @@ final class FastDecoder {
     private void decodeFieldsInner(Message.Builder b, boolean inBlock) {
         Descriptor desc = b.getDescriptorForType();
         Map<String, String> setOneofs = null;
+        // What this body has bound (draft -01 § Entries and Keys): a singular
+        // field at most once (protowire#347, option a) and a map key at most
+        // once, across every binding of the map (protowire#396, option b).
+        // Each message body has sets of its own. Allocated on first use.
+        BitSet bound = null;
+        Map<FieldDescriptor, Set<Object>> mapKeys = null;
         // A non-null keyedElem applies to exactly this body: the immediate
         // entries of one element of a keyed repeated field. Consume it so
         // nested submessages don't inherit the key-field checks.
@@ -591,7 +600,9 @@ final class FastDecoder {
                         throw new PxfException(pos, "unknown field \"" + key + "\" in " + desc.getFullName());
                     }
                     setOneofs = checkOneof(fd, setOneofs, pos);
+                    bound = bindOnce(fd, bound, pos);
                     if (current.kind() == TokenKind.NULL) {
+                        if (!nullable(fd)) throw nullNotAllowed(current.pos(), fd);
                         if (trackPresence) {
                             String path = pathPrefix + fd.getName();
                             result.markNull(path);
@@ -608,7 +619,12 @@ final class FastDecoder {
                         ke.checkExplicitKey(current.value(), current.pos());
                     }
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
-                    decodeFieldValue(b, fd);
+                    if (fd.isMapField()) {
+                        if (mapKeys == null) mapKeys = new HashMap<>();
+                        decodeMap(b, fd, mapKeys.computeIfAbsent(fd, x -> new HashSet<>()));
+                    } else {
+                        decodeFieldValue(b, fd);
+                    }
                 }
                 case LBRACE -> {
                     advance();
@@ -643,6 +659,7 @@ final class FastDecoder {
                         throw new PxfException(pos, "map field \"" + key + "\" must use assignment syntax: " + key + " = { ... }");
                     }
                     setOneofs = checkOneof(fd, setOneofs, pos);
+                    bound = bindOnce(fd, bound, pos);
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
 
                     if (WellKnown.isAny(fd.getMessageType()) && opts.typeResolver() != null && current.kind() == TokenKind.AT_TYPE) {
@@ -672,8 +689,40 @@ final class FastDecoder {
         return setOneofs;
     }
 
+    /**
+     * Records that this body bound {@code fd}, or rejects a second binding of
+     * a singular field: a second scalar does not replace the first, and a
+     * second block does not merge into it. {@code null} is a binding too.
+     * Repeated fields concatenate. Mirrors protowire-go's boundFields.
+     */
+    private static BitSet bindOnce(FieldDescriptor fd, BitSet bound, Position pos) {
+        if (fd.isRepeated()) return bound;
+        if (bound == null) bound = new BitSet();
+        if (bound.get(fd.getIndex())) {
+            throw new PxfException(pos, "field \"" + fd.getName() + "\" is already set");
+        }
+        bound.set(fd.getIndex());
+        return bound;
+    }
+
+    /**
+     * Whether a {@code null} literal may bind to {@code fd} (draft -01
+     * § Booleans, Null, and Identifier Values; protowire#339, #379, #380): a
+     * singular field with explicit presence, which it leaves unset and
+     * present-but-null. A scalar without presence has no unset state, a
+     * proto2 required field would make the message invalid in binary, and a
+     * list or map is never nullable.
+     */
+    private static boolean nullable(FieldDescriptor fd) {
+        return fd.hasPresence() && !fd.isRepeated() && !fd.isRequired();
+    }
+
+    private static PxfException nullNotAllowed(Position pos, FieldDescriptor fd) {
+        String kind = fd.isMapField() ? "map" : fd.isRepeated() ? "repeated" : fd.isRequired() ? "required" : "scalar";
+        return new PxfException(pos, "null is not allowed on " + kind + " field \"" + fd.getName() + "\"");
+    }
+
     private void decodeFieldValue(Message.Builder b, FieldDescriptor fd) {
-        if (fd.isMapField())  { decodeMap(b, fd); return; }
         if (fd.isRepeated()) {
             // Keyed repeated field written `name = { ... }`: a block-tail is
             // an abbreviation of `= { ... }` (draft -01 §3.13), so the
@@ -874,7 +923,7 @@ final class FastDecoder {
         return sub.build();
     }
 
-    private void decodeMapInner(Message.Builder b, FieldDescriptor fd) {
+    private void decodeMapInner(Message.Builder b, FieldDescriptor fd, Set<Object> keys) {
         if (current.kind() != TokenKind.LBRACE) {
             throw new PxfException(current.pos(), "expected '{' for map field \"" + fd.getName() + "\"");
         }
@@ -906,7 +955,14 @@ final class FastDecoder {
             }
 
             Message.Builder entry = b.newBuilderForField(fd);
-            entry.setField(keyFd, decodeMapKey(fd, keyFd, keyStr, keyKind, pos));
+            // Keys compare as values of the key type, so 1 and "1" are one
+            // key of an integer-keyed map (protowire#396).
+            Object key = decodeMapKey(fd, keyFd, keyStr, keyKind, pos);
+            if (!keys.add(key)) {
+                throw new PxfException(pos, "map field \"" + fd.getName() + "\": key "
+                        + (key instanceof String ? "\"" + key + "\"" : key) + " is already set");
+            }
+            entry.setField(keyFd, key);
 
             if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 if (current.kind() != TokenKind.LBRACE) {

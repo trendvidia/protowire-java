@@ -20,6 +20,13 @@ format changes.
 
 ### Fixed
 
+- **`@required` and `@default` are honoured** (#111). A schema written in the
+  annotation form lowers to the 1327 carrier, which this port did not read, so
+  it bound without error and without enforcement. Both spellings now give the
+  same answer, and the bind-time checks, including required-with-default,
+  apply to both. Two spellings of one default that disagree are a bind-time
+  violation, and so is an `@default` that reduces to no single literal. This
+  narrows accepted schema input.
 - **`pxf.BigFloat` is binary, as the proto says** (#104, protowire#393, #406,
   #410). This port read and wrote `exponent` as a power of ten, so the bytes it
   wrote for a BigFloat decoded to a different number in every other port, and

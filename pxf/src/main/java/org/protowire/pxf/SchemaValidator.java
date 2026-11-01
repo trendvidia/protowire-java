@@ -292,6 +292,10 @@ public final class SchemaValidator {
             if (key != null) checkKeyOption(file, f, key, out);
             String def = Annotations.getDefault(f);
             if (def != null) checkDefaultOption(file, f, def, out);
+            String defProblem = Annotations.defaultProblem(f);
+            if (defProblem != null) {
+                out.add(new Violation(file, f.getFullName(), def == null ? "" : def, Kind.DEFAULT_OPTION, defProblem));
+            }
             boolean required = Annotations.isRequired(f);
             if (required && def != null) {
                 out.add(new Violation(file, f.getFullName(), def, Kind.REQUIRED_OPTION,

@@ -43,7 +43,6 @@ inherits it.
   bound-twice rules, and `null` on a list, a map or a map value. It cannot
   yet tell a plain scalar from an `optional` one, so `null` on a scalar stays
   accepted there (trendvidia/protowire#477).
-
 - **`BindRow` applies `(pxf.default)` and `(pxf.required)`**, as its javadoc
   always said. It used `Pxf.unmarshal`, which skips both.
 - **`DatasetReader` rejects a truncated row and junk between rows** (protowire#336).
@@ -76,6 +75,8 @@ inherits it.
 - `BindRow.bindRow` overload and `DatasetReader` constructor taking
   `UnmarshalOptions`, for a cell holding an Any block with a type entry.
 - The `testdata/{any,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
+- The `testdata/{any,blocks,duplicates,nulls,strings}/` corpora are vendored and
+- The `testdata/{blocks,duplicates,nulls,strings}/` corpora are vendored and
   run on every build. A `,` or `;` between block entries was already rejected
   (#106), and this now holds that in place. The two editions fixtures in
   `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no

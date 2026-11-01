@@ -256,8 +256,36 @@ public final class Ast {
     }
 
     public record StringVal(Position pos, String value) implements Value {}
-    public record IntVal(Position pos, String raw) implements Value {}
-    public record FloatVal(Position pos, String raw) implements Value {}
+
+    /**
+     * An integer literal.
+     *
+     * @param prec the digits of its precision suffix ({@code 64} for
+     *     {@code 5p64}), or "". The grammar takes one on any number; only a
+     *     {@code pxf.BigFloat} reads it, and the schema layer rejects it on
+     *     any other field (draft -01 § PXF Annotations, protowire#406).
+     */
+    public record IntVal(Position pos, String raw, String prec) implements Value {
+        /** As the three-argument form with no suffix. */
+        public IntVal(Position pos, String raw) { this(pos, raw, ""); }
+
+        /** The literal as written, its suffix included. */
+        public String literal() { return prec.isEmpty() ? raw : raw + "p" + prec; }
+    }
+
+    /**
+     * A floating-point literal.
+     *
+     * @param prec the digits of its precision suffix, or "": see {@link IntVal}
+     */
+    public record FloatVal(Position pos, String raw, String prec) implements Value {
+        /** As the three-argument form with no suffix. */
+        public FloatVal(Position pos, String raw) { this(pos, raw, ""); }
+
+        /** The literal as written, its suffix included. */
+        public String literal() { return prec.isEmpty() ? raw : raw + "p" + prec; }
+    }
+
     public record BoolVal(Position pos, boolean value) implements Value {}
     public record BytesVal(Position pos, byte[] value) implements Value {}
     public record NullVal(Position pos) implements Value {}

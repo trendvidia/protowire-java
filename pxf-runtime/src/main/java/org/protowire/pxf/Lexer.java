@@ -537,7 +537,22 @@ final class Lexer {
         if (frac || (pos < input.length && (peek() == '.' || peek() == 'e' || peek() == 'E'))) {
             return lexFloat(pp, start);
         }
-        return new Token(TokenKind.INT, slice(start, pos), pp);
+        String raw = slice(start, pos);
+        return new Token(TokenKind.INT, raw, pp, lexPrecision());
+    }
+
+    /**
+     * Consumes a number's precision suffix, {@code p} and one or more digits
+     * (draft -01 § PXF Annotations, protowire#406), and returns its digits,
+     * or "". The suffix lexes on any number; which fields take one is the
+     * schema layer's call.
+     */
+    private String lexPrecision() {
+        if (peek() != 'p' || !isDigit(peekAt(1))) return "";
+        advance();
+        int start = pos;
+        while (pos < input.length && isDigit(peek())) advance();
+        return slice(start, pos);
     }
 
     /**
@@ -574,7 +589,8 @@ final class Lexer {
             if (pos < input.length && (peek() == '+' || peek() == '-')) advance();
             while (pos < input.length && isDigit(peek())) advance();
         }
-        return new Token(TokenKind.FLOAT, slice(start, pos), pp);
+        String raw = slice(start, pos);
+        return new Token(TokenKind.FLOAT, raw, pp, lexPrecision());
     }
 
     private Token lexTimestamp(Position pp, int start) {

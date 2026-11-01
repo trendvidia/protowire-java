@@ -175,34 +175,48 @@ public final class WellKnown {
         return sb.toString();
     }
 
+    /**
+     * Sets a {@code pxf.BigFloat} to {@code bd} read at
+     * {@value BigFloats#DEFAULT_PREC} bits, as an unsuffixed literal is.
+     *
+     * @deprecated a BigDecimal has no precision or negative zero to keep; use
+     *     {@link #setBigFloat(Message.Builder, BigFloats.Value)}.
+     */
+    @Deprecated
     public static void setBigFloat(Message.Builder b, BigDecimal bd) {
-        // Java port stores as decimal: mantissa = unscaledValue, exponent = -scale (as power-of-10),
-        // prec = mantissa bit length, negative = sign.
-        Descriptor d = b.getDescriptorForType();
-        BigInteger m = bd.unscaledValue().abs();
-        byte[] mantBytes = m.signum() == 0 ? new byte[0] : trimSign(m.toByteArray());
-        int prec = m.bitLength();
-        if (prec == 0) prec = 53; // safe default
-        if (mantBytes.length > 0) {
-            b.setField(d.findFieldByName("mantissa"), com.google.protobuf.ByteString.copyFrom(mantBytes));
-        }
-        // We encode the decimal exponent via the dedicated "exponent" field with a flag in prec
-        // mirroring Go's binary representation isn't 100% lossless across decimal systems —
-        // the round-trip path reads/writes via BigDecimal text representation.
-        if (-bd.scale() != 0) b.setField(d.findFieldByName("exponent"), -bd.scale());
-        b.setField(d.findFieldByName("prec"), prec);
-        if (bd.signum() < 0) b.setField(d.findFieldByName("negative"), true);
+        setBigFloat(b, BigFloats.parse(bd.toString(), Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT));
     }
 
+    /** Stores {@code v}'s fields, omitting the proto3 zero ones. */
+    public static void setBigFloat(Message.Builder b, BigFloats.Value v) {
+        Descriptor d = b.getDescriptorForType();
+        if (v.mantissa().signum() != 0) {
+            b.setField(d.findFieldByName("mantissa"), com.google.protobuf.ByteString.copyFrom(trimSign(v.mantissa().toByteArray())));
+        }
+        if (v.exponent() != 0) b.setField(d.findFieldByName("exponent"), v.exponent());
+        if (v.prec() != 0) b.setField(d.findFieldByName("prec"), v.prec());
+        if (v.negative()) b.setField(d.findFieldByName("negative"), true);
+    }
+
+    /**
+     * Writes a {@code pxf.BigFloat} as its literal, suffix included: see
+     * {@link BigFloats}.
+     *
+     * @throws PxfException on a value past {@code MaxBigFloatExponent} or
+     *     {@code MaxNumericLiteralDigits}: a decoder would refuse the literal
+     */
     public static String readBigFloatStr(Message msg) {
         Descriptor d = msg.getDescriptorForType();
         com.google.protobuf.ByteString abs = (com.google.protobuf.ByteString) msg.getField(d.findFieldByName("mantissa"));
         int exp = (Integer) msg.getField(d.findFieldByName("exponent"));
+        int prec = (Integer) msg.getField(d.findFieldByName("prec"));
         boolean neg = (Boolean) msg.getField(d.findFieldByName("negative"));
-        BigInteger mant = abs.size() == 0 ? BigInteger.ZERO : new BigInteger(1, abs.toByteArray());
-        BigDecimal v = new BigDecimal(mant, -exp);
-        if (neg) v = v.negate();
-        return v.toPlainString();
+        BigInteger mant = abs.isEmpty() ? BigInteger.ZERO : new BigInteger(1, abs.toByteArray());
+        try {
+            return BigFloats.format(mant, exp, prec, neg, Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new PxfException(Position.UNKNOWN, e.getMessage());
+        }
     }
 
     public static BigInteger parseBigInt(String s) { return parseBigInt(s, Limits.MAX_NUMERIC_LITERAL_DIGITS); }
@@ -227,16 +241,36 @@ public final class WellKnown {
             scale = s.length() - dot - 1;
             s = s.substring(0, dot) + s.substring(dot + 1);
         }
+        // Leading zeros are not significant (protowire#410), so the digit cap
+        // no longer bounds the scale: "0.000…1" counts one digit however many
+        // places it has. The scale is bounded as it is on the PB wire.
+        if (scale > maxDigits) {
+            throw new PxfException(Position.UNKNOWN, "pxf.Decimal scale " + scale + " exceeds MaxNumericLiteralDigits=" + maxDigits);
+        }
         BigInteger unscaled = new BigInteger(s, 10);
         return new Object[] { unscaled, scale, neg };
     }
 
+    /**
+     * The decimal value a BigFloat literal writes, without reading it at a
+     * binary precision.
+     *
+     * @deprecated use {@link BigFloats#parse(String, int, int)}, which reads
+     *     the literal as the stored value.
+     */
+    @Deprecated
     public static BigDecimal parseBigFloat(String s) { return parseBigFloat(s, Limits.MAX_NUMERIC_LITERAL_DIGITS); }
 
-    /** As {@link #parseBigFloat(String)} under a per-call digit cap. */
+    /**
+     * As {@link #parseBigFloat(String)} under a per-call digit cap.
+     *
+     * @deprecated see {@link #parseBigFloat(String)}.
+     */
+    @Deprecated
     public static BigDecimal parseBigFloat(String s, int maxDigits) {
         checkLiteralDigits(s, maxDigits);
-        return new BigDecimal(s);
+        int p = s.indexOf('p');
+        return new BigDecimal(p < 0 ? s : s.substring(0, p));
     }
 
     /**
@@ -250,11 +284,7 @@ public final class WellKnown {
      */
     static void checkLiteralDigits(String s, int max) {
         if (s.length() <= max) return;
-        int n = 0;
-        for (int i = 0; i < s.length(); i++) {
-            char c = s.charAt(i);
-            if (c >= '0' && c <= '9') n++;
-        }
+        int n = BigFloats.countDigits(s);
         if (n > max) {
             throw new PxfException(Position.UNKNOWN,
                     "numeric literal has " + n + " digits; MaxNumericLiteralDigits=" + max);

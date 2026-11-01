@@ -67,8 +67,9 @@ class NumericLiteralLimitTest {
     // the exponent marker"): 4095 nines + e-3 is 4096 digits.
     @Test
     void bigFloatIsUnderTheSameCap() {
-        decode("big_float = " + "9".repeat(MAX - 1) + "e-3");
-        assertCapped("big_float = " + "9".repeat(MAX) + "e-3", MAX + 1);
+        // Only mantissa digits count, not the exponent (protowire#410).
+        decode("big_float = " + "9".repeat(MAX) + "e-3");
+        assertCapped("big_float = " + "9".repeat(MAX + 1) + "e-3", MAX + 1);
     }
 
     // The bound applies to Decimal.scale on the way out, both signs: writing

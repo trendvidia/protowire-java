@@ -1188,43 +1188,37 @@ final class LiteWireWriterTest {
 
     @Test
     void bigFloat_integer() {
-        // bf = 100 → BigDecimal("100") has unscaledValue=100, scale=0.
-        // mantissa = trimSign([0x64]) = [0x64]; exponent = -scale = 0 (omitted);
-        // prec = bitLength(100) = 7; negative omitted.
-        // Inner: 0a 01 64 + 18 07 = 5 bytes
-        // Outer: 0a 05 0a 01 64 18 07
-        Ast.Document doc = Parser.parse("bf = 100");
+        // Expected bytes from protowire's testdata/bigfloat/generate.py, which
+        // computes them with exact rationals: 1000 at 64 bits is the 64-bit
+        // significand 0xfa00000000000000 with exponent 10 - 64 = -54.
+        Ast.Document doc = Parser.parse("bf = 1000p64");
         PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
 
-        assertEquals("0a050a01641807", hex(LiteWireWriter.encode(doc, m)));
+        assertEquals("0a170a08fa0000000000000010caffffffffffffffff011840", hex(LiteWireWriter.encode(doc, m)));
     }
 
     @Test
     void bigFloat_fractional_negativeExponentVarint() {
-        // bf = 1.5 → BigDecimal("1.5") has unscaledValue=15, scale=1.
-        // mantissa = [0x0f]; exponent = -scale = -1; prec = bitLength(15) = 4.
-        // -1 as int32 protobuf-varint takes 10 bytes (sign-extended to int64):
-        //   ff ff ff ff ff ff ff ff ff 01
-        // Inner: 0a 01 0f (3) + 10 + 10-byte exponent (11) + 18 04 (2) = 16 bytes
-        // Outer: 0a 10 0a 01 0f 10 ff ff ff ff ff ff ff ff ff 01 18 04
-        Ast.Document doc = Parser.parse("bf = 1.5");
+        // 1.5 at 53 bits: the significand 0x18000000000000, exponent -52.
+        Ast.Document doc = Parser.parse("bf = 1.5p53");
         PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
 
-        assertEquals("0a100a010f10ffffffffffffffffff011804",
+        assertEquals("0a160a071800000000000010ccffffffffffffffff011835",
                 hex(LiteWireWriter.encode(doc, m)));
     }
 
     @Test
-    void bigFloat_zero_emitsPrecOnly() {
-        // bf = 0 → mantissa empty, exponent omitted, prec defaults to 53,
-        // negative omitted. The always-emitted prec field means even a
-        // zero BigFloat has wire bytes — matches the JVM tier's behavior.
-        // Inner: 18 35 (prec=53, 2 bytes)
-        // Outer: 0a 02 18 35
-        Ast.Document doc = Parser.parse("bf = 0");
+    void bigFloat_zero_isEmptyWithoutASuffix() {
+        // A zero written with no suffix has no precision to keep.
         PxfMeta m = wellKnownHostMeta("test.Sample", "bf", 1, "org.protowire.proto.pxf.BigFloat");
+        assertEquals("0a00", hex(LiteWireWriter.encode(Parser.parse("bf = 0"), m)));
+        assertEquals("0a021840", hex(LiteWireWriter.encode(Parser.parse("bf = 0p64"), m)));
+    }
 
-        assertEquals("0a021835", hex(LiteWireWriter.encode(doc, m)));
+    @Test
+    void precisionSuffixElsewhereIsRejected() {
+        PxfMeta m = meta(Map.of("age", 2), Map.of(2, 5 /* INT32 */), Set.of(), Set.of());
+        assertThrows(PxfException.class, () -> LiteWireWriter.encode(Parser.parse("age = 5p64"), m));
     }
 
     @Test

@@ -7,6 +7,7 @@ import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.WireFormat;
 import org.protowire.pxf.Ast;
+import org.protowire.pxf.BigFloats;
 import org.protowire.pxf.DecodeLimits;
 import org.protowire.pxf.Limits;
 import org.protowire.pxf.Position;
@@ -542,31 +543,36 @@ public final class LiteWireReader {
 
     /**
      * Decodes a {@code pxf.BigFloat} payload — {@code mantissa} (bytes, field 1),
-     * {@code exponent} (int32, field 2), {@code prec} (uint32, field 3 — read
-     * but ignored on the way out, since the encoder recomputes it from the
-     * mantissa's bitLength), {@code negative} (bool, field 4) — into a
-     * {@link Ast.FloatVal}. The value is reconstructed as
-     * {@code (-1)^negative × mantissa × 10^exponent}; the encoder stores
-     * {@code exponent = -BigDecimal.scale()}, so the decoder mirrors that
-     * convention exactly.
+     * {@code exponent} (int32, field 2), {@code prec} (uint32, field 3),
+     * {@code negative} (bool, field 4) — into its literal, suffix included: the
+     * unsigned mantissa × 2^exponent, written as {@code BigFloats} says.
      */
     private static Ast.FloatVal readBigFloat(CodedInputStream in) throws IOException {
         BigInteger mantissa = BigInteger.ZERO;
         int exponent = 0;
+        int prec = 0;
         boolean negative = false;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
             switch (WireFormat.getTagFieldNumber(tag)) {
                 case 1  -> mantissa = unsignedBytesToBigInteger(in.readByteArray());
                 case 2  -> exponent = in.readInt32();
-                case 3  -> in.readUInt32(); // prec — encoder recomputes from bitLength
+                case 3  -> prec = in.readUInt32();
                 case 4  -> negative = in.readBool();
                 default -> in.skipField(tag);
             }
         }
-        BigInteger signed = negative ? mantissa.negate() : mantissa;
-        BigDecimal value = new BigDecimal(signed, -exponent);
-        return new Ast.FloatVal(Position.UNKNOWN, value.toPlainString());
+        String literal;
+        try {
+            literal = BigFloats.format(mantissa, exponent, prec, negative,
+                    Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new PxfException(Position.UNKNOWN, e.getMessage());
+        }
+        int p = literal.indexOf('p');
+        return p < 0
+                ? new Ast.FloatVal(Position.UNKNOWN, literal)
+                : new Ast.FloatVal(Position.UNKNOWN, literal.substring(0, p), literal.substring(p + 1));
     }
 
     /** Treats raw bytes as an unsigned big-endian magnitude. */

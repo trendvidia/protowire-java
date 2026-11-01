@@ -693,6 +693,7 @@ final class FastDecoder {
             return;
         }
         if (WellKnown.isBigInt(md) && current.kind() == TokenKind.INT) {
+            rejectPrecision(fd);
             Message.Builder sub = b.newBuilderForField(fd);
             WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value(), limits.maxNumericLiteralDigits()));
             b.setField(fd, sub.build());
@@ -700,6 +701,7 @@ final class FastDecoder {
             return;
         }
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
+            rejectPrecision(fd);
             Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             Message.Builder sub = b.newBuilderForField(fd);
             // unscaled is BigInteger absolute value
@@ -715,7 +717,7 @@ final class FastDecoder {
         }
         if (WellKnown.isBigFloat(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
             Message.Builder sub = b.newBuilderForField(fd);
-            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value(), limits.maxNumericLiteralDigits()));
+            WellKnown.setBigFloat(sub, consumedBigFloat());
             b.setField(fd, sub.build());
             advance();
             return;
@@ -816,12 +818,14 @@ final class FastDecoder {
             return sub.build();
         }
         if (WellKnown.isBigInt(md) && current.kind() == TokenKind.INT) {
+            rejectPrecision(fd);
             Message.Builder sub = parent.newBuilderForField(fd);
             WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value(), limits.maxNumericLiteralDigits()));
             advance();
             return sub.build();
         }
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
+            rejectPrecision(fd);
             Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
             int scale = (Integer) parts[1];
@@ -834,7 +838,7 @@ final class FastDecoder {
         }
         if (WellKnown.isBigFloat(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
             Message.Builder sub = parent.newBuilderForField(fd);
-            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(current.value(), limits.maxNumericLiteralDigits()));
+            WellKnown.setBigFloat(sub, consumedBigFloat());
             advance();
             return sub.build();
         }
@@ -869,6 +873,7 @@ final class FastDecoder {
             if (keyKind != TokenKind.IDENT && keyKind != TokenKind.STRING && keyKind != TokenKind.INT && keyKind != TokenKind.BOOL) {
                 throw new PxfException(pos, "expected map key, got " + current.kind());
             }
+            rejectPrecision(fd);
             String keyStr = current.value();
             advance();
 
@@ -987,6 +992,7 @@ final class FastDecoder {
             throw new PxfException(current.pos(), current.value());
         }
         Position pos = current.pos();
+        rejectPrecision(fd);
         switch (fd.getJavaType()) {
             case STRING:
                 if (current.kind() != TokenKind.STRING) throw new PxfException(pos, "expected string for field \"" + fd.getName() + "\"");
@@ -1022,8 +1028,30 @@ final class FastDecoder {
         }
     }
 
+    /** The current literal as a {@code pxf.BigFloat}; the caller advances past it. */
+    private BigFloats.Value consumedBigFloat() {
+        try {
+            return BigFloats.parse(current.value(), current.prec(), limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent());
+        } catch (IllegalArgumentException e) {
+            throw new PxfException(current.pos(), e.getMessage());
+        }
+    }
+
+    /**
+     * The precision suffix lexes on any number; only a {@code pxf.BigFloat}
+     * reads it, so anywhere else it is an error naming the field (draft -01
+     * § PXF Annotations, protowire#406).
+     */
+    private void rejectPrecision(FieldDescriptor fd) {
+        if (!current.prec().isEmpty()) {
+            throw new PxfException(current.pos(), "precision suffix p" + current.prec()
+                    + " is allowed only on a pxf.BigFloat, not on field \"" + fd.getName() + "\"");
+        }
+    }
+
     private EnumValueDescriptor consumeEnum(FieldDescriptor fd) {
         Position pos = current.pos();
+        rejectPrecision(fd);
         switch (current.kind()) {
             case IDENT -> {
                 EnumValueDescriptor ev = fd.getEnumType().findValueByName(current.value());
@@ -1212,7 +1240,7 @@ final class FastDecoder {
             boolean neg = (Boolean) parts[2];
             WellKnown.setDecimal(sub, new java.math.BigDecimal(neg ? unscaled.negate() : unscaled, scale));
         } else if (WellKnown.isBigFloat(md)) {
-            WellKnown.setBigFloat(sub, WellKnown.parseBigFloat(def));
+            WellKnown.setBigFloat(sub, BigFloats.parse(def, Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT));
         } else {
             throw new PxfException(Position.UNKNOWN,
                     "default values not supported for message type " + md.getFullName() + " (field \"" + fd.getName() + "\")");

@@ -93,11 +93,12 @@ public final class CheckDecode {
     }
 
     // pxf.BigInt → BigInteger, pxf.Decimal → BigDecimal (Pb's big-number
-    // mappings; the Decimal.scale bound is MAX_NUMERIC_LITERAL_DIGITS).
-    // pxf.BigFloat has no Pb mapping and is skipped as an unknown field.
+    // mappings; the Decimal.scale bound is MAX_NUMERIC_LITERAL_DIGITS),
+    // pxf.BigFloat → BigFloat (the exponent bound is MAX_BIG_FLOAT_EXPONENT).
     public static final class BigNumHolder {
         @ProtoField(1) public java.math.BigInteger bigInt;
         @ProtoField(2) public java.math.BigDecimal decimal;
+        @ProtoField(3) public org.protowire.pb.BigFloat bigFloat;
         public BigNumHolder() {}
     }
 
@@ -239,7 +240,8 @@ public final class CheckDecode {
                 .withMaxMessageSize(limits.maxMessageSize())
                 .withMaxNestingDepth(limits.maxNestingDepth())
                 .withMaxNumericLiteralDigits(limits.maxNumericLiteralDigits())
-                .withMaxRepeatedCount(limits.maxRepeatedCount());
+                .withMaxRepeatedCount(limits.maxRepeatedCount())
+                .withMaxBigFloatExponent(limits.maxBigFloatExponent());
         try {
             Pb.unmarshal(data, dest, pbOpts);
         } catch (IOException | RuntimeException e) {

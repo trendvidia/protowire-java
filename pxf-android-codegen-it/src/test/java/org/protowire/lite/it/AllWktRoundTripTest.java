@@ -55,7 +55,7 @@ final class AllWktRoundTripTest {
         "dbl_w = 3.14",
         "big_int = 12345678901234567890123456789",
         "dec = 19.95",
-        "big_float = 0.0001234567"
+        "big_float = 0.0001234567p64"
     );
 
     @Test
@@ -126,9 +126,10 @@ final class AllWktRoundTripTest {
                 .setNegative(false)
                 .build())
             .setBigFloat(BigFloat.newBuilder()
-                .setMantissa(unsignedBytes(java.math.BigInteger.valueOf(1234567)))
-                .setExponent(-10)
-                .setPrec(java.math.BigInteger.valueOf(1234567).bitLength())
+                // From protowire's testdata/bigfloat/generate.py, exact rationals.
+                .setMantissa(unsignedBytes(new java.math.BigInteger("817427d2d4642004", 16)))
+                .setExponent(-76)
+                .setPrec(64)
                 .setNegative(false)
                 .build())
             .build();

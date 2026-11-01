@@ -18,14 +18,22 @@ package org.protowire.pb;
  *     a {@code pxf.Decimal}'s {@code scale}, both signs
  * @param maxRepeatedCount        {@code MaxRepeatedCount}: the element count of
  *     any repeated or map field
+ * @param maxBigFloatExponent     {@code MaxBigFloatExponent}: the magnitude of
+ *     a {@code pxf.BigFloat} value's binary exponent
  */
-public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount) {
+public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount, int maxBigFloatExponent) {
+
+    /** As the five-argument form with the default {@code MaxBigFloatExponent}. */
+    public UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount) {
+        this(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, Pb.MAX_BIG_FLOAT_EXPONENT);
+    }
 
     public UnmarshalOptions {
         requirePositive("MaxMessageSize", maxMessageSize);
         requirePositive("MaxNestingDepth", maxNestingDepth);
         requirePositive("MaxNumericLiteralDigits", maxNumericLiteralDigits);
         requirePositive("MaxRepeatedCount", maxRepeatedCount);
+        requirePositive("MaxBigFloatExponent", maxBigFloatExponent);
     }
 
     private static void requirePositive(String name, int v) {
@@ -33,14 +41,16 @@ public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxN
     }
 
     private static final UnmarshalOptions DEFAULTS = new UnmarshalOptions(
-            Pb.MAX_MESSAGE_SIZE, Pb.MAX_NESTING_DEPTH, Pb.MAX_NUMERIC_LITERAL_DIGITS, Pb.MAX_REPEATED_COUNT);
+            Pb.MAX_MESSAGE_SIZE, Pb.MAX_NESTING_DEPTH, Pb.MAX_NUMERIC_LITERAL_DIGITS, Pb.MAX_REPEATED_COUNT, Pb.MAX_BIG_FLOAT_EXPONENT);
 
     public static UnmarshalOptions defaults() { return DEFAULTS; }
 
-    public UnmarshalOptions withMaxMessageSize(int v)          { return new UnmarshalOptions(v, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount); }
-    public UnmarshalOptions withMaxNestingDepth(int v)         { return new UnmarshalOptions(maxMessageSize, v, maxNumericLiteralDigits, maxRepeatedCount); }
-    public UnmarshalOptions withMaxNumericLiteralDigits(int v) { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, v, maxRepeatedCount); }
-    public UnmarshalOptions withMaxRepeatedCount(int v)        { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v); }
+    public UnmarshalOptions withMaxMessageSize(int v)          { return new UnmarshalOptions(v, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent); }
+    public UnmarshalOptions withMaxNestingDepth(int v)         { return new UnmarshalOptions(maxMessageSize, v, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent); }
+    public UnmarshalOptions withMaxNumericLiteralDigits(int v) { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, v, maxRepeatedCount, maxBigFloatExponent); }
+    public UnmarshalOptions withMaxRepeatedCount(int v)        { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v, maxBigFloatExponent); }
+
+    public UnmarshalOptions withMaxBigFloatExponent(int v)     { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, v); }
 
     /**
      * Sets one limit by its HARDENING.md name. {@code MaxBytesLiteralLength}
@@ -53,6 +63,7 @@ public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxN
             case "MaxNestingDepth" -> withMaxNestingDepth(value);
             case "MaxNumericLiteralDigits" -> withMaxNumericLiteralDigits(value);
             case "MaxRepeatedCount" -> withMaxRepeatedCount(value);
+            case "MaxBigFloatExponent" -> withMaxBigFloatExponent(value);
             case "MaxBytesLiteralLength" -> this;
             default -> throw new IllegalArgumentException("unknown limit \"" + name + "\"");
         };

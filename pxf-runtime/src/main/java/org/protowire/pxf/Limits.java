@@ -21,9 +21,10 @@ public final class Limits {
     public static final int MAX_NESTING_DEPTH = 100;
 
     /**
-     * {@code MaxNumericLiteralDigits}: the most decimal digits a PXF numeric
-     * literal may carry before it reaches a big-number parser (a sign, a
-     * point or an exponent marker does not count). {@code BigInteger} and
+     * {@code MaxNumericLiteralDigits}: the most significant decimal digits
+     * of a PXF numeric literal's mantissa before it reaches a big-number
+     * parser (a sign, a point, leading zeros, an exponent or a precision
+     * suffix do not count, protowire#410). {@code BigInteger} and
      * {@code BigDecimal} construction is superlinear in the digit count and
      * the literal's length is attacker-controlled; the check is one length
      * comparison on the way in. Fixed-width targets need no cap —
@@ -33,6 +34,15 @@ public final class Limits {
      * ({@code org.protowire.pb.Pb} carries its own copy).
      */
     public static final int MAX_NUMERIC_LITERAL_DIGITS = 4096;
+
+    /**
+     * {@code MaxBigFloatExponent}: the magnitude of a {@code pxf.BigFloat}
+     * value's binary exponent (the wire {@code exponent} plus the mantissa's
+     * bit length), from the PB wire or a PXF literal. Rendering a BigFloat in
+     * decimal costs time that grows with the square of that exponent
+     * (protowire#281). The PB codec carries its own copy.
+     */
+    public static final int MAX_BIG_FLOAT_EXPONENT = 16384;
 
     /**
      * {@code MaxMessageSize}: the total input to one decode or parse call,

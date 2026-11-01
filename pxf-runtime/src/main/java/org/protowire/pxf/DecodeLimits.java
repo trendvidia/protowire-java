@@ -23,13 +23,23 @@ package org.protowire.pxf;
  *     decoding
  * @param maxRepeatedCount        {@code MaxRepeatedCount}: the element count
  *     of any repeated or map field
+ * @param maxBigFloatExponent     {@code MaxBigFloatExponent}: the magnitude of
+ *     a {@code pxf.BigFloat} value's binary exponent
  */
 public record DecodeLimits(
         int maxMessageSize,
         int maxNestingDepth,
         int maxNumericLiteralDigits,
         int maxBytesLiteralLength,
-        int maxRepeatedCount) {
+        int maxRepeatedCount,
+        int maxBigFloatExponent) {
+
+    /** As the six-argument form with the default {@code MaxBigFloatExponent}. */
+    public DecodeLimits(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits,
+                        int maxBytesLiteralLength, int maxRepeatedCount) {
+        this(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount,
+                Limits.MAX_BIG_FLOAT_EXPONENT);
+    }
 
     public DecodeLimits {
         requirePositive("MaxMessageSize", maxMessageSize);
@@ -37,6 +47,7 @@ public record DecodeLimits(
         requirePositive("MaxNumericLiteralDigits", maxNumericLiteralDigits);
         requirePositive("MaxBytesLiteralLength", maxBytesLiteralLength);
         requirePositive("MaxRepeatedCount", maxRepeatedCount);
+        requirePositive("MaxBigFloatExponent", maxBigFloatExponent);
     }
 
     private static void requirePositive(String name, int v) {
@@ -45,23 +56,25 @@ public record DecodeLimits(
 
     private static final DecodeLimits DEFAULTS = new DecodeLimits(
             Limits.MAX_MESSAGE_SIZE, Limits.MAX_NESTING_DEPTH, Limits.MAX_NUMERIC_LITERAL_DIGITS,
-            Limits.MAX_BYTES_LITERAL_LENGTH, Limits.MAX_REPEATED_COUNT);
+            Limits.MAX_BYTES_LITERAL_LENGTH, Limits.MAX_REPEATED_COUNT, Limits.MAX_BIG_FLOAT_EXPONENT);
 
     /** The cross-port defaults of {@link Limits}. */
     public static DecodeLimits defaults() { return DEFAULTS; }
 
-    public DecodeLimits withMaxMessageSize(int v)          { return new DecodeLimits(v, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount); }
-    public DecodeLimits withMaxNestingDepth(int v)         { return new DecodeLimits(maxMessageSize, v, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount); }
-    public DecodeLimits withMaxNumericLiteralDigits(int v) { return new DecodeLimits(maxMessageSize, maxNestingDepth, v, maxBytesLiteralLength, maxRepeatedCount); }
-    public DecodeLimits withMaxBytesLiteralLength(int v)   { return new DecodeLimits(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v, maxRepeatedCount); }
-    public DecodeLimits withMaxRepeatedCount(int v)        { return new DecodeLimits(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, v); }
+    public DecodeLimits withMaxMessageSize(int v)          { return new DecodeLimits(v, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount, maxBigFloatExponent); }
+    public DecodeLimits withMaxNestingDepth(int v)         { return new DecodeLimits(maxMessageSize, v, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount, maxBigFloatExponent); }
+    public DecodeLimits withMaxNumericLiteralDigits(int v) { return new DecodeLimits(maxMessageSize, maxNestingDepth, v, maxBytesLiteralLength, maxRepeatedCount, maxBigFloatExponent); }
+    public DecodeLimits withMaxBytesLiteralLength(int v)   { return new DecodeLimits(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v, maxRepeatedCount, maxBigFloatExponent); }
+    public DecodeLimits withMaxRepeatedCount(int v)        { return new DecodeLimits(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, v, maxBigFloatExponent); }
+
+    public DecodeLimits withMaxBigFloatExponent(int v)     { return new DecodeLimits(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxBytesLiteralLength, maxRepeatedCount, v); }
 
     /**
      * Sets one limit by its HARDENING.md name — the spelling
      * {@code check-decode --limit NAME=VALUE} takes.
      *
      * @throws IllegalArgumentException for a name that is not one of the
-     *     five, or a value that is not positive
+     *     six, or a value that is not positive
      */
     public DecodeLimits with(String name, int value) {
         return switch (name) {
@@ -70,6 +83,7 @@ public record DecodeLimits(
             case "MaxNumericLiteralDigits" -> withMaxNumericLiteralDigits(value);
             case "MaxBytesLiteralLength" -> withMaxBytesLiteralLength(value);
             case "MaxRepeatedCount" -> withMaxRepeatedCount(value);
+            case "MaxBigFloatExponent" -> withMaxBigFloatExponent(value);
             default -> throw new IllegalArgumentException("unknown limit \"" + name + "\"");
         };
     }

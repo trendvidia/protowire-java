@@ -20,9 +20,9 @@ import java.util.NoSuchElementException;
  * Use it for datasets too large to materialize via {@link Pxf#unmarshal} /
  * {@link Pxf#unmarshalFull}.
  *
- * <p>Per the spec: a streaming API MUST enforce per-row arity and the v1
- * cell-grammar rule on each row as it is consumed (not deferred to end of
- * input), and MUST yield rows in source order. Both invariants fall out
+ * <p>Per the spec: a streaming API MUST enforce per-row arity on each row as
+ * it is consumed (not deferred to end of input), and MUST yield rows in
+ * source order. Both invariants fall out
  * of the implementation here: the row-boundary scanner produces one
  * {@code ( ... )} byte slice at a time, and {@link Parser#parseDatasetRow}
  * decodes it.
@@ -61,6 +61,13 @@ public final class DatasetReader {
     private String type;
     private List<String> columns;
     private List<Ast.Directive> directives;
+    private final UnmarshalOptions opts;
+    /** The row type {@link #columns} last passed {@link BindRow#checkColumnPaths} against. */
+    private com.google.protobuf.Descriptors.Descriptor pathsChecked;
+    /** Document position of {@code pending[0]}, so a row reports where it is in its document. */
+    private int line = 1;
+    private int col = 1;
+    private int offset;
 
     /**
      * Consume any leading directives ({@code @type}, {@code @<name>}, etc.)
@@ -74,7 +81,17 @@ public final class DatasetReader {
      *                                read failure
      */
     public DatasetReader(InputStream src) throws IOException {
+        this(src, UnmarshalOptions.defaults());
+    }
+
+    /**
+     * As {@link #DatasetReader(InputStream)}, binding rows under {@code opts}
+     * in {@link #scan}: a cell holding an Any block that opens with
+     * {@code @type = "..."} needs its type resolver.
+     */
+    public DatasetReader(InputStream src, UnmarshalOptions opts) throws IOException {
         this.src = src;
+        this.opts = opts;
         readHeader();
     }
 
@@ -124,29 +141,76 @@ public final class DatasetReader {
         if (stickyError != null) throw stickyError;
         if (finished) return null;
         for (;;) {
-            int[] rowRange = findNextRow(pending);
-            if (rowRange != null) {
-                int start = rowRange[0];
-                int end = rowRange[1];
-                byte[] rowBytes = sliceBytes(pending, start, end + 1);
-                Ast.DatasetRow row;
-                try {
-                    row = Parser.parseDatasetRow(rowBytes, columns.size());
-                } catch (PxfException e) {
-                    stickyError = e;
-                    throw e;
+            try {
+                int start = skipTrivia(pending);
+                if (start >= 0 && start < pending.length) {
+                    byte ch = pending[start];
+                    if (ch == '(') {
+                        int end = findMatchingParen(pending, start);
+                        if (end >= 0) return takeRow(start, end);
+                    } else if (ch == '@') {
+                        // The row sequence ends at the next directive (draft
+                        // §3.4.4 "Appending"); tail() reads on from it.
+                        consume(start);
+                        finished = true;
+                        return null;
+                    } else {
+                        throw new PxfException(new Position(1, 1, start),
+                                "pxf: expected '(' to start a @dataset row or a directive, got '" + (char) (ch & 0xff) + "'");
+                    }
                 }
-                // Advance pending past the consumed row.
-                pending = sliceBytes(pending, end + 1, pending.length);
-                return row;
-            }
-            // Not found — either need more bytes or the row sequence is over.
-            if (srcEof) {
-                finished = true;
-                return null;
+                if (srcEof) {
+                    if (start >= pending.length) {
+                        consume(start);
+                        finished = true;
+                        return null;
+                    }
+                    // Truncated: the row sequence ends only at end of input
+                    // or at a directive, never inside a construct.
+                    int at = start >= 0 ? start : 0;
+                    throw new PxfException(new Position(1, 1, at), "pxf: truncated @dataset row at end of input");
+                }
+            } catch (PxfException e) {
+                // A scan error carries its offset into pending, a parse error
+                // is already a document position.
+                stickyError = e.position().line() == 1 && e.position().column() == 1
+                        ? new PxfException(positionAt(e.position().offset()), stripPosition(e))
+                        : e;
+                throw stickyError;
             }
             pull(STREAM_PULL_SIZE);
         }
+    }
+
+    private Ast.DatasetRow takeRow(int start, int end) {
+        Position at = positionAt(start);
+        Ast.DatasetRow row = Parser.parseDatasetRow(sliceBytes(pending, start, end + 1), columns.size(), at);
+        consume(end + 1);
+        return row;
+    }
+
+    /** The document position of offset {@code at} in {@code pending}. */
+    private Position positionAt(int at) {
+        int l = line, c = col;
+        for (int i = 0; i < at && i < pending.length; i++) {
+            if (pending[i] == '\n') { l++; c = 1; } else { c++; }
+        }
+        return new Position(l, c, offset + at);
+    }
+
+    /** Drops the first {@code n} bytes of {@code pending}, keeping the position current. */
+    private void consume(int n) {
+        Position p = positionAt(n);
+        line = p.line();
+        col = p.column();
+        offset = p.offset();
+        pending = sliceBytes(pending, n, pending.length);
+    }
+
+    private static String stripPosition(PxfException e) {
+        String prefix = e.position() + ": ";
+        String m = e.getMessage();
+        return m.startsWith(prefix) ? m.substring(prefix.length()) : m;
     }
 
     /**
@@ -160,7 +224,14 @@ public final class DatasetReader {
     public boolean scan(Message.Builder builder) throws IOException {
         Ast.DatasetRow row = next();
         if (row == null) return false;
-        BindRow.bindRow(builder, columns, row);
+        // The column paths depend on the row type and the header, never on
+        // the row, so they are checked once per type.
+        var desc = builder.getDescriptorForType();
+        if (desc != pathsChecked) {
+            BindRow.checkColumnPaths(desc, columns, row.pos());
+            pathsChecked = desc;
+        }
+        BindRow.bind(opts, builder, columns, row);
         return true;
     }
 
@@ -186,7 +257,7 @@ public final class DatasetReader {
                 this.type = tbl.type();
                 this.columns = tbl.columns();
                 this.directives = doc.directives();
-                this.pending = sliceBytes(pending, headerEnd + 1, pending.length);
+                consume(headerEnd + 1);
                 return;
             }
             if (srcEof) {
@@ -314,20 +385,31 @@ public final class DatasetReader {
      * significant byte is not {@code (} (row sequence over).
      */
     static int[] findNextRow(byte[] input) {
-        int i = 0;
-        while (i < input.length) {
-            byte ch = input[i];
-            if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') { i++; continue; }
-            int j = skipStringOrComment(input, i);
-            if (j == NEED_MORE) return null;
-            if (j != i) { i = j; continue; }
-            break;
-        }
-        if (i >= input.length) return null;
+        int i = skipTrivia(input);
+        if (i < 0 || i >= input.length) return null;
         if (input[i] != '(') return null;
         int end = findMatchingParen(input, i);
         if (end < 0) return null;
         return new int[] {i, end};
+    }
+
+    /**
+     * The offset of the first byte past whitespace and comments, or
+     * {@link #NEED_MORE} when a comment runs past the end of {@code input}.
+     * A string is not trivia: it stops the scan.
+     */
+    private static int skipTrivia(byte[] input) {
+        int i = 0;
+        while (i < input.length) {
+            byte ch = input[i];
+            if (ch == ' ' || ch == '\t' || ch == '\r' || ch == '\n') { i++; continue; }
+            if (ch == '"' || ch == 'b') return i;
+            int j = skipStringOrComment(input, i);
+            if (j == NEED_MORE) return NEED_MORE;
+            if (j == i) return i;
+            i = j;
+        }
+        return i;
     }
 
     private static final int NEED_MORE = -1;
@@ -370,7 +452,7 @@ public final class DatasetReader {
             }
             if (b == '"') return j + 1;
             if (b == '\n') {
-                throw new PxfException(Position.UNKNOWN, "pxf: unterminated string literal");
+                throw new PxfException(new Position(1, 1, i), "pxf: unterminated string literal");
             }
             j++;
         }
@@ -392,7 +474,7 @@ public final class DatasetReader {
             byte b = input[j];
             if (b == '"') return j + 1;
             if (b == '\n') {
-                throw new PxfException(Position.UNKNOWN, "pxf: unterminated bytes literal");
+                throw new PxfException(new Position(1, 1, i), "pxf: unterminated bytes literal");
             }
             j++;
         }

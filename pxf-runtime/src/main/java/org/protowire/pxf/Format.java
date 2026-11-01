@@ -113,7 +113,7 @@ public final class Format {
         }
     }
 
-    private static void formatValue(StringBuilder sb, Ast.Value v, int level) {
+    static void formatValue(StringBuilder sb, Ast.Value v, int level) {
         // NullVal has no payload to format — the bound variable would be
         // unused, which CodeQL flags. Java 21 standard pattern matching
         // requires a binding on every `case` label (unnamed `_` is a

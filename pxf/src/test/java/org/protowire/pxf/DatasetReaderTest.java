@@ -149,14 +149,14 @@ class DatasetReaderTest {
     }
 
     @Test
-    void rejectsListCellMidStream() throws IOException {
+    void yieldsAListCellMidStream() throws IOException {
         var tr = new DatasetReader(s("""
                 @dataset T (a, b)
                 ("ok", 1)
-                ("bad", [1, 2])"""));
+                ("list", [1, 2])"""));
         assertNotNull(tr.next());
-        var ex = assertThrows(PxfException.class, tr::next);
-        assertTrue(ex.getMessage().contains("list values"));
+        assertInstanceOf(Ast.ListVal.class, tr.next().cells().get(1));
+        assertNull(tr.next());
     }
 
     // --- Strings / comments inside cells don't trip row scanner ---
@@ -415,17 +415,14 @@ class DatasetReaderTest {
     }
 
     @Test
-    void bindRowRejectsNonLeafCell() {
-        // Hand-construct a row with a ListVal cell — the parser rejects
-        // these earlier, but a caller that builds a DatasetRow manually
-        // bypasses that check.
+    void aListCellOnAScalarColumnFailsAsItsBodyEntryWould() {
         var b = DynamicMessage.newBuilder(AllTypes.getDescriptor());
         var row = new Ast.DatasetRow(Position.UNKNOWN,
                 java.util.Collections.singletonList(
                         new Ast.ListVal(Position.UNKNOWN,
                                 List.of(new Ast.StringVal(Position.UNKNOWN, "x")))));
-        var ex = assertThrows(IllegalArgumentException.class,
+        var ex = assertThrows(PxfException.class,
                 () -> BindRow.bindRow(b, List.of("string_field"), row));
-        assertTrue(ex.getMessage().contains("scalar-shaped"));
+        assertTrue(ex.getMessage().contains("column string_field: "), ex.getMessage());
     }
 }

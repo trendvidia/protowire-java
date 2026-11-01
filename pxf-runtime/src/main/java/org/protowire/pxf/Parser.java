@@ -45,6 +45,10 @@ public final class Parser {
     }
 
     private Parser(byte[] input, DecodeLimits limits) {
+        this(input, limits, new Position(1, 1, 0));
+    }
+
+    private Parser(byte[] input, DecodeLimits limits, Position start) {
         // HARDENING.md MaxMessageSize: checked before the first byte is
         // lexed (#79). Of the per-call limits, a parse applies
         // MaxMessageSize, MaxNestingDepth and MaxBytesLiteralLength; the
@@ -54,8 +58,24 @@ public final class Parser {
         }
         this.limits = limits;
         this.lex = new Lexer(input, limits.maxBytesLiteralLength());
+        this.lex.startAt(start);
         advance();
     }
+
+    /**
+     * A parser continuing a decoder's token stream, so a {@code @dataset}
+     * cell decoded on the fused path needs no second value grammar. {@code
+     * depth} is the caller's nesting depth.
+     */
+    Parser(Lexer lex, Token current, DecodeLimits limits, int depth) {
+        this.lex = lex;
+        this.current = current;
+        this.limits = limits;
+        this.depth = depth;
+    }
+
+    /** The token after the last one consumed; the caller resumes from it. */
+    Token current() { return current; }
 
     /** Parse a UTF-8 byte buffer of PXF text into an AST. */
     public static Ast.Document parse(byte[] input) {
@@ -79,9 +99,12 @@ public final class Parser {
      *
      * @param input    row bytes including the surrounding parens
      * @param expected expected cell count (column arity)
+     * @param start    where {@code input} begins in its document, so a row's
+     *                 positions and errors are the document's
      */
-    static Ast.DatasetRow parseDatasetRow(byte[] input, int expected) {
-        return new Parser(input).parseDatasetRow(expected);
+    static Ast.DatasetRow parseDatasetRow(byte[] input, int expected, Position start) {
+        Parser p = new Parser(input, DecodeLimits.defaults(), start);
+        return p.parseDatasetRow(expected);
     }
 
     private void advance() {
@@ -242,14 +265,8 @@ public final class Parser {
                 throw new PxfException(current.pos(),
                         "expected column field name, got " + current.kind());
             }
-            String colName = current.value();
-            // v1: column entries are unqualified field names; dotted paths
-            // reserved for a future revision.
-            if (colName.indexOf('.') >= 0) {
-                throw new PxfException(current.pos(),
-                        "@dataset column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
-            }
-            columns.add(colName);
+            checkColumnPath(columns, current.value(), current.pos());
+            columns.add(current.value());
             advance();
             if (current.kind() == TokenKind.COMMA) {
                 advance();
@@ -267,6 +284,29 @@ public final class Parser {
             rows.add(parseDatasetRow(columns.size()));
         }
         return new Ast.DatasetDirective(pp, type, List.copyOf(columns), List.copyOf(rows), leading);
+    }
+
+    /**
+     * The header rules that need no schema (draft §3.4.4, protowire#342): a
+     * path has no empty segment, names no column twice, and no column is a
+     * prefix of another, since a row could then set one sub-message twice.
+     * The rules that need the row type are {@code BindRow}'s, when a row
+     * binds. The lexer keeps {@code .} in an identifier, so a path is one
+     * token here. Mirrors protowire-go's {@code columnPathError}.
+     */
+    static void checkColumnPath(List<String> earlier, String col, Position pos) {
+        if (col.startsWith(".") || col.endsWith(".") || col.contains("..")) {
+            throw new PxfException(pos, "@dataset column \"" + col + "\": a column path has an empty segment (draft §3.4.4)");
+        }
+        for (String prev : earlier) {
+            if (prev.equals(col)) {
+                throw new PxfException(pos, "@dataset column \"" + col + "\" appears twice (draft §3.4.4)");
+            }
+            if (col.startsWith(prev + ".") || prev.startsWith(col + ".")) {
+                throw new PxfException(pos, "@dataset column \"" + col + "\" overlaps column \"" + prev
+                        + "\": a field and a path inside it cannot both be columns (draft §3.4.4)");
+            }
+        }
     }
 
     private Ast.DatasetRow parseDatasetRow(int expected) {
@@ -369,21 +409,14 @@ public final class Parser {
 
     /**
      * Consume one cell of a @dataset row. Returns {@code null} for an empty
-     * cell (no value between commas, or at row start/end). Rejects list
-     * and block values per v1 cell-grammar (draft §3.4.4).
+     * cell (no value between commas, or at row start/end). A cell holds any
+     * value, list and block included (draft §3.4.4, protowire#341).
      */
-    private Ast.Value parseRowCell() {
-        switch (current.kind()) {
-            case COMMA, RPAREN -> {
-                return null;
-            }
-            case LBRACKET -> throw new PxfException(current.pos(),
-                    "@dataset cells cannot contain list values in v1 (draft §3.4.4)");
-            case LBRACE -> throw new PxfException(current.pos(),
-                    "@dataset cells cannot contain block values in v1 (draft §3.4.4)");
-            default -> { /* fall through */ }
-        }
-        return parseValue();
+    Ast.Value parseRowCell() {
+        return switch (current.kind()) {
+            case COMMA, RPAREN -> null;
+            default -> parseValue();
+        };
     }
 
     /**

@@ -566,10 +566,32 @@ public final class Parser {
         }
     }
 
+    /** Parses {@code @type = "<type-url>"}; {@code first} says it opens its block, the only place it may stand. */
+    private Ast.Entry parseTypeEntry(boolean first) {
+        List<Ast.Comment> leading = flushComments();
+        Position pp = current.pos();
+        if (!first) {
+            throw new PxfException(pp,
+                    "@type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 \"Any Blocks\")");
+        }
+        advance(); // consume @type
+        if (current.kind() != TokenKind.EQUALS) {
+            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.kind());
+        }
+        advance();
+        rejectIllegal();
+        if (current.kind() != TokenKind.STRING) {
+            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.kind());
+        }
+        String url = current.value();
+        advance();
+        return new Ast.TypeEntry(pp, url, leading, "");
+    }
+
     private List<Ast.Entry> parseBodyInner() {
         List<Ast.Entry> entries = new ArrayList<>();
         while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
-            entries.add(parseEntry());
+            entries.add(current.kind() == TokenKind.AT_TYPE ? parseTypeEntry(entries.isEmpty()) : parseEntry());
         }
         if (current.kind() != TokenKind.RBRACE) {
             throw new PxfException(current.pos(), "expected '}', got " + current.kind());

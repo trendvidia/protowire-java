@@ -151,8 +151,8 @@ public final class Ast {
             byte[] body,
             List<Comment> leadingComments) {}
 
-    /** A single entry inside a message body: assignment, map entry, or block. */
-    public sealed interface Entry permits Assignment, MapEntry, Block {
+    /** A single entry inside a message body: assignment, map entry, block, or type entry. */
+    public sealed interface Entry permits Assignment, MapEntry, Block, TypeEntry {
         Position pos();
         List<Comment> leadingComments();
         String trailingComment();
@@ -234,6 +234,19 @@ public final class Ast {
             this(pos, name, entries, leadingComments, trailingComment, false);
         }
     }
+
+    /**
+     * The {@code @type = "<type-url>"} entry that may open a block bound to
+     * {@code google.protobuf.Any} (draft -01 "Any Blocks", protowire#354). A
+     * parser has no schema and cannot tell which blocks are Any, so it accepts
+     * this as the first entry of any block, and the decoder rejects it on a
+     * block that is not one.
+     */
+    public record TypeEntry(
+            Position pos,
+            String url,
+            List<Comment> leadingComments,
+            String trailingComment) implements Entry {}
 
     /** Right-hand-side value. */
     public sealed interface Value permits StringVal, IntVal, FloatVal, BoolVal, BytesVal, NullVal,

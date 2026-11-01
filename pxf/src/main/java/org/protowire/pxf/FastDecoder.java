@@ -569,6 +569,15 @@ final class FastDecoder {
         KeyedElem ke = keyedElem;
         keyedElem = null;
 
+        // A block bound to google.protobuf.Any may open with a type entry
+        // (draft -01 "Any Blocks", protowire#354), wherever a body is decoded:
+        // a singular field in either spelling, a list element, a map value.
+        // Without one, the block is the Any's own fields.
+        if (inBlock && current.kind() == TokenKind.AT_TYPE && WellKnown.isAny(desc)) {
+            decodeAnyBody(b);
+            return;
+        }
+
         while (true) {
             if (inBlock && current.kind() == TokenKind.RBRACE) { advance(); return; }
             if (current.kind() == TokenKind.EOF) {
@@ -576,6 +585,7 @@ final class FastDecoder {
                 return;
             }
             Position pos = current.pos();
+            if (current.kind() == TokenKind.AT_TYPE) throw new PxfException(pos, TYPE_ENTRY_MISPLACED);
             if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
                 throw new PxfException(pos, "expected identifier, string, or integer, got " + current.kind() + " (\"" + current.value() + "\")");
             }
@@ -662,10 +672,6 @@ final class FastDecoder {
                     bound = bindOnce(fd, bound, pos);
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
 
-                    if (WellKnown.isAny(fd.getMessageType()) && opts.typeResolver() != null && current.kind() == TokenKind.AT_TYPE) {
-                        decodeAnyInner(b, fd);
-                        continue;
-                    }
                     Message.Builder sub = b.newBuilderForField(fd);
                     String saved = pathPrefix;
                     pathPrefix = pathPrefix + fd.getName() + ".";
@@ -796,11 +802,6 @@ final class FastDecoder {
             advance();
             return;
         }
-        if (WellKnown.isAny(md) && opts.typeResolver() != null && current.kind() == TokenKind.LBRACE) {
-            advance(); // consume {
-            decodeAnyInner(b, fd);
-            return;
-        }
         if (current.kind() != TokenKind.LBRACE) {
             throw new PxfException(current.pos(), "expected '{' for message field \"" + fd.getName() + "\"");
         }
@@ -810,33 +811,42 @@ final class FastDecoder {
         b.setField(fd, sub.build());
     }
 
-    private void decodeAnyInner(Message.Builder b, FieldDescriptor fd) {
-        if (current.kind() != TokenKind.AT_TYPE) {
-            throw new PxfException(current.pos(), "Any field requires @type as first entry");
-        }
+    private static final String TYPE_ENTRY_MISPLACED =
+            "@type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 \"Any Blocks\")";
+
+    /**
+     * Decodes an Any block that opens with a type entry; {@code @type} is
+     * current, and the block's {@code }} is consumed before returning. The
+     * rest of the block is a body of the type the URL names, packed into
+     * {@code anyB}'s {@code value}, and the URL is stored verbatim in
+     * {@code type_url}. The body shares the Any's braces, so it costs no
+     * nesting level of its own.
+     */
+    private void decodeAnyBody(Message.Builder anyB) {
         advance();
         if (current.kind() != TokenKind.EQUALS) {
-            throw new PxfException(current.pos(), "expected '=' after @type");
+            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.kind());
         }
         advance();
+        if (current.kind() == TokenKind.ILLEGAL) throw new PxfException(current.pos(), current.value());
         if (current.kind() != TokenKind.STRING) {
-            throw new PxfException(current.pos(), "expected string type URL after @type =");
+            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.kind());
         }
+        Position urlPos = current.pos();
         String typeUrl = current.value();
+        TypeResolver resolver = opts.typeResolver();
+        if (resolver == null) {
+            throw new PxfException(urlPos, "cannot resolve Any type \"" + typeUrl + "\": no TypeResolver (UnmarshalOptions.typeResolver)");
+        }
+        Descriptor innerDesc = resolver.findMessageByUrl(typeUrl);
+        if (innerDesc == null) throw new PxfException(urlPos, "cannot resolve Any type \"" + typeUrl + "\"");
         advance();
-
-        Descriptor innerDesc = opts.typeResolver().findMessageByUrl(typeUrl);
-        if (innerDesc == null) throw new PxfException(current.pos(), "cannot resolve Any type \"" + typeUrl + "\"");
 
         DynamicMessage.Builder inner = DynamicMessage.newBuilder(innerDesc);
-        decodeFields(inner, true);
-        DynamicMessage built = inner.build();
-
-        Message.Builder anyB = b.newBuilderForField(fd);
-        Descriptor anyDesc = fd.getMessageType();
+        decodeFieldsInner(inner, true);
+        Descriptor anyDesc = anyB.getDescriptorForType();
         anyB.setField(anyDesc.findFieldByName("type_url"), typeUrl);
-        anyB.setField(anyDesc.findFieldByName("value"), built.toByteString());
-        b.setField(fd, anyB.build());
+        anyB.setField(anyDesc.findFieldByName("value"), inner.build().toByteString());
     }
 
     private void decodeListInner(Message.Builder b, FieldDescriptor fd) {

@@ -522,8 +522,8 @@ public final class Parser {
         rejectIllegal();
         return switch (current.kind()) {
             case STRING -> { var v = new Ast.StringVal(pp, current.value()); advance(); yield v; }
-            case INT    -> { var v = new Ast.IntVal(pp, current.value());    advance(); yield v; }
-            case FLOAT  -> { var v = new Ast.FloatVal(pp, current.value());  advance(); yield v; }
+            case INT    -> { var v = new Ast.IntVal(pp, current.value(), current.prec());   advance(); yield v; }
+            case FLOAT  -> { var v = new Ast.FloatVal(pp, current.value(), current.prec()); advance(); yield v; }
             case BOOL   -> { var v = new Ast.BoolVal(pp, "true".equals(current.value())); advance(); yield v; }
             case BYTES  -> {
                 byte[] decoded;

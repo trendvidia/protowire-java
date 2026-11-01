@@ -5,6 +5,8 @@ package org.protowire.pxf.android;
 import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
+import org.protowire.pxf.BigFloats;
+import org.protowire.pxf.Limits;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
@@ -457,7 +459,11 @@ public final class LiteWireWriter {
             switch (wkt) {
                 case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
                 case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
-                case PxfMeta.WKT_BIG_FLOAT -> { writeBigFloat(out, num, parseBigDecimal(v, meta, num)); return; }
+                case PxfMeta.WKT_BIG_FLOAT -> {
+                    if (v instanceof Ast.BlockVal) break;
+                    writeBigFloat(out, num, parseBigFloat(v, meta, num));
+                    return;
+                }
                 default -> { /* fall through */ }
             }
 
@@ -813,6 +819,7 @@ public final class LiteWireWriter {
     }
 
     private static void writeScalar(CodedOutputStream out, int num, int kind, Ast.Value v) {
+        rejectPrecision(v);
         try {
             switch (kind) {
                 case K_STRING   -> out.writeString(num, asString(v));
@@ -960,7 +967,32 @@ public final class LiteWireWriter {
     // runtime tier, so a value flowing JVM → wire → Android → wire round-
     // trips byte-for-byte.
 
+    /** Only a {@code pxf.BigFloat} reads a precision suffix (draft -01 § PXF Annotations, protowire#406). */
+    private static void rejectPrecision(Ast.Value v) {
+        String prec = v instanceof Ast.IntVal i ? i.prec() : v instanceof Ast.FloatVal f ? f.prec() : "";
+        if (!prec.isEmpty()) {
+            throw new PxfException(v.pos(), "precision suffix p" + prec + " is allowed only on a pxf.BigFloat");
+        }
+    }
+
+    private static BigFloats.Value parseBigFloat(Ast.Value v, PxfMeta meta, int num) {
+        String raw, prec;
+        if (v instanceof Ast.FloatVal f) { raw = f.raw(); prec = f.prec(); }
+        else if (v instanceof Ast.IntVal i) { raw = i.raw(); prec = i.prec(); }
+        else {
+            throw new IllegalArgumentException(
+                "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
+                " requires a numeric literal; got " + v.getClass().getSimpleName());
+        }
+        try {
+            return BigFloats.parse(raw, prec, Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new PxfException(v.pos(), e.getMessage());
+        }
+    }
+
     private static BigInteger parseBigInteger(Ast.Value v, PxfMeta meta, int num) {
+        rejectPrecision(v);
         if (v instanceof Ast.IntVal i) {
             return new BigInteger(i.raw());
         }
@@ -970,6 +1002,7 @@ public final class LiteWireWriter {
     }
 
     private static BigDecimal parseBigDecimal(Ast.Value v, PxfMeta meta, int num) {
+        rejectPrecision(v);
         if (v instanceof Ast.FloatVal f) return new BigDecimal(f.raw());
         if (v instanceof Ast.IntVal   i) return new BigDecimal(i.raw());
         throw new IllegalArgumentException(
@@ -1033,32 +1066,25 @@ public final class LiteWireWriter {
     /**
      * Encodes a {@code pxf.BigFloat} submessage at field {@code num}:
      * {@code mantissa} (sign-trimmed unsigned big-endian, field 1),
-     * {@code exponent} (int32 base-10 power, field 2 — actually
-     * {@code -BigDecimal.scale()} since the Java port stores BigFloat as a
-     * decimal), {@code prec} (uint32 mantissa bit-length, field 3 —
-     * defaults to {@code 53} when the mantissa is zero, matching the JVM
-     * tier's behavior), and {@code negative} (bool, field 4). The
-     * always-emitted {@code prec} field means {@code BigFloat(0)} encodes
-     * to {@code 18 35} (prec=53), not an empty payload.
+     * {@code exponent} (int32 binary power, field 2), {@code prec} (uint32,
+     * field 3), and {@code negative} (bool, field 4). Default-zero components
+     * omitted, as {@code BigFloats} reads them: see that class for the rule.
      */
-    private static void writeBigFloat(CodedOutputStream out, int num, BigDecimal value) {
+    private static void writeBigFloat(CodedOutputStream out, int num, BigFloats.Value value) {
         ByteArrayOutputStream payloadBuf = new ByteArrayOutputStream();
         CodedOutputStream payloadOut = CodedOutputStream.newInstance(payloadBuf);
         try {
-            BigInteger mantAbs = value.unscaledValue().abs();
-            byte[] mantBytes = mantAbs.signum() == 0 ? new byte[0] : trimSign(mantAbs.toByteArray());
-            int prec = mantAbs.bitLength();
-            if (prec == 0) {
-                prec = 53;
-            }
+            byte[] mantBytes = value.mantissa().signum() == 0 ? new byte[0] : trimSign(value.mantissa().toByteArray());
             if (mantBytes.length > 0) {
                 payloadOut.writeBytes(1, ByteString.copyFrom(mantBytes));
             }
-            if (-value.scale() != 0) {
-                payloadOut.writeInt32(2, -value.scale());
+            if (value.exponent() != 0) {
+                payloadOut.writeInt32(2, value.exponent());
             }
-            payloadOut.writeUInt32(3, prec);
-            if (value.signum() < 0) {
+            if (value.prec() != 0) {
+                payloadOut.writeUInt32(3, value.prec());
+            }
+            if (value.negative()) {
                 payloadOut.writeBool(4, true);
             }
             payloadOut.flush();

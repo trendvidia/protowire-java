@@ -18,7 +18,31 @@ format changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`pxf.BigFloat` is binary, as the proto says** (#104, protowire#393, #406,
+  #410). This port read and wrote `exponent` as a power of ten, so the bytes it
+  wrote for a BigFloat decoded to a different number in every other port, and
+  the two int32 extremes made `Pxf.marshal` throw. **Bytes this port wrote for
+  a BigFloat before this release are not readable as the value they meant**,
+  the same situation as the `Pb` fix in 1.2.0. Text is `1.5p53`: enough digits
+  to recover the value, then the precision. The lite tier shares the code,
+  through the new `BigFloats`.
+
 ### Changed
+
+- **`MaxBigFloatExponent` (16384)** is enforced on a literal, a marshalled
+  value and the PB wire (protowire#281), and is a sixth `--limit` for
+  `check-decode`. `DecodeLimits` and `pb.UnmarshalOptions` gain it, keeping
+  their previous constructors.
+- **`MaxNumericLiteralDigits` counts mantissa digits only** (protowire#410):
+  leading zeros, an exponent and a precision suffix do not count. A
+  `pxf.Decimal` literal's scale is bounded by the same limit, as on the wire.
+- **A number may carry a precision suffix** (`1.5p64`). It is rejected,
+  naming the field, anywhere but a `pxf.BigFloat`. `Token`, `Ast.IntVal` and
+  `Ast.FloatVal` gain `prec`, keeping their previous constructors.
+- `WellKnown.setBigFloat(Builder, BigDecimal)` and `parseBigFloat` are
+  deprecated: a `BigDecimal` has no precision or negative zero to keep.
 
 These narrow what a decoder accepts, so a document that relied on one of
 them now fails. Each is a settled rule of draft -01, and protowire-kotlin
@@ -56,6 +80,8 @@ inherits it.
 
 ### Added
 
+- `Pb` maps `org.protowire.pb.BigFloat` to `pxf.BigFloat`, with the exponent
+  bound checked before the fields are handed over.
 - **The Any block's type entry** (#100, protowire#354): `@type = "<url>"` as
   the first entry of a block bound to `google.protobuf.Any`, on a singular
   field in either spelling, a list element or a map value. `Pxf.parse` takes
@@ -75,7 +101,7 @@ inherits it.
   type are checked when a row binds, so a table with no rows passes them.
 - `BindRow.bindRow` overload and `DatasetReader` constructor taking
   `UnmarshalOptions`, for a cell holding an Any block with a type entry.
-- The `testdata/{any,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
+- The `testdata/{any,bigfloat,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
   run on every build. A `,` or `;` between block entries was already rejected
   (#106), and this now holds that in place. The two editions fixtures in
   `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no

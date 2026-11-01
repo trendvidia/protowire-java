@@ -97,6 +97,14 @@ public final class Pb {
     public static final int MAX_NUMERIC_LITERAL_DIGITS = 4096;
 
     /**
+     * {@code MaxBigFloatExponent}: the magnitude of a {@code pxf.BigFloat}
+     * value's binary exponent, the wire {@code exponent} plus the mantissa's
+     * bit length (protowire#281). Same value as
+     * {@code org.protowire.pxf.Limits.MAX_BIG_FLOAT_EXPONENT}.
+     */
+    public static final int MAX_BIG_FLOAT_EXPONENT = 16384;
+
+    /**
      * HARDENING.md {@code MaxMessageSize}: the total input to one decode
      * call, 64 MiB, checked before the first byte is read (#79).
      */
@@ -350,6 +358,9 @@ public final class Pb {
             if (bd.signum() == 0 && !element) return;
             byte[] msg = marshalBigDecimal(bd);
             out.writeByteArray(num, msg);
+        } else if (type == BigFloat.class) {
+            if (v == null) return;
+            out.writeByteArray(num, marshalBigFloat((BigFloat) v));
         } else if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
             // unsigned variants would land here only if user used custom types — fallback
             long n = ((Number) v).longValue();
@@ -511,6 +522,9 @@ public final class Pb {
         if (type == BigDecimal.class) {
             return unmarshalBigDecimal(in.readByteArray(), opts.maxNumericLiteralDigits());
         }
+        if (type == BigFloat.class) {
+            return unmarshalBigFloat(in.readByteArray(), opts.maxBigFloatExponent());
+        }
         // nested message
         byte[] sub = in.readByteArray();
         return unmarshalNested(sub, type, depth + 1, opts);
@@ -599,6 +613,47 @@ public final class Pb {
         BigInteger unscaled = abs.length == 0 ? BigInteger.ZERO : new BigInteger(1, abs);
         BigDecimal bd = new BigDecimal(unscaled, scale);
         return negative ? bd.negate() : bd;
+    }
+
+    static byte[] marshalBigFloat(BigFloat bf) throws IOException {
+        ByteArrayOutputStream baos = new ByteArrayOutputStream();
+        CodedOutputStream out = CodedOutputStream.newInstance(baos);
+        if (bf.mantissa().length > 0) out.writeByteArray(1, bf.mantissa());
+        if (bf.exponent() != 0) out.writeInt32(2, bf.exponent());
+        if (bf.prec() != 0) out.writeUInt32(3, bf.prec());
+        if (bf.negative()) out.writeBool(4, true);
+        out.flush();
+        return baos.toByteArray();
+    }
+
+    /** Refuses a value past the bound before anything is built from it. A zero mantissa has no binary exponent. */
+    static BigFloat unmarshalBigFloat(byte[] data, int maxExponent) throws IOException {
+        CodedInputStream in = CodedInputStream.newInstance(data);
+        byte[] mantissa = new byte[0];
+        int exponent = 0;
+        int prec = 0;
+        boolean negative = false;
+        while (true) {
+            int tag = in.readTag();
+            if (tag == 0) break;
+            switch (WireFormat.getTagFieldNumber(tag)) {
+                case 1 -> mantissa = in.readByteArray();
+                case 2 -> exponent = (int) in.readRawVarint64();
+                case 3 -> prec = in.readUInt32();
+                case 4 -> negative = in.readBool();
+                default -> in.skipField(tag);
+            }
+        }
+        int first = 0;
+        while (first < mantissa.length && mantissa[first] == 0) first++;
+        if (first < mantissa.length) {
+            int bits = 8 * (mantissa.length - first - 1) + (32 - Integer.numberOfLeadingZeros(mantissa[first] & 0xff));
+            long binary = (long) exponent + bits;
+            if (binary > maxExponent || binary < -maxExponent) {
+                throw new IOException("pxf.BigFloat binary exponent " + binary + " exceeds MaxBigFloatExponent=" + maxExponent);
+            }
+        }
+        return new BigFloat(mantissa, exponent, prec, negative);
     }
 
     private static byte[] stripLeadingZero(byte[] b) {

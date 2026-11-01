@@ -125,8 +125,8 @@ public final class Format {
         }
         switch (v) {
             case Ast.StringVal s   -> sb.append('"').append(escape(s.value())).append('"');
-            case Ast.IntVal i      -> sb.append(i.raw());
-            case Ast.FloatVal f    -> sb.append(f.raw());
+            case Ast.IntVal i      -> sb.append(i.literal());
+            case Ast.FloatVal f    -> sb.append(f.literal());
             case Ast.BoolVal b     -> sb.append(b.value() ? "true" : "false");
             case Ast.BytesVal by   -> sb.append("b\"").append(Base64.getEncoder().encodeToString(by.value())).append('"');
             case Ast.IdentVal id   -> sb.append(id.name());

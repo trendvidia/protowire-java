@@ -18,8 +18,22 @@ format changes.
 
 ## [Unreleased]
 
+### Added
+
+- **Keyed repeated fields on the lite tier** (protowire#323). `LiteWireWriter`
+  decodes the keyed block form, in either spelling and with quoted entry names,
+  and `LiteWireReader` writes it when every key is present, non-empty and
+  distinct, as the descriptor tier does. `PxfMeta` gains `keyFields()`, field
+  number → key field name, with an empty default. Without that table a field
+  binds as plain repeated, so companions must come from a
+  `protoc-gen-pxf-java-meta` that emits `KEY_FIELDS`. Generate them with the
+  current plugin to use the form.
+
 ### Fixed
 
+- **The lite tier refuses a block on a plain repeated field** (protowire#323).
+  `items { id = "a" }` used to add one element; it is now the error the
+  descriptor tier gives, `repeated field "items" must use list syntax`.
 - **`(pxf.default)` and `(pxf.required)` apply in every message body** on
   `unmarshalFull` (#120): an assignment-form field, a list element, a map value,
   a keyed entry and an Any body. Before, only a block-form singular field got

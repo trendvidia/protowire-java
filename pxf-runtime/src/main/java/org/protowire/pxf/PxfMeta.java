@@ -2,6 +2,7 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.pxf;
 
+import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -153,6 +154,22 @@ public interface PxfMeta {
         return Map.of();
     }
 
+    /**
+     * Field numbers of the singular fields that may hold {@code null}
+     * (draft -01 § Booleans, Null, and Identifier Values): explicit presence,
+     * and not proto2 {@code required}. A plain proto3 scalar is out, since it
+     * has no unset state. The codegen plugin decides this from the schema,
+     * which is the only place it can be decided. The default says every
+     * singular field may, because a companion that predates the table, or a
+     * hand-built {@code PxfMeta}, has not said otherwise; a repeated or map
+     * field is refused either way.
+     */
+    default Set<Integer> nullableFields() {
+        Set<Integer> singular = new HashSet<>(fieldNumbers().values());
+        singular.removeAll(repeatedFields());
+        return singular;
+    }
+
     // --- Well-known type kind constants ----------------------------------------
     //
     // Stable integers that the codegen plugin emits in WELL_KNOWN_KINDS tables
@@ -174,4 +191,5 @@ public interface PxfMeta {
     int WKT_BIG_INT      = 12; // pxf.BigInt
     int WKT_DECIMAL      = 13; // pxf.Decimal
     int WKT_BIG_FLOAT    = 14; // pxf.BigFloat
+    int WKT_SECRET       = 15; // pxf.Secret
 }

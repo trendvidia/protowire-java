@@ -10,6 +10,7 @@ import "google/protobuf/timestamp.proto";
 import "google/protobuf/duration.proto";
 import "google/protobuf/wrappers.proto";
 import "pxf/bignum.proto";
+import "pxf/secret.proto";
 
 // Smoke fixture for the full lite codegen chain — every recognized
 // well-known type appears as a field, so the emitted AllWktPxfMeta exercises
@@ -25,4 +26,12 @@ message AllWkt {
   pxf.BigInt big_int = 7;
   pxf.Decimal dec = 8;
   pxf.BigFloat big_float = 9;
+}
+
+// pxf.Secret in each place the literal may stand. Kept apart from AllWkt, which
+// asserts on its whole text.
+message Secrets {
+  pxf.Secret pw = 1;
+  repeated pxf.Secret list = 2;
+  map<string, pxf.Secret> by_name = 3;
 }

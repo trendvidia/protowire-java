@@ -54,7 +54,8 @@ import java.util.Set;
  * handled — both Google's standard set
  * ({@code Timestamp}, {@code Duration}, the {@code *Value} scalar
  * wrappers) and the protowire-specific arbitrary-precision number types
- * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}). WKT
+ * ({@code pxf.BigInt}, {@code pxf.Decimal}, {@code pxf.BigFloat}), and
+ * {@code pxf.Secret}'s string literal. WKT
  * dispatch is driven by {@link PxfMeta#wellKnownKinds()} — the codegen
  * plugin populates that table at build time, and {@link LiteWireReader}
  * uses the same constants for decoder fast paths, so the two directions
@@ -452,11 +453,9 @@ public final class LiteWireWriter {
     }
 
     /**
-     * The part of the null rule (draft -01 § Booleans, Null, and Identifier
-     * Values) this tier's tables can decide: a list or map is not nullable.
-     * The rest needs per-field presence, which {@link PxfMeta} does not carry,
-     * so a plain scalar and a proto2 required field still accept null here
-     * (trendvidia/protowire#477).
+     * The null rule (draft -01 § Booleans, Null, and Identifier Values): a
+     * list or map is not nullable, and neither is a field outside
+     * {@link PxfMeta#nullableFields()}.
      */
     private static void checkNullable(int num, String name, Position pos, PxfMeta meta) {
         if (meta.mapFields().contains(num)) {
@@ -464,6 +463,10 @@ public final class LiteWireWriter {
         }
         if (meta.repeatedFields().contains(num)) {
             throw new PxfException(pos, "null is not allowed on repeated field \"" + name + "\"");
+        }
+        if (!meta.nullableFields().contains(num)) {
+            throw new PxfException(pos, "null is not allowed on field \"" + name
+                + "\": it has no unset state, or it is required");
         }
     }
 
@@ -600,6 +603,11 @@ public final class LiteWireWriter {
                 return;
             }
 
+            if (wkt == PxfMeta.WKT_SECRET && !(v instanceof Ast.BlockVal)) {
+                writeSecretLiteral(out, num, v, meta);
+                return;
+            }
+
             switch (wkt) {
                 case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
                 case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
@@ -627,6 +635,18 @@ public final class LiteWireWriter {
                 "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
         }
         writeScalar(out, num, kind, v);
+    }
+
+    /**
+     * Writes a {@code pxf.Secret}'s string literal: {@code value} alone, at
+     * field 1. Its block form is an ordinary nested message.
+     */
+    private static void writeSecretLiteral(CodedOutputStream out, int num, Ast.Value v, PxfMeta meta) {
+        if (!(v instanceof Ast.StringVal)) {
+            throw new PxfException(v.pos(), "field " + fieldNameFor(meta, num) + " in " + meta.fullName()
+                + " is a pxf.Secret: expected a string literal or '{'");
+        }
+        writeWellKnownValueWrapper(out, num, K_STRING, v);
     }
 
     /**

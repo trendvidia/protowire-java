@@ -20,6 +20,21 @@ format changes.
 
 ### Added
 
+- **The lite tier applies the null rule to scalars** (protowire#477).
+  `PxfMeta.nullableFields()` lists the singular fields that may hold `null`, and
+  `LiteWireWriter` refuses it elsewhere: on a plain `int32`, on a proto2
+  `required` field, and on an editions field with implicit presence. Its default
+  accepts every singular field, so companions from an earlier plugin behave as
+  before. **Text that wrote `null` on such a field now fails to decode** once its
+  companions are regenerated.
+- **The lite tier honours `@required` and `@default`** (protowire#478), which
+  needs only a regenerated companion: the plugin fills the same tables from
+  either spelling.
+- **`pxf.Secret`'s string literal on the lite tier** (protowire#482).
+  `PxfMeta.WKT_SECRET` marks the field; `LiteWireWriter` takes `pw = "x"` for a
+  singular field, a list element or a map value, and `LiteWireReader` writes the
+  literal unless `hint` or `fingerprint` is set. A companion for a Secret field
+  references the constant, so it needs this runtime.
 - **Keyed repeated fields on the lite tier** (protowire#323). `LiteWireWriter`
   decodes the keyed block form, in either spelling and with quoted entry names,
   and `LiteWireReader` writes it when every key is present, non-empty and

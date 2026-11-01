@@ -1,0 +1,21 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// Editions schema for the null-binding fixtures under testdata/nulls/
+// (issue #380; IETF draft -01 § Booleans, Null, and Identifier Values).
+// In an editions file a scalar's presence is its field_presence
+// feature: EXPLICIT, the 2023 default, may hold a null; IMPLICIT may not.
+
+edition = "2023";
+
+package nulls.ed.v1;
+
+// Java options for this port's codegen; the rest of the file is protowire's
+// testdata/nulls/nulls_editions.proto verbatim.
+option java_package = "nulls.ed.v1";
+option java_multiple_files = true;
+
+message Ed {
+  int32 explicit_scalar = 1;
+  int32 implicit_scalar = 2 [features.field_presence = IMPLICIT];
+}

@@ -1,0 +1,43 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// protowire's testdata/annotations/settings_annotated.proto, spelled for stock
+// protoc: `@required` needs a v1.2 compiler, so this file writes out the 1327
+// carrier that compiler lowers it to. Each annotation's name and arguments match
+// the compiler's bytes; only Annotation.location, its source position, is left
+// out. The Carrier* messages declare the part of
+// protowire/schema/v1/descriptor.proto the fixture uses, with its field numbers.
+syntax = "proto3";
+
+package settings.annotated.v1;
+
+option java_package = "settings.annotated.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/descriptor.proto";
+
+message CarrierArg {
+  string string_value = 10;
+  int64  int_value    = 11;
+  bool   bool_value   = 13;
+}
+
+message CarrierAnnotation {
+  string              name = 1;
+  repeated CarrierArg args = 2;
+}
+
+message CarrierList {
+  repeated CarrierAnnotation entries = 1;
+}
+
+extend google.protobuf.FieldOptions {
+  CarrierList carrier = 1327;
+}
+
+message Settings {
+  string name    = 1 [(carrier) = { entries: { name: "protowire.schema.v1.required" } }];
+  int32  retries = 2 [(carrier) = { entries: { name: "protowire.schema.v1.default" args: { int_value: 3 } } }];
+  string region  = 3 [(carrier) = { entries: { name: "protowire.schema.v1.default" args: { string_value: "us-east-1" } } }];
+  bool   verbose = 4 [(carrier) = { entries: { name: "protowire.schema.v1.default" args: { bool_value: true } } }];
+}

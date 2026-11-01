@@ -55,6 +55,7 @@ inherits it.
   fields (`type_url`, `value`), where it used to be an error. The lite tier
   has no resolver and rejects the entry naming that reason.
 - The `testdata/{any,blocks,duplicates,nulls,strings}/` corpora are vendored and
+- The `testdata/{blocks,duplicates,nulls,strings}/` corpora are vendored and
   run on every build. A `,` or `;` between block entries was already rejected
   (#106), and this now holds that in place. The two editions fixtures in
   `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no

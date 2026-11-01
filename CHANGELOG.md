@@ -45,6 +45,12 @@ format changes.
 
 ### Changed
 
+- **A keyed entry's body can't undo its entry name** (#124, protowire#480).
+  Inside a named entry, `null` on the key field, or any binding of another
+  member of the key field's oneof, is now a decode error. Before,
+  `choices { alpha { other = "x" } }` lost the key with no error. The anonymous
+  form and an agreeing `name = "alpha"` stay legal. Only a key that is optional
+  or in a oneof can reach these documents, and `Pxf.marshal` never wrote them.
 - **`MaxBigFloatExponent` (16384)** is enforced on a literal, a marshalled
   value and the PB wire (protowire#281), and is a sixth `--limit` for
   `check-decode`. `DecodeLimits` and `pb.UnmarshalOptions` gain it, keeping

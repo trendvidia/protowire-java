@@ -394,14 +394,38 @@ final class FastDecoder {
      * name. Set by the caller for exactly the next {@code decodeFieldsInner}
      * body, which consumes it so nested submessages do not inherit it.
      */
-    private record KeyedElem(String field, String keyName, String entryName, boolean named) {
+    private record KeyedElem(String field, FieldDescriptor keyFd, String entryName, boolean named) {
+        String keyName() { return keyFd.getName(); }
+
+        /**
+         * Refuses a binding in a named entry's body that would undo the entry
+         * name, which binds the key field (draft -01 §3.13, protowire#480):
+         * {@code null} on the key field, or another member of the key field's
+         * oneof, by value or by {@code null}.
+         */
+        void checkBinding(FieldDescriptor fd, boolean isNull, Position pos) {
+            if (!named) return;
+            if (fd.getName().equals(keyName())) {
+                if (isNull) {
+                    throw new PxfException(pos, "null on key field \"" + keyName() + "\" conflicts with entry name \""
+                            + entryName + "\" in keyed field \"" + field + "\"");
+                }
+                return;
+            }
+            OneofDescriptor oo = fd.getContainingOneof();
+            if (oo != null && !oo.isSynthetic() && oo.equals(keyFd.getContainingOneof())) {
+                throw new PxfException(pos, "field \"" + fd.getName() + "\" shares oneof \"" + oo.getName() + "\" with key field \""
+                        + keyName() + "\", which entry name \"" + entryName + "\" already set in keyed field \"" + field + "\"");
+            }
+        }
+
         void checkExplicitKey(String value, Position pos) {
             if (value.isEmpty()) {
-                throw new PxfException(pos, "explicit empty-string assignment to key field \"" + keyName
+                throw new PxfException(pos, "explicit empty-string assignment to key field \"" + keyName()
                         + "\" of keyed field \"" + field + "\": the empty string is not a valid key");
             }
             if (named && !value.equals(entryName)) {
-                throw new PxfException(pos, "key field \"" + keyName + "\" = \"" + value + "\" conflicts with entry name \""
+                throw new PxfException(pos, "key field \"" + keyName() + "\" = \"" + value + "\" conflicts with entry name \""
                         + entryName + "\" in keyed field \"" + field + "\"");
             }
         }
@@ -463,7 +487,7 @@ final class FastDecoder {
                 checkRepeated(b, fd, "repeated");
                 Message.Builder sub = b.newBuilderForField(fd);
                 sub.setField(keyFd, name);
-                keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), name, true);
+                keyedElem = new KeyedElem(fd.getName(), keyFd, name, true);
                 String segment = trackPresence ? fd.getName() + "[" + b.getRepeatedFieldCount(fd) + "]" : null;
                 // The entry name set the key field: it is present, not absent.
                 if (trackPresence) result.markPresent(pathPrefix + segment + "." + keyFd.getName());
@@ -530,6 +554,7 @@ final class FastDecoder {
                         if (opts.discardUnknown()) { skipValue(); continue; }
                         throw new PxfException(pos, "unknown field \"" + key + "\" in " + desc.getFullName());
                     }
+                    if (ke != null) ke.checkBinding(fd, current.kind() == TokenKind.NULL, pos);
                     setOneofs = checkOneof(fd, setOneofs, pos);
                     bound = bindOnce(fd, bound, pos);
                     if (current.kind() == TokenKind.NULL) {
@@ -589,6 +614,7 @@ final class FastDecoder {
                     if (fd.isMapField()) {
                         throw new PxfException(pos, "map field \"" + key + "\" must use assignment syntax: " + key + " = { ... }");
                     }
+                    if (ke != null) ke.checkBinding(fd, false, pos);
                     setOneofs = checkOneof(fd, setOneofs, pos);
                     bound = bindOnce(fd, bound, pos);
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
@@ -882,7 +908,7 @@ final class FastDecoder {
         // An element of a keyed repeated field in the anonymous list form:
         // its immediate body owes the empty-key rule (draft -01 §3.13).
         FieldDescriptor keyFd = Annotations.keyField(fd);
-        if (keyFd != null) keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), "", false);
+        if (keyFd != null) keyedElem = new KeyedElem(fd.getName(), keyFd, "", false);
         decodeElementBody(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
         return sub.build();
     }

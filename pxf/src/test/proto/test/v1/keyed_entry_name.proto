@@ -1,0 +1,42 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// A keyed block's entry name supplies the element's key field (draft -01
+// §3.13). Mirrors the schema of protowire-go's
+// keyed_entry_name_presence_test.go.
+syntax = "proto3";
+package test.v1;
+
+option java_package = "org.protowire.pxf.testproto";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "pxf/annotations.proto";
+
+message KeyedNameHolder {
+  repeated KeyWithDefault kd = 1 [(pxf.key) = "name"];
+  repeated KeyWithRequired kr = 2 [(pxf.key) = "name"];
+  repeated KeyInOneof ko = 3 [(pxf.key) = "name"];
+  repeated KeyNests kn = 4 [(pxf.key) = "name"];
+  google.protobuf.Any payload = 5;
+}
+
+message KeyWithDefault {
+  string name = 1 [(pxf.default) = "dflt"];
+}
+
+message KeyWithRequired {
+  string name = 1 [(pxf.required) = true];
+}
+
+message KeyInOneof {
+  oneof pick {
+    string name = 1;
+    string other = 2 [(pxf.default) = "other-dflt"];
+  }
+}
+
+message KeyNests {
+  string name = 1;
+  repeated KeyWithDefault inner = 2 [(pxf.key) = "name"];
+}

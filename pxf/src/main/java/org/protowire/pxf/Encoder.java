@@ -143,6 +143,13 @@ final class Encoder {
             buf.append(fd.getName()).append(" = ").append(WellKnown.readBigFloatStr(sub)).append('\n');
             return;
         }
+        if (secretLiteral(sub)) {
+            writeIndent(level);
+            buf.append(fd.getName()).append(" = ");
+            writeSecretLiteral(sub);
+            buf.append('\n');
+            return;
+        }
         if (WellKnown.isAny(md) && opts.typeResolver() != null) {
             if (tryEncodeAny(fd, sub, level)) return;
         }
@@ -155,6 +162,16 @@ final class Encoder {
         pathPrefix = saved;
         writeIndent(level);
         buf.append("}\n");
+    }
+
+    /** Whether {@code m} is a Secret its string literal can hold, which keeps nothing but {@code value}. */
+    private static boolean secretLiteral(Message m) {
+        return WellKnown.isSecret(m.getDescriptorForType()) && !WellKnown.secretHasMetadata(m);
+    }
+
+    private void writeSecretLiteral(Message m) {
+        FieldDescriptor inner = m.getDescriptorForType().findFieldByName("value");
+        writeScalar(inner, m.getField(inner));
     }
 
     private void encodeList(Message msg, FieldDescriptor fd, int level) {
@@ -184,6 +201,7 @@ final class Encoder {
                 } else if (WellKnown.isBigInt(md))  buf.append(WellKnown.readBigInt(sub).toString());
                 else if (WellKnown.isDecimal(md))   buf.append(WellKnown.readDecimalStr(sub));
                 else if (WellKnown.isBigFloat(md))  buf.append(WellKnown.readBigFloatStr(sub));
+                else if (secretLiteral(sub))        writeSecretLiteral(sub);
                 else {
                     buf.append("{\n");
                     encodeMessage(sub, level + 2);
@@ -258,7 +276,12 @@ final class Encoder {
         for (Map.Entry<String, Object[]> kv : sorted.entrySet()) {
             String keyStr = kv.getKey();
             Object v = kv.getValue()[1];
-            if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+            if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && secretLiteral((Message) v)) {
+                writeIndent(level + 1);
+                buf.append(keyStr).append(": ");
+                writeSecretLiteral((Message) v);
+                buf.append('\n');
+            } else if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 writeIndent(level + 1);
                 buf.append(keyStr).append(": {\n");
                 encodeMessage((Message) v, level + 2);

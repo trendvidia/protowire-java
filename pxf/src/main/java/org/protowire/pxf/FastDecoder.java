@@ -722,13 +722,40 @@ final class FastDecoder {
             advance();
             return;
         }
+        if (secretLiteral(md)) {
+            Message.Builder sub = b.newBuilderForField(fd);
+            bindSecretLiteral(sub, fd.getName());
+            b.setField(fd, sub.build());
+            return;
+        }
         if (current.kind() != TokenKind.LBRACE) {
-            throw new PxfException(current.pos(), "expected '{' for message field \"" + fd.getName() + "\"");
+            throw new PxfException(current.pos(), "expected " + bodyForms(md) + " for message field \"" + fd.getName() + "\"");
         }
         advance();
         Message.Builder sub = b.newBuilderForField(fd);
         decodeBody(sub, fd.getName());
         b.setField(fd, sub.build());
+    }
+
+    /** Whether the current token is a {@code pxf.Secret}'s string literal; an illegal one reports the lexer's error. */
+    private boolean secretLiteral(Descriptor md) {
+        return WellKnown.isSecret(md) && (current.kind() == TokenKind.STRING || current.kind() == TokenKind.ILLEGAL);
+    }
+
+    /**
+     * Binds {@code pw = "x"} into the Secret {@code sub}, which sets
+     * {@code value} alone. {@code segment} is the body's path segment, or
+     * {@code null} when presence is off, so the literal reports what the
+     * block {@code pw { value = "x" }} would.
+     */
+    private void bindSecretLiteral(Message.Builder sub, String segment) {
+        FieldDescriptor inner = sub.getDescriptorForType().findFieldByName("value");
+        if (trackPresence) result.markPresent(pathPrefix + segment + "." + inner.getName());
+        sub.setField(inner, consumeScalar(inner));
+    }
+
+    private static String bodyForms(Descriptor md) {
+        return WellKnown.isSecret(md) ? "a string literal or '{'" : "'{'";
     }
 
     /**
@@ -874,8 +901,13 @@ final class FastDecoder {
             advance();
             return sub.build();
         }
+        if (secretLiteral(md)) {
+            Message.Builder sub = parent.newBuilderForField(fd);
+            bindSecretLiteral(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
+            return sub.build();
+        }
         if (current.kind() != TokenKind.LBRACE) {
-            throw new PxfException(current.pos(), "expected '{' for repeated message element");
+            throw new PxfException(current.pos(), "expected " + bodyForms(md) + " for repeated message element");
         }
         advance();
         Message.Builder sub = parent.newBuilderForField(fd);
@@ -930,12 +962,17 @@ final class FastDecoder {
             entry.setField(keyFd, key);
 
             if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                if (current.kind() != TokenKind.LBRACE) {
-                    throw new PxfException(current.pos(), "expected '{' for map message value");
-                }
-                advance();
+                String segment = trackPresence ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null;
                 Message.Builder valB = entry.newBuilderForField(valFd);
-                decodeElementBody(valB, trackPresence ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null);
+                if (secretLiteral(valFd.getMessageType())) {
+                    bindSecretLiteral(valB, segment);
+                } else {
+                    if (current.kind() != TokenKind.LBRACE) {
+                        throw new PxfException(current.pos(), "expected " + bodyForms(valFd.getMessageType()) + " for map message value");
+                    }
+                    advance();
+                    decodeElementBody(valB, segment);
+                }
                 entry.setField(valFd, valB.build());
             } else if (valFd.getJavaType() == FieldDescriptor.JavaType.ENUM) {
                 entry.setField(valFd, consumeEnum(valFd));

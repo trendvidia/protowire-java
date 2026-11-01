@@ -91,9 +91,17 @@ inherits it.
 - **A row's decode error is reported at the row in its document and names the
   column**, on both dataset paths. `DatasetReader` used to report positions
   relative to the row (#102).
+- **`Pxf.marshal` writes a `pxf.Secret` as its string literal** when `hint` and
+  `fingerprint` are empty (#122), and as a block otherwise. Text output changes
+  for those values. It decodes to the same message on this port, on
+  protowire-go, and on any reader that follows `pxf/secret.proto`, but a reader
+  built on an earlier version of this port refuses `pw = "x"`.
 
 ### Added
 
+- **`pxf.Secret` takes its string literal** (#122). `pw = "x"` now decodes in a
+  singular field, a list element, a map value and a `@dataset` cell, as well as
+  `pw { value = "x" }`.
 - `Pb` maps `org.protowire.pb.BigFloat` to `pxf.BigFloat`, with the exponent
   bound checked before the fields are handed over.
 - **The Any block's type entry** (#100, protowire#354): `@type = "<url>"` as

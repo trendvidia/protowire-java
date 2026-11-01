@@ -99,6 +99,18 @@ public final class WellKnown {
         return Duration.ofSeconds(secs, nanos);
     }
 
+    public static boolean isSecret(Descriptor d) { return "pxf.Secret".equals(d.getFullName()); }
+
+    /**
+     * Whether a {@code pxf.Secret} carries a hint or fingerprint, which only
+     * its block form can hold: the string literal sets {@code value} alone.
+     */
+    public static boolean secretHasMetadata(Message m) {
+        Descriptor d = m.getDescriptorForType();
+        return !((String) m.getField(d.findFieldByName("hint"))).isEmpty()
+                || !((String) m.getField(d.findFieldByName("fingerprint"))).isEmpty();
+    }
+
     /**
      * The message types one PXF literal can denote — the set
      * {@code applyMessageDefault} honors and draft -01

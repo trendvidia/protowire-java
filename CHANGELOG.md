@@ -46,6 +46,15 @@ inherits it.
 
 ### Added
 
+- **The Any block's type entry** (#100, protowire#354): `@type = "<url>"` as
+  the first entry of a block bound to `google.protobuf.Any`, on a singular
+  field in either spelling, a list element or a map value. `Pxf.parse` takes
+  it as the first entry of any block, as `Ast.TypeEntry`. **`Ast.Entry` gains
+  a permitted subtype**, so an exhaustive `switch` over it needs a new arm.
+  With a resolver set, an Any block without a type entry is now its own
+  fields (`type_url`, `value`), where it used to be an error. The lite tier
+  has no resolver and rejects the entry naming that reason.
+- The `testdata/{any,blocks,duplicates,nulls,strings}/` corpora are vendored and
 - The `testdata/{blocks,duplicates,nulls,strings}/` corpora are vendored and
   run on every build. A `,` or `;` between block entries was already rejected
   (#106), and this now holds that in place. The two editions fixtures in

@@ -92,6 +92,13 @@ public final class Format {
                     if (!m.trailingComment().isEmpty()) sb.append(' ').append(m.trailingComment());
                     sb.append('\n');
                 }
+                case Ast.TypeEntry t -> {
+                    writeComments(sb, t.leadingComments(), level);
+                    writeIndent(sb, level);
+                    sb.append("@type = \"").append(escape(t.url())).append('"');
+                    if (!t.trailingComment().isEmpty()) sb.append(' ').append(t.trailingComment());
+                    sb.append('\n');
+                }
                 case Ast.Block b -> {
                     writeComments(sb, b.leadingComments(), level);
                     writeIndent(sb, level);

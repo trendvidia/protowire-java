@@ -160,6 +160,7 @@ public final class KeyedCanonicalizer {
                     case Ast.Assignment a -> new Ast.Assignment(a.pos(), a.key(), a.value(), List.copyOf(merged), a.trailingComment(), a.keyQuoted());
                     case Ast.Block bl -> new Ast.Block(bl.pos(), bl.name(), bl.entries(), List.copyOf(merged), bl.trailingComment(), bl.nameQuoted());
                     case Ast.MapEntry me -> new Ast.MapEntry(me.pos(), me.key(), me.value(), List.copyOf(merged), me.trailingComment(), me.keyQuoted());
+                    case Ast.TypeEntry te -> new Ast.TypeEntry(te.pos(), te.url(), List.copyOf(merged), te.trailingComment());
                 };
                 pending.clear();
             }

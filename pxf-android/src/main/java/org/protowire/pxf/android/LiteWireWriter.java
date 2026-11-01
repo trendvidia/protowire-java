@@ -242,6 +242,12 @@ public final class LiteWireWriter {
                 case Ast.MapEntry m -> throw new IllegalArgumentException(
                     "map entry '" + m.key() + "' appears outside a map field block in " +
                     meta.fullName());
+                // Packing the block's body needs the named type's schema,
+                // and this tier has no type resolver. An Any block here is
+                // written with its own fields, type_url and value.
+                case Ast.TypeEntry t -> throw new PxfException(t.pos(),
+                    "@type entry in " + meta.fullName() + ": the lite tier has no type resolver for an Any block; "
+                    + "write type_url and value");
             }
         }
     }

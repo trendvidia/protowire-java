@@ -27,6 +27,11 @@ format changes.
   the document chose. **`Result.presentFields` changes**: a field in such a body
   is now reported at its own path, such as `items[0].id` or `by_key["k"].id`,
   as protowire-go does. It used to be reported at the parent's prefix.
+- **A keyed entry's name counts as the document supplying the key field**
+  (protowire-go#214, draft -01 §3.13). `kd { alpha {} }` keeps `alpha` when the
+  key field has a `(pxf.default)`, a `(pxf.required)` key is satisfied, a default
+  on a oneof sibling of the key stays off, and `Result` reports `kd[0].name` as
+  set. The change for #120 above already does this; it is now pinned by test.
 - **`@required` and `@default` are honoured** (#111). A schema written in the
   annotation form lowers to the 1327 carrier, which this port did not read, so
   it bound without error and without enforcement. Both spellings now give the
@@ -45,6 +50,12 @@ format changes.
 
 ### Changed
 
+- **A keyed entry's body can't undo its entry name** (#124, protowire#480).
+  Inside a named entry, `null` on the key field, or any binding of another
+  member of the key field's oneof, is now a decode error. Before,
+  `choices { alpha { other = "x" } }` lost the key with no error. The anonymous
+  form and an agreeing `name = "alpha"` stay legal. Only a key that is optional
+  or in a oneof can reach these documents, and `Pxf.marshal` never wrote them.
 - **`MaxBigFloatExponent` (16384)** is enforced on a literal, a marshalled
   value and the PB wire (protowire#281), and is a sixth `--limit` for
   `check-decode`. `DecodeLimits` and `pb.UnmarshalOptions` gain it, keeping

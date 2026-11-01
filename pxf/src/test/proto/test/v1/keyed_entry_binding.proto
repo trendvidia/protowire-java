@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// A key field in a oneof with a message-typed sibling, which the spec's
+// testdata/keyed schema doesn't have, and a field outside the oneof whose
+// own field shares the key's name, to show nested bodies aren't checked.
+syntax = "proto3";
+package test.v1.binding;
+
+import "pxf/annotations.proto";
+
+option java_multiple_files = false;
+option java_outer_classname = "KeyedEntryBinding";
+
+message Inner {
+  optional string name = 1;
+}
+
+message Slot {
+  oneof pick {
+    string name = 1;
+    Inner inner = 2;
+  }
+  Inner extra = 3;
+}
+
+message Holder {
+  repeated Slot slots = 1 [(pxf.key) = "name"];
+}

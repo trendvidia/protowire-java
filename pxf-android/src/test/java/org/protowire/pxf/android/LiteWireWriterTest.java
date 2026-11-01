@@ -1379,14 +1379,21 @@ final class LiteWireWriterTest {
         rulesReject("m = { a: null }", "null is not allowed as a map value in field \"m\"");
     }
 
-    /**
-     * A documented divergence: the null rule on a plain scalar needs
-     * per-field presence, which {@link PxfMeta} does not carry
-     * (trendvidia/protowire#477), so this tier cannot tell {@code int32} from
-     * {@code optional int32}. This pin fails when it can.
-     */
     @Test
-    void nullOnAScalarIsNotDecidableHere() {
+    void aMetaThatStatesNoPresenceAcceptsNullOnASingularField() {
+        // A companion generated before NULLABLE_FIELDS, or a hand-built meta.
         assertEquals("", hex(LiteWireWriter.encode(Parser.parse("s = null"), rulesMeta())));
+    }
+
+    @Test
+    void nullOutsideNullableFieldsIsRejected() {
+        // Every call but nullableFields() goes to rulesMeta().
+        PxfMeta rules = rulesMeta();
+        PxfMeta meta = (PxfMeta) java.lang.reflect.Proxy.newProxyInstance(
+            PxfMeta.class.getClassLoader(), new Class<?>[] {PxfMeta.class},
+            (proxy, method, args) -> method.getName().equals("nullableFields")
+                ? Set.of() : method.invoke(rules, args));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(Parser.parse("s = null"), meta));
+        assertEquals(true, e.getMessage().contains("null is not allowed on field \"s\""), e.getMessage());
     }
 }

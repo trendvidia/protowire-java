@@ -56,7 +56,8 @@ import java.util.Set;
  * for {@code google.protobuf.Timestamp}, {@link Ast.DurationVal} for
  * {@code Duration}, the unwrapped scalar for {@code *Value} wrappers
  * ({@code StringValue}, {@code Int32Value}, etc.), and bare numeric literals
- * for {@code pxf.BigInt} / {@code Decimal} / {@code BigFloat}. Without
+ * for {@code pxf.BigInt} / {@code Decimal} / {@code BigFloat}, and a string
+ * literal for a {@code pxf.Secret} with no hint or fingerprint. Without
  * {@code wellKnownKinds()} populated (hand-built {@code PxfMeta}
  * implementations that omit the table), these fields fall through to the
  * generic nested-message path and decode as {@link Ast.BlockVal}; that's
@@ -410,6 +411,7 @@ public final class LiteWireReader {
             case PxfMeta.WKT_BIG_INT      -> readBigInt(in);
             case PxfMeta.WKT_DECIMAL      -> readDecimal(in);
             case PxfMeta.WKT_BIG_FLOAT    -> readBigFloat(in);
+            case PxfMeta.WKT_SECRET       -> readSecret(in);
             default -> throw new IllegalStateException("unknown WKT kind " + wkt);
         };
     }
@@ -612,6 +614,41 @@ public final class LiteWireReader {
         return p < 0
                 ? new Ast.FloatVal(Position.UNKNOWN, literal)
                 : new Ast.FloatVal(Position.UNKNOWN, literal.substring(0, p), literal.substring(p + 1));
+    }
+
+    /**
+     * Decodes a {@code pxf.Secret} payload — {@code value}, {@code hint} and
+     * {@code fingerprint}, strings at fields 1 to 3. The string literal can
+     * hold only {@code value}, so a Secret with either of the others comes
+     * back as a block, as in {@code Encoder}.
+     */
+    private static Ast.Value readSecret(CodedInputStream in) throws IOException {
+        String value = "";
+        String hint = "";
+        String fingerprint = "";
+        while (in.getBytesUntilLimit() > 0) {
+            int tag = in.readTag();
+            switch (WireFormat.getTagFieldNumber(tag)) {
+                case 1  -> value = in.readStringRequireUtf8();
+                case 2  -> hint = in.readStringRequireUtf8();
+                case 3  -> fingerprint = in.readStringRequireUtf8();
+                default -> in.skipField(tag);
+            }
+        }
+        if (hint.isEmpty() && fingerprint.isEmpty()) {
+            return new Ast.StringVal(Position.UNKNOWN, value);
+        }
+        List<Ast.Entry> entries = new ArrayList<>(3);
+        addSecretField(entries, "value", value);
+        addSecretField(entries, "hint", hint);
+        addSecretField(entries, "fingerprint", fingerprint);
+        return new Ast.BlockVal(Position.UNKNOWN, entries);
+    }
+
+    private static void addSecretField(List<Ast.Entry> entries, String name, String text) {
+        if (!text.isEmpty()) {
+            entries.add(new Ast.Assignment(Position.UNKNOWN, name, new Ast.StringVal(Position.UNKNOWN, text), List.of(), ""));
+        }
     }
 
     /** Treats raw bytes as an unsigned big-endian magnitude. */

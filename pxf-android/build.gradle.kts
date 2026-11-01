@@ -14,6 +14,17 @@ plugins {
 // descriptor-typed import sneaks into a source file, the test task fails to
 // compile. That's the contract enforcement.
 
+// The keyed conformance fixtures are shared with :pxf, which vendors them from
+// the spec repo's testdata/keyed/, so both tiers read the same files.
+sourceSets {
+    test {
+        resources {
+            srcDir("../pxf/src/test/resources")
+            include("keyed/**")
+        }
+    }
+}
+
 dependencies {
     api(project(":pxf-runtime"))
     api("com.google.protobuf:protobuf-javalite:4.36.2")

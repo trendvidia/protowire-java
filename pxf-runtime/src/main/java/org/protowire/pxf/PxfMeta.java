@@ -140,6 +140,19 @@ public interface PxfMeta {
         return Map.of();
     }
 
+    /**
+     * Field number → key field name, for keyed repeated fields: those
+     * carrying {@code (pxf.key)} (draft -01 §3.13). The wire shape is a plain
+     * {@code repeated} message, so the runtime cannot tell one apart without
+     * this table. The codegen plugin refuses a misplaced {@code (pxf.key)},
+     * so each name is a singular string field of the element message. Default
+     * empty; a {@code PxfMeta} that omits it binds every repeated message
+     * field as plain.
+     */
+    default Map<Integer, String> keyFields() {
+        return Map.of();
+    }
+
     // --- Well-known type kind constants ----------------------------------------
     //
     // Stable integers that the codegen plugin emits in WELL_KNOWN_KINDS tables

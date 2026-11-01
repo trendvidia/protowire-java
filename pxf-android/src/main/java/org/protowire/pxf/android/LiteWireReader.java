@@ -25,6 +25,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -45,7 +46,9 @@ import java.util.Set;
  * translated back to identifier names via the registry's {@link PxfEnum};
  * bare integers fall through if no enum metadata is registered), and
  * {@code map<K, V>} fields (each wire entry becomes an {@link Ast.MapEntry}
- * inside a {@link Ast.Block}).
+ * inside a {@link Ast.Block}). A field in {@link PxfMeta#keyFields()} comes
+ * back in the keyed block form of draft -01 §3.13 whenever every element's key
+ * is present, non-empty and distinct, and as a list otherwise.
  *
  * <p><b>Well-known type fast paths.</b> When {@link PxfMeta#wellKnownKinds()}
  * marks a field as a recognized WKT, the decoder reads the submessage's wire
@@ -225,7 +228,8 @@ public final class LiteWireReader {
             if (singles.containsKey(num)) {
                 out.add(new Ast.Assignment(Position.UNKNOWN, name, singles.get(num), List.of(), ""));
             } else if (repeatedAcc.containsKey(num)) {
-                out.add(new Ast.Assignment(Position.UNKNOWN, name,
+                Ast.Block keyed = keyedBlock(name, repeatedAcc.get(num), meta.keyFields().get(num));
+                out.add(keyed != null ? keyed : new Ast.Assignment(Position.UNKNOWN, name,
                     new Ast.ListVal(Position.UNKNOWN, repeatedAcc.get(num)), List.of(), ""));
             } else if (mapAcc.containsKey(num)) {
                 List<Ast.MapEntry> entries = mapAcc.get(num);
@@ -235,6 +239,41 @@ public final class LiteWireReader {
             }
         }
         return out;
+    }
+
+    /**
+     * The keyed block form of a repeated field (draft -01 §3.13), or null when
+     * the field is not keyed or the list has no such form: an element with an
+     * absent, empty or duplicate key can only be written anonymously. One named
+     * block per element, in list order, with the key carried by the name.
+     * Mirrors {@code Encoder.encodeList}.
+     */
+    private static Ast.Block keyedBlock(String field, List<Ast.Value> elements, String keyName) {
+        if (keyName == null) {
+            return null;
+        }
+        Set<String> seen = new HashSet<>();
+        List<Ast.Entry> entries = new ArrayList<>(elements.size());
+        for (Ast.Value v : elements) {
+            if (!(v instanceof Ast.BlockVal element)) {
+                return null;
+            }
+            String key = null;
+            List<Ast.Entry> body = new ArrayList<>(element.entries().size());
+            for (Ast.Entry e : element.entries()) {
+                if (e instanceof Ast.Assignment a && a.key().equals(keyName) && a.value() instanceof Ast.StringVal s) {
+                    key = s.value();
+                } else {
+                    body.add(e);
+                }
+            }
+            if (key == null || key.isEmpty() || !seen.add(key)) {
+                return null;
+            }
+            entries.add(new Ast.Block(Position.UNKNOWN, key, body, List.of(), "",
+                org.protowire.pxf.Format.needsQuoting(key)));
+        }
+        return new Ast.Block(Position.UNKNOWN, field, entries, List.of(), "");
     }
 
     /** Reads a single value (non-packed, non-map) and returns the Ast.Value. */

@@ -60,6 +60,9 @@ import java.util.Set;
  * uses the same constants for decoder fast paths, so the two directions
  * stay in lockstep.
  *
+ * <p>A field in {@link PxfMeta#keyFields()} also takes the keyed block form
+ * of draft -01 §3.13, with entry names supplying each element's key field.
+ *
  * <p>The PXF {@code null} sentinel ({@code field = null}) marks a field as
  * present for {@code (pxf.required)} validation purposes but emits no wire
  * bytes — the canonical way to "explicitly absent" a wrapper or proto3
@@ -179,8 +182,8 @@ public final class LiteWireWriter {
                     if (a.keyQuoted()) {
                         // Grammar accepts a string at entry-name position
                         // everywhere; the schema layer restricts it to keyed
-                        // repeated fields' blocks (draft -01 §3.13), which
-                        // this tier has no (pxf.key) metadata for yet.
+                        // repeated fields' blocks (draft -01 §3.13), whose
+                        // entries writeKeyedBlock reads.
                         throw new PxfException(a.pos(), "quoted entry name \"" + a.key()
                             + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
                     }
@@ -201,7 +204,13 @@ public final class LiteWireWriter {
                         recordSet(num, oneofOf, setFields, oneofSet);
                         break;
                     }
-                    if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
+                    String keyName = meta.keyFields().get(num);
+                    if (keyName != null && a.value() instanceof Ast.BlockVal kbv) {
+                        writeKeyedBlock(out, num, kbv.entries(), keyName, meta, registry);
+                    } else if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
+                        if (keyName != null) {
+                            checkAnonymousKeys(list, keyName, a.key());
+                        }
                         writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
                     } else if (meta.mapFields().contains(num) && a.value() instanceof Ast.BlockVal mbv) {
                         // PXF accepts both `labels { … }` (bare-block) and
@@ -229,7 +238,10 @@ public final class LiteWireWriter {
                     checkOneofCollision(num, b.name(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, b.name(), b.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
-                    if (meta.mapFields().contains(num)) {
+                    String keyName = meta.keyFields().get(num);
+                    if (keyName != null) {
+                        writeKeyedBlock(out, num, b.entries(), keyName, meta, registry);
+                    } else if (meta.mapFields().contains(num)) {
                         writeMap(out, num, b.entries(), meta, registry,
                             mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
                     } else if (kind == K_MESSAGE) {
@@ -251,6 +263,115 @@ public final class LiteWireWriter {
                     "@type entry in " + meta.fullName() + ": the lite tier has no type resolver for an Any block; "
                     + "write type_url and value");
             }
+        }
+    }
+
+    /**
+     * Writes the block form of a keyed repeated field (draft -01 §3.13): each
+     * entry is one element, in order, and its name supplies the key field.
+     * Duplicate entry names within the block, the empty string as a name, and
+     * a key-field assignment in an entry's body that disagrees with the name
+     * are errors. Mirrors {@code FastDecoder.decodeKeyedBlockBody}.
+     *
+     * <p>The name reaches the element as an ordinary leading key assignment,
+     * so the element's own {@link #encode} treats the key field as set: a
+     * {@code (pxf.default)} on it stays out, a {@code (pxf.required)} on it is
+     * met, and a oneof sibling of it collides.
+     */
+    private static void writeKeyedBlock(
+            CodedOutputStream out,
+            int num,
+            List<Ast.Entry> entries,
+            String keyName,
+            PxfMeta meta,
+            PxfRegistry registry) {
+        String field = fieldNameFor(meta, num);
+        Set<String> seen = new HashSet<>();
+        for (Ast.Entry entry : entries) {
+            Position pos;
+            String name;
+            List<Ast.Entry> body;
+            switch (entry) {
+                case Ast.Block b -> {
+                    pos = b.pos();
+                    name = b.name();
+                    body = b.entries();
+                }
+                case Ast.Assignment a -> {
+                    if (!(a.value() instanceof Ast.BlockVal bv)) {
+                        throw new PxfException(a.value().pos(), "keyed entry \"" + a.key() + "\" of field \"" + field
+                            + "\" must have a block value ('{ ... }'): the element type is a message");
+                    }
+                    pos = a.pos();
+                    name = a.key();
+                    body = bv.entries();
+                }
+                case Ast.MapEntry m -> throw new PxfException(m.pos(),
+                    "expected '{' or '=' after entry name \"" + m.key() + "\" in keyed field \"" + field + "\"");
+                case Ast.TypeEntry t -> throw new PxfException(t.pos(),
+                    "expected entry name (identifier or string) in keyed field \"" + field + "\"");
+            }
+            if (name.isEmpty()) {
+                throw new PxfException(pos, "empty entry name in keyed field \"" + field
+                    + "\": the empty string is not a valid key");
+            }
+            if (!seen.add(name)) {
+                throw new PxfException(pos, "duplicate key \"" + name + "\" in keyed field \"" + field + "\"");
+            }
+            boolean keySpelled = false;
+            for (Ast.Entry e : body) {
+                if (e instanceof Ast.Assignment a && !a.keyQuoted() && a.key().equals(keyName)) {
+                    keySpelled = true;
+                    checkNamedKey(a, keyName, name, field);
+                }
+            }
+            List<Ast.Entry> element = body;
+            if (!keySpelled) {
+                element = new ArrayList<>(body.size() + 1);
+                element.add(new Ast.Assignment(pos, keyName, new Ast.StringVal(pos, name), List.of(), ""));
+                element.addAll(body);
+            }
+            writeNestedMessage(out, num, element, meta, registry);
+        }
+    }
+
+    /** A key-field assignment in a named entry's body must agree with the name. */
+    private static void checkNamedKey(Ast.Assignment a, String keyName, String entryName, String field) {
+        if (a.value() instanceof Ast.NullVal) {
+            throw new PxfException(a.pos(), "null on key field \"" + keyName + "\" conflicts with entry name \""
+                + entryName + "\" in keyed field \"" + field + "\"");
+        }
+        if (a.value() instanceof Ast.StringVal s) {
+            checkKeyNotEmpty(s, keyName, field);
+            if (!s.value().equals(entryName)) {
+                throw new PxfException(s.pos(), "key field \"" + keyName + "\" = \"" + s.value()
+                    + "\" conflicts with entry name \"" + entryName + "\" in keyed field \"" + field + "\"");
+            }
+        }
+    }
+
+    /**
+     * The anonymous list form of a keyed field stays legal, duplicates
+     * included, but an element may not spell its key as the empty string.
+     */
+    private static void checkAnonymousKeys(Ast.ListVal list, String keyName, String field) {
+        for (Ast.Value v : list.elements()) {
+            if (!(v instanceof Ast.BlockVal bv)) {
+                continue;
+            }
+            for (Ast.Entry e : bv.entries()) {
+                if (e instanceof Ast.Assignment a && !a.keyQuoted() && a.key().equals(keyName)
+                        && a.value() instanceof Ast.StringVal s) {
+                    checkKeyNotEmpty(s, keyName, field);
+                }
+            }
+        }
+    }
+
+    private static void checkKeyNotEmpty(Ast.StringVal s, String keyName, String field) {
+        if (s.value().isEmpty()) {
+            throw new PxfException(s.pos(), "explicit empty-string assignment to key field \"" + keyName
+                + "\" of keyed field \"" + field + "\": the empty string is not a valid key");
         }
     }
 

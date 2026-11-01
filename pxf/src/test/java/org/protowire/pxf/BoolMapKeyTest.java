@@ -73,13 +73,12 @@ class BoolMapKeyTest {
         }
     }
 
-    // All three admitted spellings of each value land on the same key.
+    // All three admitted spellings of each value land on the same key, so
+    // two of them in one map bind that key twice (protowire#396).
     @Test
     void spellingIsNotPartOfTheValue() {
-        MapKeys m = decode("by_bool = {\n  1: \"a\"\n  \"false\": \"b\"\n  true: \"c\"\n  false: \"d\"\n}");
-        assertEquals(2, m.getByBoolCount());
-        assertEquals("c", m.getByBoolMap().get(true), "the later spelling wins, as any duplicate key does");
-        assertEquals("d", m.getByBoolMap().get(false));
+        reject("by_bool = {\n  1: \"a\"\n  true: \"c\"\n}", "map field \"by_bool\": key true is already set");
+        reject("by_bool = {\n  \"false\": \"b\"\n  0: \"d\"\n}", "map field \"by_bool\": key false is already set");
     }
 
     // The keyword is a key on a map<bool,V> field and nothing else. On a

@@ -18,6 +18,41 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+These narrow what a decoder accepts, so a document that relied on one of
+them now fails. Each is a settled rule of draft -01, and protowire-kotlin
+inherits it.
+
+- **A singular field bound twice in one message body is rejected** (#103,
+  protowire#347 option a). A second scalar used to replace the first, and a
+  second block replaced the first too. `null` counts as a binding. Repeated
+  fields still concatenate.
+- **A map key bound twice in one message body is rejected** (#105,
+  protowire#396 option b), inside one literal or across two bindings of the
+  field. Keys compare as values, so `1` and `"1"` are one key of an
+  integer-keyed map. A `DynamicMessage` decode used to keep both entries.
+  Two bindings with distinct keys still merge.
+- **`null` binds only to a field with explicit presence** (#102,
+  protowire#339, #379, #380). A plain proto3 scalar, a proto2 `required`
+  field, a repeated field and a map field now reject it, in a body and in a
+  `@dataset` cell.
+- **A simple string holds no raw line feed** (#102, protowire#350), through
+  the decoder, `Pxf.parse` and every `@dataset` path.
+- **The lite tier applies the rules its tables can decide**: both
+  bound-twice rules, and `null` on a list, a map or a map value. It cannot
+  yet tell a plain scalar from an `optional` one, so `null` on a scalar stays
+  accepted there (trendvidia/protowire#477).
+
+### Added
+
+- The `testdata/{blocks,duplicates,nulls,strings}/` corpora are vendored and
+  run on every build. A `,` or `;` between block entries was already rejected
+  (#106), and this now holds that in place. The two editions fixtures in
+  `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no
+  field features, so it reports EXPLICIT scalars as having no presence. A test
+  pins that.
+
 ## [1.3.0] — 2026-10-31
 
 ### Fixed

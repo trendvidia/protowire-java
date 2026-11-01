@@ -413,6 +413,7 @@ public final class Parser {
     private Ast.Entry parseEntry(boolean allowMapEntry) {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
+        rejectIllegal();
         // map-key = identifier / string / integer / bool (draft -01
         // §abnf-grammar; the keyword spelling landed in protowire#284): a
         // bare true / false is a key, and like an integer it takes only
@@ -473,8 +474,19 @@ public final class Parser {
         };
     }
 
+    /**
+     * An ILLEGAL token is admitted nowhere in the grammar, so the lexer's own
+     * diagnostic is the useful error. Mirrors protowire-go's illegalErr().
+     */
+    private void rejectIllegal() {
+        if (current.kind() == TokenKind.ILLEGAL) {
+            throw new PxfException(current.pos(), current.value());
+        }
+    }
+
     private Ast.Value parseValue() {
         Position pp = current.pos();
+        rejectIllegal();
         return switch (current.kind()) {
             case STRING -> { var v = new Ast.StringVal(pp, current.value()); advance(); yield v; }
             case INT    -> { var v = new Ast.IntVal(pp, current.value());    advance(); yield v; }

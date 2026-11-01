@@ -145,7 +145,8 @@ public final class LiteWireWriter {
         // checks, and required-field validation.
         Set<Integer> setFields = new HashSet<>();
         Map<String, Integer> oneofSet = new HashMap<>();
-        writeEntries(out, doc.entries(), meta, registry, setFields, oneofSet);
+        Map<Integer, Set<String>> mapKeys = new HashMap<>();
+        writeEntries(out, doc.entries(), meta, registry, setFields, oneofSet, mapKeys);
         applyDefaults(out, meta, registry, setFields, oneofSet);
         validateRequired(meta, setFields);
         try {
@@ -162,7 +163,8 @@ public final class LiteWireWriter {
             PxfMeta meta,
             PxfRegistry registry,
             Set<Integer> setFields,
-            Map<String, Integer> oneofSet) {
+            Map<String, Integer> oneofSet,
+            Map<Integer, Set<String>> mapKeys) {
         Map<String, Integer> fieldNumbers = meta.fieldNumbers();
         Map<Integer, Integer> fieldKinds = meta.fieldKinds();
         Set<Integer> repeated = meta.repeatedFields();
@@ -185,6 +187,7 @@ public final class LiteWireWriter {
                         throw new IllegalArgumentException("unknown field name: " + a.key());
                     }
                     checkOneofCollision(num, a.key(), meta, oneofOf, oneofSet);
+                    checkBoundOnce(num, a.key(), a.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     // PXF `field = null` sentinel: the field counts as present
                     // for (pxf.required) validation per the annotation's
@@ -192,6 +195,7 @@ public final class LiteWireWriter {
                     // canonical way to "explicitly absent" a wrapper or
                     // proto3 optional field in PXF.
                     if (a.value() instanceof Ast.NullVal) {
+                        checkNullable(num, a.key(), a.value().pos(), meta);
                         recordSet(num, oneofOf, setFields, oneofSet);
                         break;
                     }
@@ -204,7 +208,8 @@ public final class LiteWireWriter {
                         // writeEntries above, the assignment form lands here
                         // as Ast.Assignment(BlockVal). Route both through the
                         // map encoder.
-                        writeMap(out, num, mbv.entries(), meta, registry);
+                        writeMap(out, num, mbv.entries(), meta, registry,
+                            mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
                     } else {
                         writeField(out, num, kind, a.value(), meta, registry);
                     }
@@ -220,9 +225,11 @@ public final class LiteWireWriter {
                         throw new IllegalArgumentException("unknown field name: " + b.name());
                     }
                     checkOneofCollision(num, b.name(), meta, oneofOf, oneofSet);
+                    checkBoundOnce(num, b.name(), b.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     if (meta.mapFields().contains(num)) {
-                        writeMap(out, num, b.entries(), meta, registry);
+                        writeMap(out, num, b.entries(), meta, registry,
+                            mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
                     } else if (kind == K_MESSAGE) {
                         writeNestedMessage(out, num, b.entries(), meta, registry);
                     } else {
@@ -270,12 +277,42 @@ public final class LiteWireWriter {
         }
         Integer existing = oneofSet.get(oneof);
         if (existing == null || existing.equals(num)) {
-            return;
+            return; // the same member twice is checkBoundOnce's rejection
         }
         throw new IllegalArgumentException(
             "oneof '" + oneof + "' in " + meta.fullName() +
             " already has '" + fieldNameFor(meta, existing) +
             "' set; cannot also set '" + fieldName + "'");
+    }
+
+    /**
+     * A singular field is bound at most once in one message body (draft -01
+     * § Entries and Keys, protowire#347): the second binding is an error, not
+     * a replacement or a merge. Repeated and map fields are exempt.
+     */
+    private static void checkBoundOnce(int num, String name, Position pos, PxfMeta meta, Set<Integer> setFields) {
+        if (meta.repeatedFields().contains(num) || meta.mapFields().contains(num)) {
+            return;
+        }
+        if (setFields.contains(num)) {
+            throw new PxfException(pos, "field \"" + name + "\" is already set");
+        }
+    }
+
+    /**
+     * The part of the null rule (draft -01 § Booleans, Null, and Identifier
+     * Values) this tier's tables can decide: a list or map is not nullable.
+     * The rest needs per-field presence, which {@link PxfMeta} does not carry,
+     * so a plain scalar and a proto2 required field still accept null here
+     * (trendvidia/protowire#477).
+     */
+    private static void checkNullable(int num, String name, Position pos, PxfMeta meta) {
+        if (meta.mapFields().contains(num)) {
+            throw new PxfException(pos, "null is not allowed on map field \"" + name + "\"");
+        }
+        if (meta.repeatedFields().contains(num)) {
+            throw new PxfException(pos, "null is not allowed on repeated field \"" + name + "\"");
+        }
     }
 
     /** Reverse-lookup of a field name from its number, for diagnostic messages. */
@@ -611,7 +648,8 @@ public final class LiteWireWriter {
             int num,
             List<Ast.Entry> entries,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            Set<String> seenKeys) {
         PxfMeta entryMeta = meta.nestedMetas().get(num);
         if (entryMeta == null) {
             String typeFqn = meta.messageTypes().get(num);
@@ -632,7 +670,17 @@ public final class LiteWireWriter {
                     "expected `key: value` map entry, got " + entry.getClass().getSimpleName() +
                     " in map field of " + meta.fullName());
             }
+            if (me.value() instanceof Ast.NullVal) {
+                throw new PxfException(me.value().pos(), "null is not allowed as a map value in field \""
+                    + fieldNameFor(meta, num) + "\"");
+            }
             Ast.Value keyVal = mapKeyValue(me.key(), me.keyQuoted(), keyKind, me.pos());
+            // Keys compare as values of the key type, so 1 and "1" are one
+            // key of an integer-keyed map (protowire#396).
+            if (!seenKeys.add(canonicalMapKey(keyVal))) {
+                throw new PxfException(me.pos(), "map field \"" + fieldNameFor(meta, num)
+                    + "\": key \"" + me.key() + "\" is already set");
+            }
             Ast.Document entryDoc = Ast.Document.of("",
                 List.of(
                     new Ast.Assignment(me.pos(), "key", keyVal, List.of(), ""),
@@ -676,6 +724,16 @@ public final class LiteWireWriter {
             default -> throw new IllegalArgumentException(
                 "unsupported map key kind: " + keyKind +
                 " (proto restricts map keys to integral, bool, or string types)");
+        };
+    }
+
+    /** The value a bound key denotes, for comparing keys across spellings. */
+    private static String canonicalMapKey(Ast.Value key) {
+        return switch (key) {
+            case Ast.StringVal s -> s.value();
+            case Ast.BoolVal b -> Boolean.toString(b.value());
+            case Ast.IntVal i -> new BigInteger(i.raw()).toString();
+            default -> throw new IllegalArgumentException("unsupported map key " + key);
         };
     }
 

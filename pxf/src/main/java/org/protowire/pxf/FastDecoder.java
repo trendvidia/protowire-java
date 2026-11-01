@@ -464,7 +464,10 @@ final class FastDecoder {
                 Message.Builder sub = b.newBuilderForField(fd);
                 sub.setField(keyFd, name);
                 keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), name, true);
-                decodeFields(sub, true);
+                String segment = trackPresence ? fd.getName() + "[" + b.getRepeatedFieldCount(fd) + "]" : null;
+                // The entry name set the key field: it is present, not absent.
+                if (trackPresence) result.markPresent(pathPrefix + segment + "." + keyFd.getName());
+                decodeElementBody(sub, segment);
                 b.addRepeatedField(fd, sub.build());
             }
         } finally {
@@ -591,10 +594,7 @@ final class FastDecoder {
                     if (trackPresence) result.markPresent(pathPrefix + fd.getName());
 
                     Message.Builder sub = b.newBuilderForField(fd);
-                    String saved = pathPrefix;
-                    pathPrefix = pathPrefix + fd.getName() + ".";
-                    decodeFields(sub, true);
-                    pathPrefix = saved;
+                    decodeBody(sub, fd.getName());
                     b.setField(fd, sub.build());
                 }
                 case COLON -> throw new PxfException(pos, "unexpected ':' in message context, use '=' for field assignments");
@@ -727,8 +727,37 @@ final class FastDecoder {
         }
         advance();
         Message.Builder sub = b.newBuilderForField(fd);
-        decodeFields(sub, true);
+        decodeBody(sub, fd.getName());
         b.setField(fd, sub.build());
+    }
+
+    /**
+     * Decodes a message body under the path segment {@code segment}, so its
+     * fields are recorded where the post-decode pass looks for them. Each
+     * body has its own path: without one, a field in a list element would
+     * mark a parent's field of the same name present. {@link #postDecode}
+     * recurses through singular fields itself; a body held by a list or a
+     * map takes its pass in {@link #decodeElementBody}.
+     */
+    private void decodeBody(Message.Builder sub, String segment) {
+        if (!trackPresence) { decodeFields(sub, true); return; } // nothing reads the path
+        String saved = pathPrefix;
+        pathPrefix = pathPrefix + segment + ".";
+        try {
+            decodeFields(sub, true);
+        } finally {
+            pathPrefix = saved;
+        }
+    }
+
+    /**
+     * {@link #decodeBody} for a list element or map value, which then takes
+     * the post-decode pass: the rules have no exception for elements, and an
+     * element's builder is only in hand here.
+     */
+    private void decodeElementBody(Message.Builder sub, String segment) {
+        decodeBody(sub, segment);
+        if (trackPresence) postDecode(sub, pathPrefix + segment + ".");
     }
 
     private static final String TYPE_ENTRY_MISPLACED =
@@ -764,6 +793,9 @@ final class FastDecoder {
 
         DynamicMessage.Builder inner = DynamicMessage.newBuilder(innerDesc);
         decodeFieldsInner(inner, true);
+        // A singular Any's pass stops at the Any's own fields, so its body
+        // takes the pass here, under the Any's own path.
+        if (trackPresence) postDecode(inner, pathPrefix);
         Descriptor anyDesc = anyB.getDescriptorForType();
         anyB.setField(anyDesc.findFieldByName("type_url"), typeUrl);
         anyB.setField(anyDesc.findFieldByName("value"), inner.build().toByteString());
@@ -851,7 +883,7 @@ final class FastDecoder {
         // its immediate body owes the empty-key rule (draft -01 §3.13).
         FieldDescriptor keyFd = Annotations.keyField(fd);
         if (keyFd != null) keyedElem = new KeyedElem(fd.getName(), keyFd.getName(), "", false);
-        decodeFields(sub, true);
+        decodeElementBody(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
         return sub.build();
     }
 
@@ -903,7 +935,7 @@ final class FastDecoder {
                 }
                 advance();
                 Message.Builder valB = entry.newBuilderForField(valFd);
-                decodeFields(valB, true);
+                decodeElementBody(valB, trackPresence ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null);
                 entry.setField(valFd, valB.build());
             } else if (valFd.getJavaType() == FieldDescriptor.JavaType.ENUM) {
                 entry.setField(valFd, consumeEnum(valFd));
@@ -1116,7 +1148,7 @@ final class FastDecoder {
     private void postDecode(Message.Builder b, String pathPref) {
         Descriptor desc = b.getDescriptorForType();
         for (FieldDescriptor fd : desc.getFields()) {
-            if (nullMaskFd != null && fd.getNumber() == nullMaskFd.getNumber()) continue;
+            if (nullMaskFd != null && pathPref.isEmpty() && fd.getNumber() == nullMaskFd.getNumber()) continue;
             String path = pathPref + fd.getName();
             boolean present = result.presentFieldsView().contains(path);
             if (!present) {

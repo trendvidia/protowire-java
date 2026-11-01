@@ -20,6 +20,13 @@ format changes.
 
 ### Fixed
 
+- **`(pxf.default)` and `(pxf.required)` apply in every message body** on
+  `unmarshalFull` (#120): an assignment-form field, a list element, a map value,
+  a keyed entry and an Any body. Before, only a block-form singular field got
+  them. On `one = { pick_i = 1 }`, a sibling's default destroyed the oneof arm
+  the document chose. **`Result.presentFields` changes**: a field in such a body
+  is now reported at its own path, such as `items[0].id` or `by_key["k"].id`,
+  as protowire-go does. It used to be reported at the parent's prefix.
 - **`@required` and `@default` are honoured** (#111). A schema written in the
   annotation form lowers to the 1327 carrier, which this port did not read, so
   it bound without error and without enforcement. Both spellings now give the

@@ -1,0 +1,50 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// (pxf.default) and (pxf.required) in every message body a document writes,
+// not only under a block-form singular field. Mirrors the schema of
+// protowire-go's element_defaults_test.go.
+syntax = "proto3";
+package test.v1;
+
+option java_package = "org.protowire.pxf.testproto";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/field_mask.proto";
+import "pxf/annotations.proto";
+
+message ElemHolder {
+  repeated ElemItem items = 1;
+  map<string, ElemItem> by_key = 2;
+  repeated ElemItem keyed = 3 [(pxf.key) = "id"];
+  google.protobuf.Any payload = 4;
+  ElemItem one = 5;
+  string a = 6 [(pxf.required) = false];
+  string root_label = 7 [(pxf.default) = "root-dflt"];
+}
+
+message ElemItem {
+  string id = 1;
+  string label = 2 [(pxf.default) = "item-dflt"];
+  ElemDeep deep = 3;
+  oneof pick {
+    string pick_s = 4 [(pxf.default) = "pick-dflt"];
+    int32 pick_i = 5;
+  }
+}
+
+message ElemDeep {
+  int32 n = 1 [(pxf.required) = true];
+}
+
+// A field of a nested message numbered as the root's _null mask.
+message MaskedRoot {
+  MaskedChild child = 1;
+  google.protobuf.FieldMask _null = 2;
+}
+
+message MaskedChild {
+  string first = 1;
+  string second = 2 [(pxf.default) = "second-dflt"];
+}

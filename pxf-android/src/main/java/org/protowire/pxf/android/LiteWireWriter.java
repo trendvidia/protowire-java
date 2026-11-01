@@ -244,6 +244,8 @@ public final class LiteWireWriter {
                     } else if (meta.mapFields().contains(num)) {
                         writeMap(out, num, b.entries(), meta, registry,
                             mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
+                    } else if (repeated.contains(num)) {
+                        throw repeatedBlock(b);
                     } else if (kind == K_MESSAGE) {
                         writeNestedMessage(out, num, b.entries(), meta, registry);
                     } else {
@@ -264,6 +266,27 @@ public final class LiteWireWriter {
                     + "write type_url and value");
             }
         }
+    }
+
+    /**
+     * A block on a repeated field that is not keyed. When it spells the keyed
+     * form, the quoted entry name is the more specific violation, as in
+     * {@code FastDecoder}.
+     */
+    private static PxfException repeatedBlock(Ast.Block b) {
+        if (!b.entries().isEmpty()) {
+            String quoted = switch (b.entries().get(0)) {
+                case Ast.Block e when e.nameQuoted() -> e.name();
+                case Ast.Assignment e when e.keyQuoted() -> e.key();
+                default -> null;
+            };
+            if (quoted != null) {
+                return new PxfException(b.pos(), "quoted entry name \"" + quoted
+                    + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+            }
+        }
+        return new PxfException(b.pos(), "repeated field \"" + b.name() + "\" must use list syntax: "
+            + b.name() + " = [...]");
     }
 
     /**

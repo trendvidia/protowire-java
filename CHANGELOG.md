@@ -31,6 +31,9 @@ format changes.
 
 ### Fixed
 
+- **The lite tier refuses a block on a plain repeated field** (protowire#323).
+  `items { id = "a" }` used to add one element; it is now the error the
+  descriptor tier gives, `repeated field "items" must use list syntax`.
 - **`(pxf.default)` and `(pxf.required)` apply in every message body** on
   `unmarshalFull` (#120): an assignment-form field, a list element, a map value,
   a keyed entry and an Any body. Before, only a block-form singular field got

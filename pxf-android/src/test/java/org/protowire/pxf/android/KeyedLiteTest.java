@@ -282,6 +282,12 @@ final class KeyedLiteTest {
     }
 
     @Test
+    void aPlainRepeatedFieldRefusesTheBlockForm() {
+        assertRejected("items { id = \"a\" }", DOC, "repeated field \"items\" must use list syntax");
+        assertRejected("items { a { } }", DOC, "repeated field \"items\" must use list syntax");
+    }
+
+    @Test
     void aMetaWithoutTheTableBindsAsPlain() {
         Meta plain = new Meta("keyed.v1.Node",
             NODE.numbers, NODE.kinds, NODE.repeated, Map.of());

@@ -183,8 +183,8 @@ final class FastDecoder {
     /**
      * Consume a {@code @dataset <type> ( cols ) ( vals )...} directive and
      * return an {@link Ast.DatasetDirective} record. AT_DATASET is current on
-     * entry. The same parser-tier enforcement applies: row arity, dotted-
-     * column rejection, list/block-cell rejection.
+     * entry. The same parser-tier enforcement applies: row arity and the
+     * column-path rules.
      */
     private Ast.DatasetDirective consumeDatasetDirective() {
         Position pp = current.pos();
@@ -210,12 +210,8 @@ final class FastDecoder {
                 throw new PxfException(current.pos(),
                         "expected column field name, got " + current.kind());
             }
-            String colName = current.value();
-            if (colName.indexOf('.') >= 0) {
-                throw new PxfException(current.pos(),
-                        "@dataset column \"" + colName + "\": dotted column paths are not supported in v1 (draft §3.4.4)");
-            }
-            columns.add(colName);
+            Parser.checkColumnPath(columns, current.value(), current.pos());
+            columns.add(current.value());
             advance();
             if (current.kind() == TokenKind.COMMA) { advance(); continue; }
             if (current.kind() == TokenKind.RPAREN) break;
@@ -328,93 +324,15 @@ final class FastDecoder {
 
     /**
      * Consume one cell of a @dataset row. Returns {@code null} for an empty
-     * cell (no value between commas, or at row start/end). Rejects list
-     * and block values per v1 cell-grammar (draft §3.4.4).
+     * cell. The value grammar is the parser's, run over this decoder's
+     * token stream, so a list or block cell (protowire#341) needs no second
+     * implementation here. Mirrors protowire-go's {@code consumeValue}.
      */
     private Ast.Value consumeRowCell() {
-        switch (current.kind()) {
-            case COMMA, RPAREN -> { return null; }
-            case LBRACKET -> throw new PxfException(current.pos(),
-                    "@dataset cells cannot contain list values in v1 (draft §3.4.4)");
-            case LBRACE -> throw new PxfException(current.pos(),
-                    "@dataset cells cannot contain block values in v1 (draft §3.4.4)");
-            default -> { /* fall through to value consumer */ }
-        }
-        return consumeAstValue();
-    }
-
-    /**
-     * Consume one PXF leaf value from the current token stream and
-     * return the matching {@link Ast.Value} record. Mirrors
-     * {@link Parser#parseValue()} for the subset of values that can
-     * appear in a @dataset cell (list and block values are rejected at
-     * {@link #consumeRowCell} before reaching here).
-     *
-     * <p>Duplicates the switch arms in Parser.parseValue. The
-     * alternative — extracting a static helper from Parser — would
-     * require threading lexer + token state through the call, which is
-     * more code for no measurable win. Same trade the Go port made for
-     * {@code decode_fast.consumeValue}.
-     */
-    private Ast.Value consumeAstValue() {
-        Position pp = current.pos();
-        if (current.kind() == TokenKind.ILLEGAL) {
-            throw new PxfException(pp, current.value());
-        }
-        switch (current.kind()) {
-            case STRING -> {
-                var v = new Ast.StringVal(pp, current.value());
-                advance();
-                return v;
-            }
-            case INT -> {
-                var v = new Ast.IntVal(pp, current.value());
-                advance();
-                return v;
-            }
-            case FLOAT -> {
-                var v = new Ast.FloatVal(pp, current.value());
-                advance();
-                return v;
-            }
-            case BOOL -> {
-                var v = new Ast.BoolVal(pp, "true".equals(current.value()));
-                advance();
-                return v;
-            }
-            case BYTES -> {
-                byte[] decoded;
-                try { decoded = Base64.getDecoder().decode(current.value()); }
-                catch (IllegalArgumentException e) {
-                    decoded = Base64.getDecoder().decode(current.value() + Lexer.padding(current.value()));
-                }
-                var v = new Ast.BytesVal(pp, decoded);
-                advance();
-                return v;
-            }
-            case TIMESTAMP -> {
-                var v = new Ast.TimestampVal(pp, WellKnown.parseRfc3339(current.value()), current.value());
-                advance();
-                return v;
-            }
-            case DURATION -> {
-                var v = new Ast.DurationVal(pp, WellKnown.parseGoDuration(current.value()), current.value());
-                advance();
-                return v;
-            }
-            case NULL -> {
-                var v = new Ast.NullVal(pp);
-                advance();
-                return v;
-            }
-            case IDENT -> {
-                var v = new Ast.IdentVal(pp, current.value());
-                advance();
-                return v;
-            }
-            default -> throw new PxfException(pp,
-                    "expected value, got " + current.kind() + " (\"" + current.value() + "\")");
-        }
+        Parser p = new Parser(lex, current, limits, depth);
+        Ast.Value v = p.parseRowCell();
+        current = p.current();
+        return v;
     }
 
     private void advance() {

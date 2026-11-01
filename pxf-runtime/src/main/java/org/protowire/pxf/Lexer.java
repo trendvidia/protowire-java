@@ -20,6 +20,8 @@ final class Lexer {
     int pos;
     int line = 1;
     int col = 1;
+    /** Added to each token's offset, for a lexer over a slice of a document ({@link #startAt}). */
+    private int baseOffset;
     /**
      * Bounds the decoded length of a {@code b"…"} literal, checked from the
      * literal's length before it is decoded (HARDENING.md
@@ -45,7 +47,14 @@ final class Lexer {
         return ch;
     }
 
-    private Position currentPos() { return new Position(line, col, pos); }
+    private Position currentPos() { return new Position(line, col, baseOffset + pos); }
+
+    /** Reports positions as if the input began at {@code start} in its document. */
+    void startAt(Position start) {
+        this.line = start.line();
+        this.col = start.column();
+        this.baseOffset = start.offset();
+    }
 
     // --- helpers exposed to Parser for the v0.72+v0.73 grammar features. ---
 

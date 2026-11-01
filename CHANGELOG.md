@@ -43,6 +43,15 @@ inherits it.
   bound-twice rules, and `null` on a list, a map or a map value. It cannot
   yet tell a plain scalar from an `optional` one, so `null` on a scalar stays
   accepted there (trendvidia/protowire#477).
+- **`BindRow` applies `(pxf.default)` and `(pxf.required)`**, as its javadoc
+  always said. It used `Pxf.unmarshal`, which skips both.
+- **`DatasetReader` rejects a truncated row and junk between rows** (protowire#336).
+  It used to end the row sequence early and report success, so a cut-off
+  stream read as a shorter valid one. The sequence now ends only at end of
+  input or at a directive.
+- **A row's decode error is reported at the row in its document and names the
+  column**, on both dataset paths. `DatasetReader` used to report positions
+  relative to the row (#102).
 
 ### Added
 
@@ -54,6 +63,18 @@ inherits it.
   With a resolver set, an Any block without a type entry is now its own
   fields (`type_url`, `value`), where it used to be an error. The lite tier
   has no resolver and rejects the entry naming that reason.
+- **`@dataset` value cells** (#99, protowire#341): a cell holds a list or a
+  block, and binds as `column = value` would in a body, on the materializing
+  and the streaming path.
+- **`@dataset` dotted column paths** (#101, protowire#342): `(id, desc.energy,
+  desc.tempo.min_bpm)`. A row's cells group into one block per prefix, so a
+  prefix with no non-empty cell leaves its sub-message absent. A header that
+  repeats a path (`(a, a)` included), names a field beside a path inside it,
+  or has an empty segment is rejected by the parse. The rules that need the row
+  type are checked when a row binds, so a table with no rows passes them.
+- `BindRow.bindRow` overload and `DatasetReader` constructor taking
+  `UnmarshalOptions`, for a cell holding an Any block with a type entry.
+- The `testdata/{any,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
 - The `testdata/{any,blocks,duplicates,nulls,strings}/` corpora are vendored and
 - The `testdata/{blocks,duplicates,nulls,strings}/` corpora are vendored and
   run on every build. A `,` or `;` between block entries was already rejected

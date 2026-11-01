@@ -82,9 +82,10 @@ public final class Ast {
      * document root (draft §3.4.4). Carries many instances of one message
      * type — the protowire-native CSV replacement.
      *
-     * <p>v1 cell-grammar restrictions enforced by the parser: cells exclude
-     * list and block values; column entries are unqualified field names
-     * (no dotted paths); row arity equals column count; documents with any
+     * <p>A cell holds any value, list and block included, and a column may
+     * be a dotted path into a sub-message. Enforced by the parser: a header
+     * names no path twice, no field beside a path inside it, and no empty
+     * segment; row arity equals column count; documents with any
      * {@code @dataset} MUST NOT carry {@code @type} or body field entries.
      *
      * <p>{@code type} MAY be empty when an anonymous {@code @proto}

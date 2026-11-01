@@ -9,6 +9,7 @@ import java.util.List;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -109,32 +110,39 @@ class DatasetParserTest {
     // --- v1 cell-grammar restrictions ---
 
     @Test
-    void listCellRejected() {
-        var ex = assertThrows(PxfException.class, () -> Parser.parse("""
+    void listCellParses() {
+        var doc = Parser.parse("""
                 @dataset T (symbol, tags)
                 ("AAPL", ["tech", "blue-chip"])
-                """));
-        assertTrue(ex.getMessage().contains("list values"));
+                """);
+        assertInstanceOf(Ast.ListVal.class, doc.datasets().get(0).rows().get(0).cells().get(1));
     }
 
     @Test
-    void blockCellRejected() {
-        var ex = assertThrows(PxfException.class, () -> Parser.parse("""
+    void blockCellParses() {
+        var doc = Parser.parse("""
                 @dataset T (symbol, meta)
                 ("AAPL", { exchange = "NASDAQ" })
-                """));
-        assertTrue(ex.getMessage().contains("block values"));
+                """);
+        assertInstanceOf(Ast.BlockVal.class, doc.datasets().get(0).rows().get(0).cells().get(1));
     }
 
     // --- Column entries ---
 
     @Test
-    void dottedColumnRejected() {
-        var ex = assertThrows(PxfException.class, () -> Parser.parse("""
+    void dottedColumnParses() {
+        var doc = Parser.parse("""
                 @dataset T (symbol, meta.exchange)
                 ("AAPL", "NASDAQ")
-                """));
-        assertTrue(ex.getMessage().contains("dotted column paths"));
+                """);
+        assertEquals(List.of("symbol", "meta.exchange"), doc.datasets().get(0).columns());
+    }
+
+    @Test
+    void aBrokenColumnIsReportedAtThatColumn() {
+        var ex = assertThrows(PxfException.class, () -> Parser.parse("@dataset T (a, b, a)\n"));
+        assertTrue(ex.getMessage().contains("appears twice"), ex.getMessage());
+        assertEquals(19, ex.position().column());
     }
 
     @Test

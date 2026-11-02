@@ -20,6 +20,14 @@ format changes.
 
 ### Changed
 
+- **The lite tier writes messages and maps with the same text as the full tier
+  and protowire-go** (#141). A nested message is `ttl {` rather than `ttl = {`,
+  and a map is `labels = {` rather than `labels {`, with its keys sorted as the
+  other tiers sort them. Of a map key repeated on the wire, the last is kept, as
+  in protobuf; both used to be written, which then failed to read back. Every
+  form still decodes and the values are unchanged, but text comparisons and
+  golden files will differ. `Format.escape` is now public.
+
 - **A Duration past about 292 years is written as a block** (#138), in both
   tiers, as a singular field, a list element or a map value:
   `dur { seconds = 9500000000 }`. A duration literal holds 64 bits of

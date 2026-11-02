@@ -9,6 +9,7 @@ import com.google.protobuf.WireFormat;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.BigFloats;
 import org.protowire.pxf.DecodeLimits;
+import org.protowire.pxf.Format;
 import org.protowire.pxf.Limits;
 import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfException;
@@ -29,6 +30,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 
 /**
  * Symmetric to {@link LiteWireWriter}: takes raw protobuf wire bytes plus a
@@ -46,7 +48,7 @@ import java.util.Set;
  * translated back to identifier names via the registry's {@link PxfEnum};
  * bare integers fall through if no enum metadata is registered), and
  * {@code map<K, V>} fields (each wire entry becomes an {@link Ast.MapEntry}
- * inside a {@link Ast.Block}). A field in {@link PxfMeta#keyFields()} comes
+ * inside a {@link Ast.BlockVal}, sorted by key). A field in {@link PxfMeta#keyFields()} comes
  * back in the keyed block form of draft -01 §3.13 whenever every element's key
  * is present, non-empty and distinct, and as a list otherwise.
  *
@@ -227,16 +229,23 @@ public final class LiteWireReader {
             String name = fieldNames.get(num);
             if (name == null) continue;
             if (singles.containsKey(num)) {
-                out.add(new Ast.Assignment(Position.UNKNOWN, name, singles.get(num), List.of(), ""));
+                // A message is written `name {`, as the full tier and Go do.
+                out.add(singles.get(num) instanceof Ast.BlockVal block
+                    ? new Ast.Block(Position.UNKNOWN, name, block.entries(), List.of(), "")
+                    : new Ast.Assignment(Position.UNKNOWN, name, singles.get(num), List.of(), ""));
             } else if (repeatedAcc.containsKey(num)) {
                 Ast.Block keyed = keyedBlock(name, repeatedAcc.get(num), meta.keyFields().get(num));
                 out.add(keyed != null ? keyed : new Ast.Assignment(Position.UNKNOWN, name,
                     new Ast.ListVal(Position.UNKNOWN, repeatedAcc.get(num)), List.of(), ""));
             } else if (mapAcc.containsKey(num)) {
-                List<Ast.MapEntry> entries = mapAcc.get(num);
-                List<Ast.Entry> blockEntries = new ArrayList<>(entries.size());
-                blockEntries.addAll(entries);
-                out.add(new Ast.Block(Position.UNKNOWN, name, blockEntries, List.of(), ""));
+                // Sorted by spelled key and written `name = {`, as the full
+                // tier and Go do. Of a key repeated on the wire, the last wins.
+                TreeMap<String, Ast.Entry> sorted = new TreeMap<>();
+                for (Ast.MapEntry e : mapAcc.get(num)) {
+                    sorted.put(e.keyQuoted() ? '"' + Format.escape(e.key()) + '"' : e.key(), e);
+                }
+                out.add(new Ast.Assignment(Position.UNKNOWN, name,
+                    new Ast.BlockVal(Position.UNKNOWN, new ArrayList<>(sorted.values())), List.of(), ""));
             }
         }
         return out;
@@ -272,7 +281,7 @@ public final class LiteWireReader {
                 return null;
             }
             entries.add(new Ast.Block(Position.UNKNOWN, key, body, List.of(), "",
-                org.protowire.pxf.Format.needsQuoting(key)));
+                Format.needsQuoting(key)));
         }
         return new Ast.Block(Position.UNKNOWN, field, entries, List.of(), "");
     }
@@ -707,10 +716,12 @@ public final class LiteWireReader {
             if (e instanceof Ast.Assignment a) {
                 if ("key".equals(a.key())) {
                     keyStr = mapKeyString(a.value());
-                    keyQuoted = a.value() instanceof Ast.StringVal && org.protowire.pxf.Format.needsQuoting(keyStr);
+                    keyQuoted = a.value() instanceof Ast.StringVal && Format.needsQuoting(keyStr);
                 } else if ("value".equals(a.key())) {
                     valueVal = a.value();
                 }
+            } else if (e instanceof Ast.Block b && "value".equals(b.name())) {
+                valueVal = new Ast.BlockVal(Position.UNKNOWN, b.entries());
             }
         }
         return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "", keyQuoted);

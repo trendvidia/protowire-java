@@ -28,6 +28,7 @@ final class FastDecoder {
     private Token current;
     private final UnmarshalOptions opts;
     private final boolean trackPresence;
+    private final boolean runPostDecode;
     private Result result;
     private Message.Builder rootBuilder;
     private FieldDescriptor nullMaskFd;
@@ -45,6 +46,7 @@ final class FastDecoder {
         this.limits = lim;
         this.opts = opts;
         this.trackPresence = trackPresence;
+        this.runPostDecode = trackPresence && !opts.skipPostDecode();
         if (trackPresence) this.result = new Result();
         advance();
     }
@@ -121,7 +123,7 @@ final class FastDecoder {
         // The root is depth 0 (HARDENING.md § Recursion counts descents from
         // it), so the top-level entries are decoded without an enter().
         decodeFieldsInner(b, false);
-        if (trackPresence) postDecode(b, "");
+        if (runPostDecode) postDecode(b, "");
     }
 
     /**
@@ -810,7 +812,7 @@ final class FastDecoder {
      */
     private void decodeElementBody(Message.Builder sub, String segment) {
         decodeBody(sub, segment);
-        if (trackPresence) postDecode(sub, pathPrefix + segment + ".");
+        if (runPostDecode) postDecode(sub, pathPrefix + segment + ".");
     }
 
     private static final String TYPE_ENTRY_MISPLACED =
@@ -848,7 +850,7 @@ final class FastDecoder {
         decodeFieldsInner(inner, true);
         // A singular Any's pass stops at the Any's own fields, so its body
         // takes the pass here, under the Any's own path.
-        if (trackPresence) postDecode(inner, pathPrefix);
+        if (runPostDecode) postDecode(inner, pathPrefix);
         Descriptor anyDesc = anyB.getDescriptorForType();
         anyB.setField(anyDesc.findFieldByName("type_url"), typeUrl);
         anyB.setField(anyDesc.findFieldByName("value"), inner.build().toByteString());
@@ -1258,7 +1260,7 @@ final class FastDecoder {
         return false;
     }
 
-    private void applyDefault(Message.Builder b, FieldDescriptor fd, String def) {
+    static void applyDefault(Message.Builder b, FieldDescriptor fd, String def) {
         // Draft -01 §annotation-extensions "Default Placement": one literal
         // cannot denote a map or a list, so the placement is meaningless
         // and must be reported as such — never handed to Builder.setField,
@@ -1316,7 +1318,7 @@ final class FastDecoder {
         };
     }
 
-    private void applyMessageDefault(Message.Builder b, FieldDescriptor fd, String def) {
+    private static void applyMessageDefault(Message.Builder b, FieldDescriptor fd, String def) {
         Descriptor md = fd.getMessageType();
         Message.Builder sub = b.newBuilderForField(fd);
         if (WellKnown.isTimestamp(md)) {
@@ -1343,7 +1345,7 @@ final class FastDecoder {
         b.setField(fd, sub.build());
     }
 
-    private Object parseScalarDefault(FieldDescriptor fd, String def) {
+    private static Object parseScalarDefault(FieldDescriptor fd, String def) {
         return switch (fd.getJavaType()) {
             case STRING  -> def;
             case BOOLEAN -> parseBoolDefault(fd, def);

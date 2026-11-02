@@ -20,6 +20,13 @@ format changes.
 
 ### Added
 
+- **`UnmarshalOptions.skipPostDecode`**, matching protowire-go's `SkipPostDecode`
+  (#112). `unmarshalFull` then records presence but does not apply
+  `(pxf.default)` or check `(pxf.required)`, for a caller that applies them
+  itself, for example after merging layered documents. `Pxf.isRequired`,
+  `Pxf.defaultLiteral` and `Pxf.applyDefault` are the helpers for that pass. The
+  record gains a fifth component, so a record pattern naming its components needs
+  updating; the existing constructors stay.
 - **The lite tier applies the null rule to scalars** (protowire#477).
   `PxfMeta.nullableFields()` lists the singular fields that may hold `null`, and
   `LiteWireWriter` refuses it elsewhere: on a plain `int32`, on a proto2

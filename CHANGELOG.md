@@ -91,6 +91,14 @@ format changes.
 
 ### Fixed
 
+- **`Pxf.marshal` no longer writes an Any body that changes the message or can't
+  be read** (#150). With a `TypeResolver`, an Any gets `@type` and a body only if
+  reading that body gives back its `value`, byte for byte, as in protowire-go.
+  Otherwise it stays as `type_url` and `value`. That covers unknown fields at any
+  level, an order a decoder wouldn't reproduce, a Timestamp no literal holds, a
+  `(pxf.default)` or `(pxf.required)` field left unset, and a chain of Anys past
+  `MaxNestingDepth`. Each body is now decoded once while marshalling.
+
 - **The lite tier enforces the HARDENING limits** (protowire#503). A `pxf.Decimal`
   on the wire with a scale past `MaxNumericLiteralDigits` is refused:
   `LiteWireReader` used to try to write out every digit and ran out of memory on a

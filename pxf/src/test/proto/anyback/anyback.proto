@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Schema for AnyBodyReadBackTest, the same messages protowire-go's
+// any_body_readback_test.go uses.
+syntax = "proto3";
+
+package anyback.v1;
+
+option java_package = "org.protowire.pxf.testproto.anyback";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "pxf/annotations.proto";
+
+message Holder {
+  google.protobuf.Any payload = 1;
+  Holder next = 2;
+}
+
+message Leaf {
+  string tag = 1;
+  int32 n = 2;
+}
+
+message Rich {
+  google.protobuf.Timestamp ts = 1;
+  google.protobuf.Int32Value w = 2;
+  Leaf leaf = 3;
+  map<string, int32> m = 4;
+  repeated int32 r = 5;
+  optional int32 o = 6;
+  google.protobuf.Duration d = 7;
+  repeated Leaf leaves = 8;
+}
+
+message Defaulted {
+  string label = 1 [(pxf.default) = "dflt"];
+  int32 n = 2;
+}
+
+message Required {
+  int32 n = 1 [(pxf.required) = true];
+  string s = 2;
+}

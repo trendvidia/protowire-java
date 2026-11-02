@@ -26,6 +26,7 @@ include(
     ":pxf-android",
     ":envelope-android",
     ":pxf-android-codegen-it",
+    ":check-decode-android",
     ":dump-envelope-android",
     ":dump-envelope-pxf-android",
     ":bench-pxf-android",

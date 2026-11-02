@@ -110,43 +110,10 @@ final class Encoder {
     private void encodeMessageField(FieldDescriptor fd, Message sub, int level) {
         Descriptor md = fd.getMessageType();
 
-        if (WellKnown.isTimestamp(md)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.formatRfc3339(WellKnown.readTimestamp(sub))).append('\n');
-            return;
-        }
-        if (WellKnown.isDuration(md)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.formatGoDuration(WellKnown.readDuration(sub))).append('\n');
-            return;
-        }
-        if (WellKnown.isWrapper(md)) {
-            FieldDescriptor inner = md.findFieldByName("value");
+        if (hasLiteral(sub)) {
             writeIndent(level);
             buf.append(fd.getName()).append(" = ");
-            writeScalar(inner, sub.getField(inner));
-            buf.append('\n');
-            return;
-        }
-        if (WellKnown.isBigInt(md)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.readBigInt(sub).toString()).append('\n');
-            return;
-        }
-        if (WellKnown.isDecimal(md)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.readDecimalStr(sub)).append('\n');
-            return;
-        }
-        if (WellKnown.isBigFloat(md)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ").append(WellKnown.readBigFloatStr(sub)).append('\n');
-            return;
-        }
-        if (secretLiteral(sub)) {
-            writeIndent(level);
-            buf.append(fd.getName()).append(" = ");
-            writeSecretLiteral(sub);
+            writeLiteral(sub);
             buf.append('\n');
             return;
         }
@@ -162,6 +129,28 @@ final class Encoder {
         pathPrefix = saved;
         writeIndent(level);
         buf.append("}\n");
+    }
+
+    /** Whether {@code m} is written as a literal, wherever it is bound, rather than as a block. */
+    private static boolean hasLiteral(Message m) {
+        Descriptor md = m.getDescriptorForType();
+        return WellKnown.isTimestamp(md) || WellKnown.isDuration(md) || WellKnown.isWrapper(md)
+                || WellKnown.isBigInt(md) || WellKnown.isDecimal(md) || WellKnown.isBigFloat(md)
+                || secretLiteral(m);
+    }
+
+    /** Writes the literal of a message {@link #hasLiteral} accepts. */
+    private void writeLiteral(Message m) {
+        Descriptor md = m.getDescriptorForType();
+        if (WellKnown.isTimestamp(md))      buf.append(WellKnown.formatRfc3339(WellKnown.readTimestamp(m)));
+        else if (WellKnown.isDuration(md))  buf.append(WellKnown.formatGoDuration(WellKnown.readDuration(m)));
+        else if (WellKnown.isWrapper(md)) {
+            FieldDescriptor inner = md.findFieldByName("value");
+            writeScalar(inner, m.getField(inner));
+        } else if (WellKnown.isBigInt(md))  buf.append(WellKnown.readBigInt(m).toString());
+        else if (WellKnown.isDecimal(md))   buf.append(WellKnown.readDecimalStr(m));
+        else if (WellKnown.isBigFloat(md))  buf.append(WellKnown.readBigFloatStr(m));
+        else                                writeSecretLiteral(m);
     }
 
     /** Whether {@code m} is a Secret its string literal can hold, which keeps nothing but {@code value}. */
@@ -191,18 +180,10 @@ final class Encoder {
             Object elem = msg.getRepeatedField(fd, i);
             if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 Message sub = (Message) elem;
-                Descriptor md = fd.getMessageType();
                 writeIndent(level + 1);
-                if (WellKnown.isTimestamp(md))      buf.append(WellKnown.formatRfc3339(WellKnown.readTimestamp(sub)));
-                else if (WellKnown.isDuration(md))  buf.append(WellKnown.formatGoDuration(WellKnown.readDuration(sub)));
-                else if (WellKnown.isWrapper(md)) {
-                    FieldDescriptor inner = md.findFieldByName("value");
-                    writeScalar(inner, sub.getField(inner));
-                } else if (WellKnown.isBigInt(md))  buf.append(WellKnown.readBigInt(sub).toString());
-                else if (WellKnown.isDecimal(md))   buf.append(WellKnown.readDecimalStr(sub));
-                else if (WellKnown.isBigFloat(md))  buf.append(WellKnown.readBigFloatStr(sub));
-                else if (secretLiteral(sub))        writeSecretLiteral(sub);
-                else {
+                if (hasLiteral(sub)) {
+                    writeLiteral(sub);
+                } else {
                     buf.append("{\n");
                     encodeMessage(sub, level + 2);
                     writeIndent(level + 1);
@@ -276,10 +257,10 @@ final class Encoder {
         for (Map.Entry<String, Object[]> kv : sorted.entrySet()) {
             String keyStr = kv.getKey();
             Object v = kv.getValue()[1];
-            if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && secretLiteral((Message) v)) {
+            if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && hasLiteral((Message) v)) {
                 writeIndent(level + 1);
                 buf.append(keyStr).append(": ");
-                writeSecretLiteral((Message) v);
+                writeLiteral((Message) v);
                 buf.append('\n');
             } else if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 writeIndent(level + 1);

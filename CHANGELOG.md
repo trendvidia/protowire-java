@@ -53,6 +53,11 @@ format changes.
 
 ### Fixed
 
+- **A map value of a well-known type takes its literal** (#126), as a field or
+  list element does: `when: 2026-01-01T00:00:00Z`, for Timestamp, Duration, the
+  wrappers, BigInt, Decimal and BigFloat. The block form still decodes. **The
+  encoder now writes the literal, so text output changes for these maps**, and it
+  matches protowire-go.
 - **An integer outside its field's type is refused** (#126). `int32 x = 5000000000`
   stored 705032704, `uint32 x = -1` stored the bits of -1, and a `uint64` or
   `int64` beyond `long` threw `NumberFormatException`. The draft requires

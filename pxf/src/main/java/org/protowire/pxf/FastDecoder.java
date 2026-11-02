@@ -882,7 +882,13 @@ final class FastDecoder {
         advance();
     }
 
-    private Object consumeListMsg(Message.Builder parent, FieldDescriptor fd) {
+    /**
+     * The value of {@code fd}, a list element or map value, if the current
+     * token is a well-known type's literal. Null otherwise, and then nothing
+     * is consumed. A block is the caller's, so these types take either form.
+     * {@code owner} is the field a precision error names.
+     */
+    private Message wellKnownLiteral(Message.Builder parent, FieldDescriptor fd, FieldDescriptor owner) {
         Descriptor md = fd.getMessageType();
         if (WellKnown.isTimestamp(md) && current.kind() == TokenKind.TIMESTAMP) {
             Instant t = WellKnown.parseRfc3339(current.value());
@@ -905,14 +911,14 @@ final class FastDecoder {
             return sub.build();
         }
         if (WellKnown.isBigInt(md) && current.kind() == TokenKind.INT) {
-            rejectPrecision(fd);
+            rejectPrecision(owner);
             Message.Builder sub = parent.newBuilderForField(fd);
             WellKnown.setBigInt(sub, WellKnown.parseBigInt(current.value(), limits.maxNumericLiteralDigits()));
             advance();
             return sub.build();
         }
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
-            rejectPrecision(fd);
+            rejectPrecision(owner);
             Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
             int scale = (Integer) parts[1];
@@ -929,6 +935,13 @@ final class FastDecoder {
             advance();
             return sub.build();
         }
+        return null;
+    }
+
+    private Object consumeListMsg(Message.Builder parent, FieldDescriptor fd) {
+        Descriptor md = fd.getMessageType();
+        Message literal = wellKnownLiteral(parent, fd, fd);
+        if (literal != null) return literal;
         if (secretLiteral(md)) {
             Message.Builder sub = parent.newBuilderForField(fd);
             bindSecretLiteral(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
@@ -991,17 +1004,22 @@ final class FastDecoder {
 
             if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 String segment = trackPresence ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null;
-                Message.Builder valB = entry.newBuilderForField(valFd);
-                if (secretLiteral(valFd.getMessageType())) {
-                    bindSecretLiteral(valB, segment);
+                Message literal = wellKnownLiteral(entry, valFd, fd);
+                if (literal != null) {
+                    entry.setField(valFd, literal);
                 } else {
-                    if (current.kind() != TokenKind.LBRACE) {
-                        throw new PxfException(current.pos(), "expected " + bodyForms(valFd.getMessageType()) + " for map message value");
+                    Message.Builder valB = entry.newBuilderForField(valFd);
+                    if (secretLiteral(valFd.getMessageType())) {
+                        bindSecretLiteral(valB, segment);
+                    } else {
+                        if (current.kind() != TokenKind.LBRACE) {
+                            throw new PxfException(current.pos(), "expected " + bodyForms(valFd.getMessageType()) + " for map message value");
+                        }
+                        advance();
+                        decodeElementBody(valB, segment);
                     }
-                    advance();
-                    decodeElementBody(valB, segment);
+                    entry.setField(valFd, valB.build());
                 }
-                entry.setField(valFd, valB.build());
             } else if (valFd.getJavaType() == FieldDescriptor.JavaType.ENUM) {
                 entry.setField(valFd, consumeEnum(valFd));
             } else {

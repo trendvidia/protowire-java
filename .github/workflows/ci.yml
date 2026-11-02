@@ -58,3 +58,44 @@ jobs:
           path: |
             **/build/reports/tests/
             **/build/test-results/
+
+  # The cross-port gates live in the spec repo and otherwise run against main,
+  # so a conformance break shows up only after it merges (protowire#503). This
+  # runs them on the PR's own code, against the spec and Go at their main.
+  conformance:
+    name: Conformance (Go reference)
+    runs-on: ubuntu-latest
+    env:
+      PROTOWIRE_DIR: ${{ github.workspace }}/.conformance/protowire
+      GO_DIR: ${{ github.workspace }}/.conformance/protowire-go
+      JAVA_DIR: ${{ github.workspace }}
+      SKIP_PORTS: cpp,ts,rust,swift,dart,csharp,python
+      REQUIRE_PORTS: go,java,java-lite
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/checkout@v7
+        with:
+          repository: trendvidia/protowire
+          path: .conformance/protowire
+
+      - uses: actions/checkout@v7
+        with:
+          repository: trendvidia/protowire-go
+          path: .conformance/protowire-go
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: .conformance/protowire-go/go.mod
+          cache-dependency-path: .conformance/protowire-go/go.sum
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Text gate
+        run: "$PROTOWIRE_DIR/scripts/cross_text_check.sh"
+
+      - name: Security gate
+        run: "$PROTOWIRE_DIR/scripts/cross_security_check.sh"

@@ -300,7 +300,8 @@ public final class LiteWireWriter {
      * <p>The name reaches the element as an ordinary leading key assignment,
      * so the element's own {@link #encode} treats the key field as set: a
      * {@code (pxf.default)} on it stays out, a {@code (pxf.required)} on it is
-     * met, and a oneof sibling of it collides.
+     * met. A oneof sibling of it is refused here, where the entry name can be
+     * reported.
      */
     private static void writeKeyedBlock(
             CodedOutputStream out,
@@ -348,6 +349,7 @@ public final class LiteWireWriter {
                     keySpelled = true;
                     checkNamedKey(a, keyName, name, field);
                 }
+                checkKeySibling(e, keyName, name, field, nestedMetaOf(num, meta, registry));
             }
             List<Ast.Entry> element = body;
             if (!keySpelled) {
@@ -371,6 +373,30 @@ public final class LiteWireWriter {
                 throw new PxfException(s.pos(), "key field \"" + keyName + "\" = \"" + s.value()
                     + "\" conflicts with entry name \"" + entryName + "\" in keyed field \"" + field + "\"");
             }
+        }
+    }
+
+    /**
+     * The entry name binds the key field, so binding another member of the
+     * key's oneof in the entry's body writes two members. {@code null} counts:
+     * it also chooses the member.
+     */
+    private static void checkKeySibling(Ast.Entry e, String keyName, String entryName, String field, PxfMeta element) {
+        String other;
+        Position pos;
+        switch (e) {
+            case Ast.Assignment a -> { other = a.key(); pos = a.pos(); }
+            case Ast.Block b -> { other = b.name(); pos = b.pos(); }
+            default -> { return; }
+        }
+        if (other.equals(keyName)) {
+            return;
+        }
+        String oneof = element.oneofOf().get(element.fieldNumbers().get(keyName));
+        Integer otherNum = element.fieldNumbers().get(other);
+        if (oneof != null && otherNum != null && oneof.equals(element.oneofOf().get(otherNum))) {
+            throw new PxfException(pos, "field \"" + other + "\" shares oneof \"" + oneof + "\" with key field \""
+                + keyName + "\", which entry name \"" + entryName + "\" already set in keyed field \"" + field + "\"");
         }
     }
 
@@ -741,6 +767,29 @@ public final class LiteWireWriter {
         }
     }
 
+    /** The {@link PxfMeta} of message field {@code num}. */
+    private static PxfMeta nestedMetaOf(int num, PxfMeta meta, PxfRegistry registry) {
+        // Prefer the meta's embedded nested reference (populated by codegen)
+        // over a registry lookup. This is the path for codegen-generated
+        // <Message>PxfMeta classes; registry is the fallback for hand-built
+        // PxfMeta implementations or test fixtures that don't pre-link.
+        PxfMeta nestedMeta = meta.nestedMetas().get(num);
+        if (nestedMeta == null) {
+            String typeFqn = meta.messageTypes().get(num);
+            if (typeFqn == null) {
+                throw new IllegalStateException(
+                    "MESSAGE_TYPES table missing entry for field number " + num + " in " + meta.fullName());
+            }
+            nestedMeta = registry.lookupMessage(typeFqn);
+            if (nestedMeta == null) {
+                throw new IllegalArgumentException(
+                    "PxfRegistry has no entry for nested message '" + typeFqn +
+                    "' (referenced from field " + num + " of " + meta.fullName() + ")");
+            }
+        }
+        return nestedMeta;
+    }
+
     /**
      * Writes a {@code google.protobuf.Timestamp} / {@code Duration}-shaped
      * submessage: a length-delimited record at field {@code num} whose
@@ -777,24 +826,7 @@ public final class LiteWireWriter {
             List<Ast.Entry> entries,
             PxfMeta meta,
             PxfRegistry registry) {
-        // Prefer the meta's embedded nested reference (populated by codegen)
-        // over a registry lookup. This is the path for codegen-generated
-        // <Message>PxfMeta classes; registry is the fallback for hand-built
-        // PxfMeta implementations or test fixtures that don't pre-link.
-        PxfMeta nestedMeta = meta.nestedMetas().get(num);
-        if (nestedMeta == null) {
-            String typeFqn = meta.messageTypes().get(num);
-            if (typeFqn == null) {
-                throw new IllegalStateException(
-                    "MESSAGE_TYPES table missing entry for field number " + num + " in " + meta.fullName());
-            }
-            nestedMeta = registry.lookupMessage(typeFqn);
-            if (nestedMeta == null) {
-                throw new IllegalArgumentException(
-                    "PxfRegistry has no entry for nested message '" + typeFqn +
-                    "' (referenced from field " + num + " of " + meta.fullName() + ")");
-            }
-        }
+        PxfMeta nestedMeta = nestedMetaOf(num, meta, registry);
         // Encode the nested entries to a side buffer first so we know the byte length.
         byte[] nestedBytes = encode(Ast.Document.of("", entries), nestedMeta, registry);
         try {

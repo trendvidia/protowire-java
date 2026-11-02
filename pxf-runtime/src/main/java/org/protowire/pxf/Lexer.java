@@ -226,7 +226,7 @@ final class Lexer {
             case '@': return lexDirective(pp);
         }
 
-        if (ch == '-' || isDigit(ch)) return lexNumber(pp);
+        if (ch == '-' || ch == '+' || isDigit(ch)) return lexNumber(pp);
         if (isIdentStart(ch)) return lexIdent(pp);
 
         advance();
@@ -500,9 +500,21 @@ final class Lexer {
     private Token lexNumber(Position pp) {
         int start = pos;
         boolean neg = false;
-        if (peek() == '-') {
-            neg = true;
+        byte sign = peek();
+        if (sign == '-' || sign == '+') {
             advance();
+            // "+inf" and "-inf" are the only signed identifier literals, and
+            // a '+' is valid for nothing else (draft -01 § Numeric Literals).
+            if (peek() == 'i' && peekAt(1) == 'n' && peekAt(2) == 'f' && !isIdentPart(peekAt(3))) {
+                advance();
+                advance();
+                advance();
+                return new Token(TokenKind.FLOAT, sign == '-' ? "-inf" : "+inf", pp);
+            }
+            if (sign == '+') {
+                return new Token(TokenKind.ILLEGAL, "\"+\" is valid only in \"+inf\"", pp);
+            }
+            neg = true;
             if (pos >= input.length || !isDigit(peek())) {
                 return new Token(TokenKind.ILLEGAL, "-", pp);
             }

@@ -415,8 +415,8 @@ public final class LiteWireReader {
             case PxfMeta.WKT_INT64_VALUE  -> intVal(readWrapperVarint(in, K_INT64));
             case PxfMeta.WKT_UINT32_VALUE -> intVal(readWrapperVarint(in, K_UINT32));
             case PxfMeta.WKT_UINT64_VALUE -> uintVal(readWrapperVarint(in, K_UINT64));
-            case PxfMeta.WKT_FLOAT_VALUE  -> new Ast.FloatVal(Position.UNKNOWN, Float.toString(readWrapperFloat(in)));
-            case PxfMeta.WKT_DOUBLE_VALUE -> new Ast.FloatVal(Position.UNKNOWN, Double.toString(readWrapperDouble(in)));
+            case PxfMeta.WKT_FLOAT_VALUE  -> floatVal(readWrapperFloat(in));
+            case PxfMeta.WKT_DOUBLE_VALUE -> floatVal(readWrapperDouble(in));
             case PxfMeta.WKT_BIG_INT      -> readBigInt(in);
             case PxfMeta.WKT_DECIMAL      -> readDecimal(in);
             case PxfMeta.WKT_BIG_FLOAT    -> readBigFloat(in);
@@ -759,11 +759,11 @@ public final class LiteWireReader {
     }
 
     private static Ast.FloatVal floatVal(double value) {
-        return new Ast.FloatVal(Position.UNKNOWN, Double.toString(value));
+        return new Ast.FloatVal(Position.UNKNOWN, Format.formatDouble(value));
     }
 
     private static Ast.FloatVal floatVal(float value) {
-        return new Ast.FloatVal(Position.UNKNOWN, Float.toString(value));
+        return new Ast.FloatVal(Position.UNKNOWN, Format.formatFloat(value));
     }
 
     private static <K, V> Map<V, K> invert(Map<K, V> m) {

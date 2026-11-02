@@ -1127,11 +1127,11 @@ final class FastDecoder {
                 advance();
                 return iv;
             case FLOAT:
-                if (current.kind() != TokenKind.FLOAT && current.kind() != TokenKind.INT) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
-                float fv = Float.parseFloat(current.value()); advance(); return fv;
+                if (!isFloatLiteral()) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
+                float fv = Format.parseFloat(current.value()); advance(); return fv;
             case DOUBLE:
-                if (current.kind() != TokenKind.FLOAT && current.kind() != TokenKind.INT) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
-                double dv = Double.parseDouble(current.value()); advance(); return dv;
+                if (!isFloatLiteral()) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
+                double dv = Format.parseDouble(current.value()); advance(); return dv;
             case BYTE_STRING:
                 if (current.kind() != TokenKind.BYTES) throw new PxfException(pos, "expected bytes for field \"" + fd.getName() + "\"");
                 byte[] decoded;
@@ -1161,6 +1161,12 @@ final class FastDecoder {
             case UINT64, FIXED64 -> Long.parseUnsignedLong(text);
             default -> Long.parseLong(text);
         };
+    }
+
+    /** A number, or one of the identifiers {@code inf} and {@code nan}. */
+    private boolean isFloatLiteral() {
+        return current.kind() == TokenKind.FLOAT || current.kind() == TokenKind.INT
+                || (current.kind() == TokenKind.IDENT && Format.isNonFinite(current.value()));
     }
 
     /** The current literal as a {@code pxf.BigFloat}; the caller advances past it. */
@@ -1327,8 +1333,8 @@ final class FastDecoder {
                 case STRING  -> b.setField(fd, def);
                 case BOOLEAN -> b.setField(fd, parseBoolDefault(fd, def));
                 case INT, LONG -> b.setField(fd, parseInteger(fd, def));
-                case FLOAT   -> b.setField(fd, Float.parseFloat(def));
-                case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
+                case FLOAT   -> b.setField(fd, Format.parseFloat(def));
+                case DOUBLE  -> b.setField(fd, Format.parseDouble(def));
                 case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
                 case ENUM -> {
                     EnumValueDescriptor ev = fd.getEnumType().findValueByName(def);
@@ -1392,8 +1398,8 @@ final class FastDecoder {
             case STRING  -> def;
             case BOOLEAN -> parseBoolDefault(fd, def);
             case INT, LONG -> parseInteger(fd, def);
-            case FLOAT   -> Float.parseFloat(def);
-            case DOUBLE  -> Double.parseDouble(def);
+            case FLOAT   -> Format.parseFloat(def);
+            case DOUBLE  -> Format.parseDouble(def);
             case BYTE_STRING -> ByteString.copyFrom(Base64.getDecoder().decode(def));
             default -> throw new PxfException(Position.UNKNOWN, "unsupported default kind " + fd.getJavaType() + " for field \"" + fd.getName() + "\"");
         };

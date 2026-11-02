@@ -6,6 +6,7 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.BigFloats;
+import org.protowire.pxf.Format;
 import org.protowire.pxf.Limits;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
@@ -1164,14 +1165,16 @@ public final class LiteWireWriter {
     }
 
     private static float asFloat(Ast.Value v) {
-        if (v instanceof Ast.FloatVal f) return Float.parseFloat(f.raw());
+        if (v instanceof Ast.FloatVal f) return Format.parseFloat(f.raw());
         if (v instanceof Ast.IntVal   i) return Float.parseFloat(i.raw());
+        if (v instanceof Ast.IdentVal id && Format.isNonFinite(id.name())) return Format.parseFloat(id.name());
         throw new IllegalArgumentException("expected float, got " + v.getClass().getSimpleName());
     }
 
     private static double asDouble(Ast.Value v) {
-        if (v instanceof Ast.FloatVal f) return Double.parseDouble(f.raw());
+        if (v instanceof Ast.FloatVal f) return Format.parseDouble(f.raw());
         if (v instanceof Ast.IntVal   i) return Double.parseDouble(i.raw());
+        if (v instanceof Ast.IdentVal id && Format.isNonFinite(id.name())) return Format.parseDouble(id.name());
         throw new IllegalArgumentException("expected double, got " + v.getClass().getSimpleName());
     }
 

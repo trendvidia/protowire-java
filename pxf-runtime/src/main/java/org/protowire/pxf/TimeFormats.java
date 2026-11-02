@@ -30,7 +30,13 @@ public final class TimeFormats {
 
     /** Format an Instant as RFC 3339 with nanosecond precision when needed. */
     public static String formatRfc3339(Instant t) {
-        return DateTimeFormatter.ISO_INSTANT.format(t.atOffset(ZoneOffset.UTC).toInstant());
+        String text = DateTimeFormatter.ISO_INSTANT.format(t.atOffset(ZoneOffset.UTC).toInstant());
+        // ISO_INSTANT groups a fraction in threes; time.RFC3339Nano trims it.
+        int dot = text.indexOf('.');
+        if (dot < 0) return text;
+        int end = text.length() - 1;
+        while (text.charAt(end - 1) == '0') end--;
+        return text.substring(0, end) + "Z";
     }
 
     /**

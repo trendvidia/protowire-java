@@ -99,7 +99,13 @@ public final class TimeFormats {
 
     private static boolean isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
 
-    /** Format a Duration in Go style: e.g. "1h30m", "30s", "100ms". */
+    /**
+     * Format a Duration as Go's {@code time.Duration.String()} does, byte for
+     * byte: "1h30m0s", "1.5s", "1m0s", "1.5ms", "312.5µs", "1ns", "0s". Below
+     * one second a single unit carries a decimal fraction; from one second up
+     * the seconds segment is always written, and the minutes segment too once
+     * there are hours.
+     */
     public static String formatGoDuration(Duration d) {
         if (d.isZero()) return "0s";
         long nanos = d.toNanos();
@@ -110,26 +116,29 @@ public final class TimeFormats {
         // arithmetic is safe again.
         long mag = nanos;
         if (nanos < 0) { sb.append('-'); mag = -nanos; }
+        if (Long.compareUnsigned(mag, 1_000_000_000L) < 0) {
+            if (mag < 1_000L) return sb.append(mag).append("ns").toString();
+            if (mag < 1_000_000L) return appendFraction(sb, mag, 1_000L).append("µs").toString();
+            return appendFraction(sb, mag, 1_000_000L).append("ms").toString();
+        }
         long h = Long.divideUnsigned(mag, 3_600_000_000_000L);
         mag = Long.remainderUnsigned(mag, 3_600_000_000_000L);
-        long m = mag / 60_000_000_000L;    mag %= 60_000_000_000L;
-        long s = mag / 1_000_000_000L;     mag %= 1_000_000_000L;
+        long m = mag / 60_000_000_000L;
+        mag %= 60_000_000_000L;
         if (h > 0) sb.append(h).append('h');
-        if (m > 0) sb.append(m).append('m');
-        if (s > 0 || mag > 0 || (h == 0 && m == 0)) {
-            if (mag == 0) {
-                sb.append(s).append('s');
-            } else if (mag % 1_000_000 == 0) {
-                long ms = s * 1000 + mag / 1_000_000;
-                sb.append(ms).append("ms");
-            } else if (mag % 1000 == 0) {
-                long us = s * 1_000_000 + mag / 1000;
-                sb.append(us).append("us");
-            } else {
-                long ns = s * 1_000_000_000L + mag;
-                sb.append(ns).append("ns");
-            }
-        }
-        return sb.toString();
+        if (h > 0 || m > 0) sb.append(m).append('m');
+        return appendFraction(sb, mag, 1_000_000_000L).append('s').toString();
+    }
+
+    /** Appends value/unit in decimal, without trailing fraction zeros; unit is a power of ten. */
+    private static StringBuilder appendFraction(StringBuilder sb, long value, long unit) {
+        sb.append(value / unit);
+        long frac = value % unit;
+        if (frac == 0) return sb;
+        // unit + frac zero-pads the fraction to the unit's width, behind a leading 1.
+        String digits = Long.toString(unit + frac);
+        int end = digits.length();
+        while (digits.charAt(end - 1) == '0') end--;
+        return sb.append('.').append(digits, 1, end);
     }
 }

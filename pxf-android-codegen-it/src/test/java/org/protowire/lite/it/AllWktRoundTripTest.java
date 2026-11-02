@@ -48,7 +48,7 @@ final class AllWktRoundTripTest {
      */
     private static final String CANONICAL = String.join("\n",
         "ts = 2024-01-15T10:30:45Z",
-        "dur = 1h30m",
+        "dur = 1h30m0s",
         "str_w = \"alice\"",
         "i32_w = 42",
         "bool_w = true",

@@ -12,6 +12,7 @@ import org.protowire.pxf.PxfRegistry;
 import org.protowire.pxf.SimplePxfRegistry;
 
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -296,6 +297,19 @@ final class LiteWireReaderTest {
     void wkt_duration_roundTrip() {
         assertRoundTrip("ttl = 1h30m",
             wktMeta("ttl", 1, "com.google.protobuf.Duration", PxfMeta.WKT_DURATION));
+    }
+
+    // Wire to text gives what Go's time.Duration.String() writes (#136).
+    // assertRoundTrip compares wire bytes, so it cannot see the text.
+    @Test
+    void wkt_duration_textMatchesGo() {
+        PxfMeta meta = wktMeta("ttl", 1, "com.google.protobuf.Duration", PxfMeta.WKT_DURATION);
+        for (String text : List.of("1h30m0s", "1h0m0s", "1m0s", "1.5s", "1.5ms", "312.5µs", "1ns",
+                "-1h30m0.5s", "-1.5µs", "2562047h47m16.854775807s")) {
+            String pxf = "ttl = " + text + "\n";
+            byte[] wire = LiteWireWriter.encode(Parser.parse(pxf), meta);
+            assertEquals(pxf, Format.formatDocument(LiteWireReader.toAst(wire, meta)));
+        }
     }
 
     @Test

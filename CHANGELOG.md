@@ -18,6 +18,16 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **Duration text now matches protowire-go byte for byte, in both tiers**
+  (#136). `TimeFormats.formatGoDuration`, which `Pxf.marshal` and the lite
+  tier's `LiteWireReader` share, writes what Go's `time.Duration.String()`
+  does: 90 minutes is `1h30m0s` rather than `1h30m`, 1.5 seconds is `1.5s`
+  rather than `1500ms`, and 1.5 microseconds is `1.5µs` rather than
+  `1500ns`. The value is unchanged and the old forms still decode, but text
+  comparisons and golden files holding Duration literals will differ.
+
 ### Added
 
 - **`UnmarshalOptions.skipPostDecode`**, matching protowire-go's `SkipPostDecode`

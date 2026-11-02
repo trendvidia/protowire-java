@@ -642,18 +642,13 @@ public final class LiteWireWriter {
                 return;
             }
 
-            switch (wkt) {
-                case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
-                case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
-                case PxfMeta.WKT_BIG_FLOAT -> {
-                    if (v instanceof Ast.BlockVal) break;
-                    writeBigFloat(out, num, parseBigFloat(v, meta, num));
-                    return;
-                }
-                default -> { /* fall through */ }
-            }
-
             if (!(v instanceof Ast.BlockVal)) {
+                switch (wkt) {
+                    case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
+                    case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
+                    case PxfMeta.WKT_BIG_FLOAT -> { writeBigFloat(out, num, parseBigFloat(v, meta, num)); return; }
+                    default -> { /* fall through */ }
+                }
                 int wrapperKind = wrapperInnerKind(wkt);
                 if (wrapperKind != -1) {
                     writeWellKnownValueWrapper(out, num, wrapperKind, v);
@@ -777,17 +772,15 @@ public final class LiteWireWriter {
 
     /** The {@link PxfMeta} of message field {@code num}. */
     private static PxfMeta nestedMetaOf(int num, PxfMeta meta, PxfRegistry registry) {
-        // A Duration or Timestamp block (draft -01 § Well-Known Type Shapes)
-        // has a fixed shape, so it needs no companion or registry entry.
-        int wkt = meta.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE);
-        if (wkt == PxfMeta.WKT_DURATION || wkt == PxfMeta.WKT_TIMESTAMP) {
-            return SecondsNanosMeta.INSTANCE;
-        }
         // Prefer the meta's embedded nested reference (populated by codegen)
         // over a registry lookup. This is the path for codegen-generated
         // <Message>PxfMeta classes; registry is the fallback for hand-built
         // PxfMeta implementations or test fixtures that don't pre-link.
         PxfMeta nestedMeta = meta.nestedMetas().get(num);
+        if (nestedMeta == null) {
+            // A well-known type's block has a fixed shape, so it needs neither.
+            nestedMeta = WellKnownMeta.of(meta.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE));
+        }
         if (nestedMeta == null) {
             String typeFqn = meta.messageTypes().get(num);
             if (typeFqn == null) {

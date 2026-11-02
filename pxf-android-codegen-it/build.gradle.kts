@@ -25,6 +25,11 @@ dependencies {
     api("com.google.protobuf:protobuf-javalite:4.36.2")
     api(project(":pxf-runtime"))
     api(project(":pxf-android"))
+    api(project(":sbe-runtime"))
+    // compile-only: text.proto and adversarial.proto import the annotation
+    // protos, which come from these on the proto include path.
+    compileOnly(project(":proto-annotations"))
+    compileOnly("com.google.protobuf:protobuf-java:4.36.2")
 
     testImplementation(platform("org.junit:junit-bom:6.1.3"))
     testImplementation("org.junit.jupiter:junit-jupiter")

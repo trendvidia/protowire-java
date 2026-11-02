@@ -6,6 +6,8 @@ import com.google.protobuf.ByteString;
 import com.google.protobuf.CodedOutputStream;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.BigFloats;
+import org.protowire.pxf.DecodeLimits;
+import org.protowire.pxf.Format;
 import org.protowire.pxf.Limits;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
@@ -144,6 +146,23 @@ public final class LiteWireWriter {
      * full names declared in {@code meta.messageTypes()} / {@code enumTypes()}.
      */
     public static byte[] encode(Ast.Document doc, PxfMeta meta, PxfRegistry registry) {
+        return encode(doc, meta, registry, DecodeLimits.defaults());
+    }
+
+    /** As {@link #encode(Ast.Document, PxfMeta)} under per-call limits. */
+    public static byte[] encode(Ast.Document doc, PxfMeta meta, DecodeLimits limits) {
+        return encode(doc, meta, REGISTRY_REQUIRED, limits);
+    }
+
+    /**
+     * As {@link #encode(Ast.Document, PxfMeta, PxfRegistry)} under per-call
+     * limits (HARDENING.md § Mandatory limits): {@code MaxRepeatedCount} on a
+     * repeated, keyed or map field across one message body,
+     * {@code MaxNumericLiteralDigits} on the big-number types and
+     * {@code MaxBigFloatExponent} on a {@code pxf.BigFloat}. The literal and
+     * nesting limits are the {@link Parser}'s.
+     */
+    public static byte[] encode(Ast.Document doc, PxfMeta meta, PxfRegistry registry, DecodeLimits limits) {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(buffer);
         // Track which field numbers were set in the input + which oneof slots
@@ -152,8 +171,8 @@ public final class LiteWireWriter {
         Set<Integer> setFields = new HashSet<>();
         Map<String, Integer> oneofSet = new HashMap<>();
         Map<Integer, Set<String>> mapKeys = new HashMap<>();
-        writeEntries(out, doc.entries(), meta, registry, setFields, oneofSet, mapKeys);
-        applyDefaults(out, meta, registry, setFields, oneofSet);
+        writeEntries(out, doc.entries(), meta, registry, limits, setFields, oneofSet, mapKeys);
+        applyDefaults(out, meta, registry, limits, setFields, oneofSet);
         validateRequired(meta, setFields);
         try {
             out.flush();
@@ -168,6 +187,7 @@ public final class LiteWireWriter {
             List<Ast.Entry> entries,
             PxfMeta meta,
             PxfRegistry registry,
+            DecodeLimits limits,
             Set<Integer> setFields,
             Map<String, Integer> oneofSet,
             Map<Integer, Set<String>> mapKeys) {
@@ -176,6 +196,7 @@ public final class LiteWireWriter {
         Set<Integer> repeated = meta.repeatedFields();
         Set<Integer> packed = meta.packedFields();
         Map<Integer, String> oneofOf = meta.oneofOf();
+        Map<Integer, Integer> counts = new HashMap<>();
 
         for (Ast.Entry entry : entries) {
             switch (entry) {
@@ -207,12 +228,14 @@ public final class LiteWireWriter {
                     }
                     String keyName = meta.keyFields().get(num);
                     if (keyName != null && a.value() instanceof Ast.BlockVal kbv) {
-                        writeKeyedBlock(out, num, kbv.entries(), keyName, meta, registry);
+                        checkCount(num, kbv.entries().size(), a.key(), a.pos(), counts, limits);
+                        writeKeyedBlock(out, num, kbv.entries(), keyName, meta, registry, limits);
                     } else if (repeated.contains(num) && a.value() instanceof Ast.ListVal list) {
                         if (keyName != null) {
                             checkAnonymousKeys(list, keyName, a.key());
                         }
-                        writeRepeated(out, num, kind, list, packed.contains(num), meta, registry);
+                        checkCount(num, list.elements().size(), a.key(), a.pos(), counts, limits);
+                        writeRepeated(out, num, kind, list, packed.contains(num), meta, registry, limits);
                     } else if (meta.mapFields().contains(num) && a.value() instanceof Ast.BlockVal mbv) {
                         // PXF accepts both `labels { … }` (bare-block) and
                         // `labels = { … }` (assignment-with-block) for map
@@ -220,10 +243,11 @@ public final class LiteWireWriter {
                         // writeEntries above, the assignment form lands here
                         // as Ast.Assignment(BlockVal). Route both through the
                         // map encoder.
-                        writeMap(out, num, mbv.entries(), meta, registry,
+                        checkCount(num, mbv.entries().size(), a.key(), a.pos(), counts, limits);
+                        writeMap(out, num, mbv.entries(), meta, registry, limits,
                             mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
                     } else {
-                        writeField(out, num, kind, a.value(), meta, registry);
+                        writeField(out, num, kind, a.value(), meta, registry, limits);
                     }
                     recordSet(num, oneofOf, setFields, oneofSet);
                 }
@@ -241,14 +265,16 @@ public final class LiteWireWriter {
                     int kind = fieldKinds.getOrDefault(num, 0);
                     String keyName = meta.keyFields().get(num);
                     if (keyName != null) {
-                        writeKeyedBlock(out, num, b.entries(), keyName, meta, registry);
+                        checkCount(num, b.entries().size(), b.name(), b.pos(), counts, limits);
+                        writeKeyedBlock(out, num, b.entries(), keyName, meta, registry, limits);
                     } else if (meta.mapFields().contains(num)) {
-                        writeMap(out, num, b.entries(), meta, registry,
+                        checkCount(num, b.entries().size(), b.name(), b.pos(), counts, limits);
+                        writeMap(out, num, b.entries(), meta, registry, limits,
                             mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
                     } else if (repeated.contains(num)) {
                         throw repeatedBlock(b);
                     } else if (kind == K_MESSAGE) {
-                        writeNestedMessage(out, num, b.entries(), meta, registry);
+                        writeNestedMessage(out, num, b.entries(), meta, registry, limits);
                     } else {
                         throw new IllegalArgumentException(
                             "block syntax requires a message-typed field; '" + b.name() +
@@ -266,6 +292,14 @@ public final class LiteWireWriter {
                     "@type entry in " + meta.fullName() + ": the lite tier has no type resolver for an Any block; "
                     + "write type_url and value");
             }
+        }
+    }
+
+    /** HARDENING.md {@code MaxRepeatedCount}, over every binding of a field in one message body. */
+    private static void checkCount(
+            int num, int added, String name, Position pos, Map<Integer, Integer> counts, DecodeLimits limits) {
+        if (counts.merge(num, added, Integer::sum) > limits.maxRepeatedCount()) {
+            throw new PxfException(pos, "field \"" + name + "\" exceeds MaxRepeatedCount=" + limits.maxRepeatedCount());
         }
     }
 
@@ -309,7 +343,8 @@ public final class LiteWireWriter {
             List<Ast.Entry> entries,
             String keyName,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            DecodeLimits limits) {
         String field = fieldNameFor(meta, num);
         Set<String> seen = new HashSet<>();
         for (Ast.Entry entry : entries) {
@@ -357,7 +392,7 @@ public final class LiteWireWriter {
                 element.add(new Ast.Assignment(pos, keyName, new Ast.StringVal(pos, name), List.of(), ""));
                 element.addAll(body);
             }
-            writeNestedMessage(out, num, element, meta, registry);
+            writeNestedMessage(out, num, element, meta, registry, limits);
         }
     }
 
@@ -522,6 +557,7 @@ public final class LiteWireWriter {
             CodedOutputStream out,
             PxfMeta meta,
             PxfRegistry registry,
+            DecodeLimits limits,
             Set<Integer> setFields,
             Map<String, Integer> oneofSet) {
         Map<Integer, String> defaults = meta.defaults();
@@ -540,7 +576,7 @@ public final class LiteWireWriter {
                 continue;
             }
             int kind = fieldKinds.getOrDefault(num, 0);
-            writeField(out, num, kind, defaultValue(kind, e.getValue(), meta, num), meta, registry);
+            writeField(out, num, kind, defaultValue(kind, e.getValue(), meta, num), meta, registry, limits);
             recordSet(num, oneofOf, setFields, oneofSet);
         }
     }
@@ -607,7 +643,8 @@ public final class LiteWireWriter {
             int kind,
             Ast.Value v,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            DecodeLimits limits) {
         if (kind == K_ENUM) {
             writeEnum(out, num, v, meta, registry);
             return;
@@ -644,9 +681,9 @@ public final class LiteWireWriter {
 
             if (!(v instanceof Ast.BlockVal)) {
                 switch (wkt) {
-                    case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num)); return; }
-                    case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num)); return; }
-                    case PxfMeta.WKT_BIG_FLOAT -> { writeBigFloat(out, num, parseBigFloat(v, meta, num)); return; }
+                    case PxfMeta.WKT_BIG_INT   -> { writeBigInt(out, num, parseBigInteger(v, meta, num, limits)); return; }
+                    case PxfMeta.WKT_DECIMAL   -> { writeDecimal(out, num, parseBigDecimal(v, meta, num, limits)); return; }
+                    case PxfMeta.WKT_BIG_FLOAT -> { writeBigFloat(out, num, parseBigFloat(v, meta, num, limits)); return; }
                     default -> { /* fall through */ }
                 }
                 int wrapperKind = wrapperInnerKind(wkt);
@@ -657,7 +694,7 @@ public final class LiteWireWriter {
             }
             // PXF allows `field = { ... }` (BlockVal) as an alternative to the bare-block form.
             if (v instanceof Ast.BlockVal bv) {
-                writeNestedMessage(out, num, bv.entries(), meta, registry);
+                writeNestedMessage(out, num, bv.entries(), meta, registry, limits);
                 return;
             }
             throw new IllegalArgumentException(
@@ -832,10 +869,11 @@ public final class LiteWireWriter {
             int num,
             List<Ast.Entry> entries,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            DecodeLimits limits) {
         PxfMeta nestedMeta = nestedMetaOf(num, meta, registry);
         // Encode the nested entries to a side buffer first so we know the byte length.
-        byte[] nestedBytes = encode(Ast.Document.of("", entries), nestedMeta, registry);
+        byte[] nestedBytes = encode(Ast.Document.of("", entries), nestedMeta, registry, limits);
         try {
             out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
             out.writeUInt32NoTag(nestedBytes.length);
@@ -864,6 +902,7 @@ public final class LiteWireWriter {
             List<Ast.Entry> entries,
             PxfMeta meta,
             PxfRegistry registry,
+            DecodeLimits limits,
             Set<String> seenKeys) {
         PxfMeta entryMeta = meta.nestedMetas().get(num);
         if (entryMeta == null) {
@@ -902,7 +941,7 @@ public final class LiteWireWriter {
                     new Ast.Assignment(me.pos(), "value", me.value(), List.of(), "")
                 )
             );
-            byte[] entryBytes = encode(entryDoc, entryMeta, registry);
+            byte[] entryBytes = encode(entryDoc, entryMeta, registry, limits);
             try {
                 out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
                 out.writeUInt32NoTag(entryBytes.length);
@@ -984,6 +1023,15 @@ public final class LiteWireWriter {
             Ast.Value v,
             PxfMeta meta,
             PxfRegistry registry) {
+        int enumValue = enumNumber(num, v, meta, registry);
+        try {
+            out.writeEnum(num, enumValue);
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+    }
+
+    private static int enumNumber(int num, Ast.Value v, PxfMeta meta, PxfRegistry registry) {
         int enumValue;
         if (v instanceof Ast.IdentVal id) {
             // Prefer embedded enum reference; fall back to registry lookup.
@@ -1014,11 +1062,7 @@ public final class LiteWireWriter {
             throw new IllegalArgumentException(
                 "expected enum identifier or integer literal, got " + v.getClass().getSimpleName());
         }
-        try {
-            out.writeEnum(num, enumValue);
-        } catch (IOException e) {
-            throw new IllegalStateException("CodedOutputStream write failed", e);
-        }
+        return enumValue;
     }
 
     private static void writeScalar(CodedOutputStream out, int num, int kind, Ast.Value v) {
@@ -1055,11 +1099,16 @@ public final class LiteWireWriter {
             Ast.ListVal list,
             boolean packed,
             PxfMeta meta,
-            PxfRegistry registry) {
+            PxfRegistry registry,
+            DecodeLimits limits) {
         if (!packed) {
             for (Ast.Value v : list.elements()) {
-                writeField(out, num, kind, v, meta, registry);
+                writeField(out, num, kind, v, meta, registry, limits);
             }
+            return;
+        }
+        if (kind == K_ENUM) {
+            writePackedEnum(out, num, list, meta, registry);
             return;
         }
         // Packed encoding: tag(num, LEN) + total length + concatenated value bytes (no tags).
@@ -1069,6 +1118,26 @@ public final class LiteWireWriter {
             out.writeUInt32NoTag(payloadSize);
             for (Ast.Value v : list.elements()) {
                 writeScalarNoTag(out, kind, v);
+            }
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+    }
+
+    /** An enum element needs its table to become an integer, so it takes this path of its own. */
+    private static void writePackedEnum(
+            CodedOutputStream out, int num, Ast.ListVal list, PxfMeta meta, PxfRegistry registry) {
+        int[] values = new int[list.elements().size()];
+        int payloadSize = 0;
+        for (int i = 0; i < values.length; i++) {
+            values[i] = enumNumber(num, list.elements().get(i), meta, registry);
+            payloadSize += CodedOutputStream.computeEnumSizeNoTag(values[i]);
+        }
+        try {
+            out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
+            out.writeUInt32NoTag(payloadSize);
+            for (int value : values) {
+                out.writeEnumNoTag(value);
             }
         } catch (IOException e) {
             throw new IllegalStateException("CodedOutputStream write failed", e);
@@ -1164,14 +1233,16 @@ public final class LiteWireWriter {
     }
 
     private static float asFloat(Ast.Value v) {
-        if (v instanceof Ast.FloatVal f) return Float.parseFloat(f.raw());
+        if (v instanceof Ast.FloatVal f) return Format.parseFloat(f.raw());
         if (v instanceof Ast.IntVal   i) return Float.parseFloat(i.raw());
+        if (v instanceof Ast.IdentVal id && Format.isNonFinite(id.name())) return Format.parseFloat(id.name());
         throw new IllegalArgumentException("expected float, got " + v.getClass().getSimpleName());
     }
 
     private static double asDouble(Ast.Value v) {
-        if (v instanceof Ast.FloatVal f) return Double.parseDouble(f.raw());
+        if (v instanceof Ast.FloatVal f) return Format.parseDouble(f.raw());
         if (v instanceof Ast.IntVal   i) return Double.parseDouble(i.raw());
+        if (v instanceof Ast.IdentVal id && Format.isNonFinite(id.name())) return Format.parseDouble(id.name());
         throw new IllegalArgumentException("expected double, got " + v.getClass().getSimpleName());
     }
 
@@ -1194,7 +1265,7 @@ public final class LiteWireWriter {
         }
     }
 
-    private static BigFloats.Value parseBigFloat(Ast.Value v, PxfMeta meta, int num) {
+    private static BigFloats.Value parseBigFloat(Ast.Value v, PxfMeta meta, int num, DecodeLimits limits) {
         String raw, prec;
         if (v instanceof Ast.FloatVal f) { raw = f.raw(); prec = f.prec(); }
         else if (v instanceof Ast.IntVal i) { raw = i.raw(); prec = i.prec(); }
@@ -1204,15 +1275,25 @@ public final class LiteWireWriter {
                 " requires a numeric literal; got " + v.getClass().getSimpleName());
         }
         try {
-            return BigFloats.parse(raw, prec, Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+            return BigFloats.parse(raw, prec, limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent());
         } catch (IllegalArgumentException e) {
             throw new PxfException(v.pos(), e.getMessage());
         }
     }
 
-    private static BigInteger parseBigInteger(Ast.Value v, PxfMeta meta, int num) {
+    /** HARDENING.md {@code MaxNumericLiteralDigits}, ahead of a parser that is quadratic in the digits. */
+    private static void checkDigits(Ast.Value v, String raw, DecodeLimits limits) {
+        int max = limits.maxNumericLiteralDigits();
+        if (raw.length() > max && BigFloats.countDigits(raw) > max) {
+            throw new PxfException(v.pos(), "numeric literal has " + BigFloats.countDigits(raw)
+                + " digits; MaxNumericLiteralDigits=" + max);
+        }
+    }
+
+    private static BigInteger parseBigInteger(Ast.Value v, PxfMeta meta, int num, DecodeLimits limits) {
         rejectPrecision(v);
         if (v instanceof Ast.IntVal i) {
+            checkDigits(v, i.raw(), limits);
             return new BigInteger(i.raw());
         }
         throw new IllegalArgumentException(
@@ -1220,13 +1301,30 @@ public final class LiteWireWriter {
             " is pxf.BigInt; expected integer literal, got " + v.getClass().getSimpleName());
     }
 
-    private static BigDecimal parseBigDecimal(Ast.Value v, PxfMeta meta, int num) {
+    private static BigDecimal parseBigDecimal(Ast.Value v, PxfMeta meta, int num, DecodeLimits limits) {
         rejectPrecision(v);
-        if (v instanceof Ast.FloatVal f) return new BigDecimal(f.raw());
-        if (v instanceof Ast.IntVal   i) return new BigDecimal(i.raw());
+        if (v instanceof Ast.FloatVal f) return boundedDecimal(v, f.raw(), limits);
+        if (v instanceof Ast.IntVal   i) return boundedDecimal(v, i.raw(), limits);
         throw new IllegalArgumentException(
             "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
             " requires a numeric literal; got " + v.getClass().getSimpleName());
+    }
+
+    private static BigDecimal boundedDecimal(Ast.Value v, String raw, DecodeLimits limits) {
+        checkDigits(v, raw, limits);
+        BigDecimal value;
+        try {
+            value = new BigDecimal(raw);
+        } catch (NumberFormatException e) {
+            throw new PxfException(v.pos(), "invalid pxf.Decimal literal " + raw);
+        }
+        // Leading zeros aren't significant, so the digit count doesn't bound
+        // the scale (protowire#410). It is bounded as it is on the wire.
+        if (Math.abs((long) value.scale()) > limits.maxNumericLiteralDigits()) {
+            throw new PxfException(v.pos(), "pxf.Decimal scale " + value.scale()
+                + " exceeds MaxNumericLiteralDigits=" + limits.maxNumericLiteralDigits());
+        }
+        return value;
     }
 
     /**

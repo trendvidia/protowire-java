@@ -20,6 +20,12 @@ format changes.
 
 ### Changed
 
+- **Float and Timestamp text matches protowire-go, in both tiers** (#147). A float
+  is written as Go's `strconv.FormatFloat(v, 'g', -1, bits)` does: `100` rather
+  than `100.0`, `1e+21` rather than `1.0E21`. A Timestamp's fraction is trimmed:
+  `.5Z` rather than `.500Z`. The values are unchanged and the old forms still
+  decode, but text comparisons and golden files will differ.
+
 - **The lite tier writes messages and maps with the same text as the full tier
   and protowire-go** (#141). A nested message is `ttl {` rather than `ttl = {`,
   and a map is `labels = {` rather than `labels {`, with its keys sorted as the
@@ -84,6 +90,22 @@ format changes.
   current plugin to use the form.
 
 ### Fixed
+
+- **The lite tier enforces the HARDENING limits** (protowire#503). A `pxf.Decimal`
+  on the wire with a scale past `MaxNumericLiteralDigits` is refused:
+  `LiteWireReader` used to try to write out every digit and ran out of memory on a
+  message of a few bytes. `LiteWireWriter` had no limits, and now applies
+  `MaxRepeatedCount`, `MaxNumericLiteralDigits` and `MaxBigFloatExponent`, with new
+  `encode` overloads taking `DecodeLimits`. Documents past those limits now fail.
+- **The lite tier handles a repeated enum** (protowire#503). Proto3 packs one by
+  default, and both `LiteWireWriter` and `LiteWireReader` threw on it.
+
+- **An unknown enum value is written as its number** (#147). It used to be
+  written as `UNKNOWN_ENUM_VALUE_Color_99`, which no port could read back.
+- **`nan`, `inf`, `+inf` and `-inf` decode on a float field** (#147), as draft -01
+  § Numeric Literals requires. Both tiers refused them, though the full tier wrote
+  them, so such a value did not survive a round trip. The lite tier also wrote
+  `NaN` and `Infinity`, and now writes the same text as the full tier.
 
 - **The lite tier writes a negative Duration with one sign** (#138). `-1.5s`
   went on the wire as seconds -2, nanos +500000000, which protobuf defines as

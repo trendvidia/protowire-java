@@ -2,9 +2,13 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.pxf;
 
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 import java.util.List;
+import java.util.function.Predicate;
 
 /** Comment-preserving formatter that turns an {@link Ast.Document} back into PXF text. */
 public final class Format {
@@ -152,6 +156,70 @@ public final class Format {
             default -> throw new IllegalStateException(
                     "Format: unexpected value type " + v.getClass().getSimpleName());
         }
+    }
+
+    /** A {@code double}'s PXF text: what Go's {@code strconv.FormatFloat(v, 'g', -1, 64)} writes. */
+    public static String formatDouble(double v) {
+        return Double.isNaN(v) || Double.isInfinite(v) ? nonFinite(v) : shortestG(Double.toString(v), t -> Double.parseDouble(t) == Math.abs(v));
+    }
+
+    /** A {@code float}'s PXF text: what Go's {@code strconv.FormatFloat(v, 'g', -1, 32)} writes. */
+    public static String formatFloat(float v) {
+        return Float.isNaN(v) || Float.isInfinite(v) ? nonFinite(v) : shortestG(Float.toString(v), t -> Float.parseFloat(t) == Math.abs(v));
+    }
+
+    /** Whether {@code text} is a non-finite literal: {@code inf}, {@code +inf}, {@code -inf} or {@code nan}. */
+    public static boolean isNonFinite(String text) {
+        return "nan".equals(text) || "inf".equals(text) || "+inf".equals(text) || "-inf".equals(text);
+    }
+
+    /** The {@code double} a float literal denotes, non-finite spellings included. */
+    public static double parseDouble(String text) {
+        return switch (text) {
+            case "nan" -> Double.NaN;
+            case "inf", "+inf" -> Double.POSITIVE_INFINITY;
+            case "-inf" -> Double.NEGATIVE_INFINITY;
+            default -> Double.parseDouble(text);
+        };
+    }
+
+    /** The {@code float} a float literal denotes, non-finite spellings included. */
+    public static float parseFloat(String text) {
+        return isNonFinite(text) ? (float) parseDouble(text) : Float.parseFloat(text);
+    }
+
+    private static String nonFinite(double v) {
+        return Double.isNaN(v) ? "nan" : v > 0 ? "inf" : "-inf";
+    }
+
+    /**
+     * Respells Java's shortest decimal as Go's: an exponent below -4 or at
+     * least 6 is written {@code 1e+06} with two digits at least, anything
+     * else plainly, with no trailing {@code .0}.
+     */
+    private static String shortestG(String javaText, Predicate<String> readsBack) {
+        boolean negative = javaText.charAt(0) == '-';
+        BigDecimal d = new BigDecimal(javaText);
+        if (d.signum() == 0) return negative ? "-0" : "0";
+        d = d.abs().stripTrailingZeros();
+        // Java keeps two digits where one would read back: 4.9E-324 is 5e-324.
+        if (d.precision() == 2) {
+            BigDecimal one = d.round(new MathContext(1, RoundingMode.HALF_EVEN));
+            if (readsBack.test(one.toString())) d = one.stripTrailingZeros();
+        }
+        String digits = d.unscaledValue().toString();
+        int exp = digits.length() - d.scale() - 1;
+        StringBuilder sb = new StringBuilder(negative ? "-" : "");
+        if (exp < -4 || exp >= 6) {
+            sb.append(digits.charAt(0));
+            if (digits.length() > 1) sb.append('.').append(digits, 1, digits.length());
+            sb.append('e').append(exp < 0 ? '-' : '+');
+            if (Math.abs(exp) < 10) sb.append('0');
+            sb.append(Math.abs(exp));
+        } else {
+            sb.append(d.toPlainString());
+        }
+        return sb.toString();
     }
 
     /** The body of a string literal: {@code s} with its escapes, without the quotes. */

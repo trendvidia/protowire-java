@@ -199,7 +199,7 @@ public final class LiteWireReader {
                     int len = in.readRawVarint32();
                     int oldLimit = in.pushLimit(len);
                     while (in.getBytesUntilLimit() > 0) {
-                        Ast.Value v = readScalarFromPacked(in, kind);
+                        Ast.Value v = kind == K_ENUM ? readEnum(in, fieldNum, meta, registry) : readScalarFromPacked(in, kind);
                         List<Ast.Value> acc = repeatedAcc.computeIfAbsent(fieldNum, k -> new ArrayList<>());
                         checkRepeated(acc.size(), limits, "repeated", name);
                         acc.add(v);
@@ -373,7 +373,7 @@ public final class LiteWireReader {
         if (wkt != PxfMeta.WKT_NONE) {
             int len = in.readRawVarint32();
             int oldLimit = in.pushLimit(len);
-            Ast.Value v = readWellKnown(in, wkt);
+            Ast.Value v = readWellKnown(in, wkt, limits);
             in.popLimit(oldLimit);
             return v;
         }
@@ -404,7 +404,7 @@ public final class LiteWireReader {
      * reproduces the same wire bytes — the textual form differs (literal vs.
      * struct), the wire form does not.
      */
-    private static Ast.Value readWellKnown(CodedInputStream in, int wkt) throws IOException {
+    private static Ast.Value readWellKnown(CodedInputStream in, int wkt, DecodeLimits limits) throws IOException {
         return switch (wkt) {
             case PxfMeta.WKT_TIMESTAMP    -> readTimestamp(in);
             case PxfMeta.WKT_DURATION     -> readDuration(in);
@@ -415,11 +415,11 @@ public final class LiteWireReader {
             case PxfMeta.WKT_INT64_VALUE  -> intVal(readWrapperVarint(in, K_INT64));
             case PxfMeta.WKT_UINT32_VALUE -> intVal(readWrapperVarint(in, K_UINT32));
             case PxfMeta.WKT_UINT64_VALUE -> uintVal(readWrapperVarint(in, K_UINT64));
-            case PxfMeta.WKT_FLOAT_VALUE  -> new Ast.FloatVal(Position.UNKNOWN, Float.toString(readWrapperFloat(in)));
-            case PxfMeta.WKT_DOUBLE_VALUE -> new Ast.FloatVal(Position.UNKNOWN, Double.toString(readWrapperDouble(in)));
+            case PxfMeta.WKT_FLOAT_VALUE  -> floatVal(readWrapperFloat(in));
+            case PxfMeta.WKT_DOUBLE_VALUE -> floatVal(readWrapperDouble(in));
             case PxfMeta.WKT_BIG_INT      -> readBigInt(in);
-            case PxfMeta.WKT_DECIMAL      -> readDecimal(in);
-            case PxfMeta.WKT_BIG_FLOAT    -> readBigFloat(in);
+            case PxfMeta.WKT_DECIMAL      -> readDecimal(in, limits);
+            case PxfMeta.WKT_BIG_FLOAT    -> readBigFloat(in, limits);
             case PxfMeta.WKT_SECRET       -> readSecret(in);
             default -> throw new IllegalStateException("unknown WKT kind " + wkt);
         };
@@ -584,7 +584,7 @@ public final class LiteWireReader {
      * a BigDecimal-shaped {@link Ast.FloatVal}. {@link BigDecimal#toPlainString}
      * avoids scientific notation so the literal lexes as a plain float.
      */
-    private static Ast.FloatVal readDecimal(CodedInputStream in) throws IOException {
+    private static Ast.FloatVal readDecimal(CodedInputStream in, DecodeLimits limits) throws IOException {
         BigInteger unscaled = BigInteger.ZERO;
         int scale = 0;
         boolean negative = false;
@@ -597,6 +597,13 @@ public final class LiteWireReader {
                 default -> in.skipField(tag);
             }
         }
+        // Writing the value out materialises |scale| digits, work a five-byte
+        // field sets. A scale is a digit count, so the digit cap bounds it
+        // (HARDENING.md § Mandatory limits).
+        if (Math.abs((long) scale) > limits.maxNumericLiteralDigits()) {
+            throw new PxfException(Position.UNKNOWN, "pxf.Decimal scale " + scale
+                + " exceeds MaxNumericLiteralDigits=" + limits.maxNumericLiteralDigits());
+        }
         BigInteger signed = negative ? unscaled.negate() : unscaled;
         BigDecimal value = new BigDecimal(signed, scale);
         return new Ast.FloatVal(Position.UNKNOWN, value.toPlainString());
@@ -608,7 +615,7 @@ public final class LiteWireReader {
      * {@code negative} (bool, field 4) — into its literal, suffix included: the
      * unsigned mantissa × 2^exponent, written as {@code BigFloats} says.
      */
-    private static Ast.FloatVal readBigFloat(CodedInputStream in) throws IOException {
+    private static Ast.FloatVal readBigFloat(CodedInputStream in, DecodeLimits limits) throws IOException {
         BigInteger mantissa = BigInteger.ZERO;
         int exponent = 0;
         int prec = 0;
@@ -626,7 +633,7 @@ public final class LiteWireReader {
         String literal;
         try {
             literal = BigFloats.format(mantissa, exponent, prec, negative,
-                    Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+                    limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent());
         } catch (IllegalArgumentException e) {
             throw new PxfException(Position.UNKNOWN, e.getMessage());
         }
@@ -759,11 +766,11 @@ public final class LiteWireReader {
     }
 
     private static Ast.FloatVal floatVal(double value) {
-        return new Ast.FloatVal(Position.UNKNOWN, Double.toString(value));
+        return new Ast.FloatVal(Position.UNKNOWN, Format.formatDouble(value));
     }
 
     private static Ast.FloatVal floatVal(float value) {
-        return new Ast.FloatVal(Position.UNKNOWN, Float.toString(value));
+        return new Ast.FloatVal(Position.UNKNOWN, Format.formatFloat(value));
     }
 
     private static <K, V> Map<V, K> invert(Map<K, V> m) {

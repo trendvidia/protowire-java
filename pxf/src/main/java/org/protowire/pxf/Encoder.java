@@ -317,16 +317,19 @@ final class Encoder {
             case FLOAT -> writeFloat(((Number) v).doubleValue(), true);
             case DOUBLE -> writeFloat(((Number) v).doubleValue(), false);
             case BYTE_STRING -> buf.append("b\"").append(Base64.getEncoder().encodeToString(((ByteString) v).toByteArray())).append('"');
-            case ENUM -> buf.append(v.toString());
+            case ENUM -> writeEnum((com.google.protobuf.Descriptors.EnumValueDescriptor) v);
             default -> throw new IllegalStateException("unsupported scalar kind: " + fd.getJavaType());
         }
     }
 
+    /** A number the schema doesn't name has no identifier, so it is written as an integer. */
+    private void writeEnum(com.google.protobuf.Descriptors.EnumValueDescriptor v) {
+        if (v.getType().findValueByNumber(v.getNumber()) == null) buf.append(v.getNumber());
+        else buf.append(v.getName());
+    }
+
     private void writeFloat(double f, boolean is32) {
-        if (Double.isNaN(f)) { buf.append("nan"); return; }
-        if (Double.isInfinite(f)) { buf.append(f > 0 ? "inf" : "-inf"); return; }
-        if (is32) buf.append(Float.toString((float) f));
-        else      buf.append(Double.toString(f));
+        buf.append(is32 ? Format.formatFloat((float) f) : Format.formatDouble(f));
     }
 
     private boolean tryEncodeAny(FieldDescriptor fd, Message anyMsg, int level) {

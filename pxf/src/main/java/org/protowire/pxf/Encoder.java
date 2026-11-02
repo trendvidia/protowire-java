@@ -332,30 +332,50 @@ final class Encoder {
         buf.append(is32 ? Format.formatFloat((float) f) : Format.formatDouble(f));
     }
 
+    /**
+     * Writes an Any as {@code @type} and a body, if the type resolves and
+     * reading that body gives back the Any's {@code value} byte for byte.
+     * Otherwise nothing is written and the caller keeps {@code type_url} and
+     * {@code value}, which always read back. A reader compares an Any by its
+     * bytes, so a body that drops or reorders them changes the message.
+     * Decoding is the only complete check: unknown fields at any depth, an
+     * order a decoder wouldn't reproduce, a value no literal holds and an
+     * annotation's rule all show up in it. Each body is decoded once, so a
+     * chain of Anys stops at the limit rather than walking every byte.
+     */
     private boolean tryEncodeAny(FieldDescriptor fd, Message anyMsg, int level) {
         Descriptor anyDesc = fd.getMessageType();
         String typeUrl = (String) anyMsg.getField(anyDesc.findFieldByName("type_url"));
         ByteString valueBytes = (ByteString) anyMsg.getField(anyDesc.findFieldByName("value"));
-        if (typeUrl.isEmpty()) return false;
+        if (typeUrl.isEmpty() || level >= DecodeLimits.defaults().maxNestingDepth()) return false;
 
         Descriptor inner = opts.typeResolver().findMessageByUrl(typeUrl);
         if (inner == null) return false;
 
-        DynamicMessage.Builder ib = DynamicMessage.newBuilder(inner);
+        int start = buf.length();
+        String savedPrefix = pathPrefix;
         try {
-            ib.mergeFrom(valueBytes);
-        } catch (InvalidProtocolBufferException e) {
-            return false;
+            Message innerMsg = DynamicMessage.newBuilder(inner).mergeFrom(valueBytes).build();
+            writeIndent(level);
+            buf.append(fd.getName()).append(" {\n");
+            writeIndent(level + 1);
+            buf.append("@type = \"").append(Format.escape(typeUrl)).append("\"\n");
+            int bodyStart = buf.length();
+            pathPrefix = pathPrefix + fd.getName() + ".";
+            encodeMessage(innerMsg, level + 1);
+            byte[] body = buf.substring(bodyStart).getBytes(StandardCharsets.UTF_8);
+            if (FastDecoder.anyBodyReadsBack(body, inner, opts.typeResolver(), level + 1, valueBytes)) {
+                writeIndent(level);
+                buf.append("}\n");
+                return true;
+            }
+        } catch (InvalidProtocolBufferException | RuntimeException e) {
+            // The bytes aren't this type, or no text holds them. They still
+            // read back as the Any's own fields.
+        } finally {
+            pathPrefix = savedPrefix;
         }
-        Message innerMsg = ib.build();
-
-        writeIndent(level);
-        buf.append(fd.getName()).append(" {\n");
-        writeIndent(level + 1);
-        buf.append("@type = \"").append(Format.escape(typeUrl)).append("\"\n");
-        encodeMessage(innerMsg, level + 1);
-        writeIndent(level);
-        buf.append("}\n");
-        return true;
+        buf.setLength(start);
+        return false;
     }
 }

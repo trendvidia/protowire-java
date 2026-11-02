@@ -856,6 +856,30 @@ final class FastDecoder {
         anyB.setField(anyDesc.findFieldByName("value"), inner.build().toByteString());
     }
 
+    /**
+     * Whether {@code body}, the entries of an Any block at nesting level
+     * {@code depth}, decodes to exactly {@code want}, the Any's value. Limits
+     * are the defaults. The post-decode pass runs, as in
+     * {@code unmarshalFull}: a value it would change isn't safe for that
+     * reader even if {@code unmarshal} leaves it alone.
+     */
+    static boolean anyBodyReadsBack(
+            byte[] body, Descriptor desc, TypeResolver resolver, int depth, com.google.protobuf.ByteString want) {
+        byte[] input = java.util.Arrays.copyOf(body, body.length + 1);
+        input[body.length] = '}';
+        try {
+            FastDecoder d = new FastDecoder(input, UnmarshalOptions.defaults().withTypeResolver(resolver), true);
+            d.depth = depth;
+            DynamicMessage.Builder inner = DynamicMessage.newBuilder(desc);
+            d.rootBuilder = inner;
+            d.decodeFieldsInner(inner, true);
+            d.postDecode(inner, "");
+            return inner.build().toByteString().equals(want);
+        } catch (RuntimeException e) {
+            return false;
+        }
+    }
+
     private void decodeListInner(Message.Builder b, FieldDescriptor fd) {
         if (current.kind() != TokenKind.LBRACKET) {
             throw new PxfException(current.pos(), "expected '[' for repeated field \"" + fd.getName() + "\"");

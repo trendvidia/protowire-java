@@ -91,6 +91,15 @@ format changes.
 
 ### Fixed
 
+- **The lite tier enforces the HARDENING limits** (protowire#503). A `pxf.Decimal`
+  on the wire with a scale past `MaxNumericLiteralDigits` is refused:
+  `LiteWireReader` used to try to write out every digit and ran out of memory on a
+  message of a few bytes. `LiteWireWriter` had no limits, and now applies
+  `MaxRepeatedCount`, `MaxNumericLiteralDigits` and `MaxBigFloatExponent`, with new
+  `encode` overloads taking `DecodeLimits`. Documents past those limits now fail.
+- **The lite tier handles a repeated enum** (protowire#503). Proto3 packs one by
+  default, and both `LiteWireWriter` and `LiteWireReader` threw on it.
+
 - **An unknown enum value is written as its number** (#147). It used to be
   written as `UNKNOWN_ENUM_VALUE_Color_99`, which no port could read back.
 - **`nan`, `inf`, `+inf` and `-inf` decode on a float field** (#147), as draft -01

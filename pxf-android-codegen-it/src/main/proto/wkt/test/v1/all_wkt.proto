@@ -42,3 +42,24 @@ message Durations {
   repeated google.protobuf.Duration list = 1;
   map<string, google.protobuf.Duration> by_name = 2;
 }
+
+// The well-known types with a block form, each as a block. Kept apart from
+// AllWkt for the same reason as Secrets.
+message Blocks {
+  google.protobuf.StringValue str_w = 1;
+  google.protobuf.BytesValue bytes_w = 2;
+  google.protobuf.BoolValue bool_w = 3;
+  google.protobuf.Int32Value i32_w = 4;
+  google.protobuf.Int64Value i64_w = 5;
+  google.protobuf.UInt32Value u32_w = 6;
+  google.protobuf.UInt64Value u64_w = 7;
+  google.protobuf.FloatValue flt_w = 8;
+  google.protobuf.DoubleValue dbl_w = 9;
+  pxf.BigInt big_int = 10;
+  pxf.Decimal dec = 11;
+  pxf.BigFloat big_float = 12;
+  repeated pxf.BigInt ints = 13;
+  map<string, pxf.Decimal> decs = 14;
+  repeated google.protobuf.Int32Value wrapped = 15;
+  map<string, google.protobuf.StringValue> names = 16;
+}

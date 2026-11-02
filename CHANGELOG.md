@@ -36,6 +36,12 @@ format changes.
   `1500ns`. The value is unchanged and the old forms still decode, but text
   comparisons and golden files holding Duration literals will differ.
 
+- **The lite tier takes a block for every wrapper and big-number type** (#140),
+  as a singular field, a list element or a map value, with no registry:
+  `i32_w { value = 5 }`, `big_int { negative = true }`. Draft -01 allows both
+  forms; these used to throw. Their fields, and those of a Duration or
+  Timestamp block, no longer take `null`, as in the full tier.
+
 ### Added
 
 - **`UnmarshalOptions.skipPostDecode`**, matching protowire-go's `SkipPostDecode`

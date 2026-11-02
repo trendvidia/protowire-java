@@ -170,6 +170,7 @@ public final class CheckDecode {
             case "pxf"      -> pxfDecode(data, schema, proto, limits);
             case "pb"       -> pbDecode(data, schema, limits);
             case "pb-render" -> pbRender(data, schema, proto);
+            case "pb-text"  -> pbText(data, schema, proto);
             case "sbe"      -> sbeDecode(data, schema, proto, limits);
             case "envelope" -> throw new RejectException("envelope decode not yet implemented in this reference");
             default         -> throw new RejectException("unsupported format: " + format);
@@ -205,6 +206,23 @@ public final class CheckDecode {
         DynamicMessage msg = DynamicMessage.parseFrom(desc, data);
         try {
             Pxf.marshal(msg);
+        } catch (RuntimeException e) {
+            throw new RejectException(messageOf(e));
+        }
+    }
+
+    // The PXF for the bytes on stdout, for the text gate
+    // (protowire/scripts/cross_text_check.sh). The stock runtime reads the
+    // bytes, as in pbRender, so the comparison is of the marshaller alone.
+    private static void pbText(byte[] data, String schema, String protoPath) throws Exception {
+        if (protoPath == null || protoPath.isEmpty()) {
+            throw new RejectException("--proto is required for format=pb-text");
+        }
+        Descriptor desc = loadDescriptor(protoPath, schema);
+        DynamicMessage msg = DynamicMessage.parseFrom(desc, data);
+        try {
+            System.out.write(Pxf.marshal(msg));
+            System.out.flush();
         } catch (RuntimeException e) {
             throw new RejectException(messageOf(e));
         }

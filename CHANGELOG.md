@@ -53,6 +53,10 @@ format changes.
 
 ### Fixed
 
+- **The lite tier refuses a oneof sibling of a keyed entry's key as the descriptor
+  tier does** (#128). The error is now a `PxfException` with the same message,
+  naming the entry, rather than an `IllegalArgumentException` from the oneof
+  check. `other = null` is refused the same way.
 - **The lite tier refuses a block on a plain repeated field** (protowire#323).
   `items { id = "a" }` used to add one element; it is now the error the
   descriptor tier gives, `repeated field "items" must use list syntax`.

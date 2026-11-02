@@ -29,6 +29,10 @@ dependencies {
     api(project(":pxf-runtime"))
     api("com.google.protobuf:protobuf-javalite:4.36.2")
 
+    // Generated companions for keyed.proto, so the keyed fixtures run on what
+    // the plugin emits. A test-only edge: lite-fixtures depends on this module.
+    testImplementation(project(":lite-fixtures"))
+
     configurations.all {
         exclude(group = "com.google.protobuf", module = "protobuf-java")
     }

@@ -2,6 +2,10 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.pxf.android;
 
+import keyed.v1.CatalogPxfMeta;
+import keyed.v1.DeploymentPxfMeta;
+import keyed.v1.DocPxfMeta;
+import keyed.v1.NodePxfMeta;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.Ast;
 import org.protowire.pxf.Format;
@@ -28,16 +32,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * The spec repo's {@code testdata/keyed/} fixtures through the lite tier. The
- * metas are hand-built copies of what {@code protoc-gen-pxf-java-meta} generates
- * for {@code keyed.proto}, because the plugin version this build pins predates
- * {@code KEY_FIELDS}; moving to generated companions is a {@code pxfJavaMeta.ref}
- * bump.
+ * The spec repo's {@code testdata/keyed/} fixtures through the lite tier, on the
+ * companions {@code protoc-gen-pxf-java-meta} generates for {@code keyed.proto}
+ * in {@code :lite-fixtures}. {@link Meta} remains for the edges that schema does
+ * not have.
  */
 final class KeyedLiteTest {
 
     private static final int STRING = 9;
-    private static final int INT32 = 5;
     private static final int MESSAGE = 11;
 
     /** Just the tables keyed binding reads; the rest are empty. */
@@ -50,8 +52,7 @@ final class KeyedLiteTest {
         final Map<Integer, PxfMeta> nested = new java.util.HashMap<>();
         Map<Integer, String> defaults = Map.of();
         Set<Integer> required = Set.of();
-        Map<Integer, String> oneofs = Map.of();
-
+    
         Meta(String fullName, Map<String, Integer> numbers, Map<Integer, Integer> kinds,
              Set<Integer> repeated, Map<Integer, String> keys) {
             this.fullName = fullName;
@@ -73,38 +74,16 @@ final class KeyedLiteTest {
         @Override public int                   sbeTemplateId()     { return -1; }
         @Override public Map<Integer, Integer> sbeFieldLengths()   { return Map.of(); }
         @Override public Map<Integer, String>  sbeFieldEncodings() { return Map.of(); }
-        @Override public Map<Integer, String>  oneofOf()           { return oneofs; }
+        @Override public Map<Integer, String>  oneofOf()           { return Map.of(); }
         @Override public String                fullName()          { return fullName; }
         @Override public Map<Integer, PxfMeta> nestedMetas()       { return nested; }
         @Override public Map<Integer, String>  keyFields()         { return keys; }
     }
 
-    private static final Meta NODE = new Meta("keyed.v1.Node",
-        Map.of("id", 1, "type", 2, "weight", 3, "children", 4),
-        Map.of(1, STRING, 2, STRING, 3, INT32, 4, MESSAGE),
-        Set.of(4), Map.of(4, "id"));
-    private static final Meta REGION = new Meta("keyed.v1.Region",
-        Map.of("name", 1, "replicas", 2),
-        Map.of(1, STRING, 2, INT32),
-        Set.of(), Map.of());
-    private static final Meta DEPLOYMENT = new Meta("keyed.v1.Deployment",
-        Map.of("service", 1, "regions", 2),
-        Map.of(1, STRING, 2, MESSAGE),
-        Set.of(2), Map.of(2, "name"));
-    private static final Meta PLAIN = new Meta("keyed.v1.Plain",
-        Map.of("id", 1, "label", 2),
-        Map.of(1, STRING, 2, STRING),
-        Set.of(), Map.of());
-    private static final Meta DOC = new Meta("keyed.v1.Doc",
-        Map.of("items", 1),
-        Map.of(1, MESSAGE),
-        Set.of(1), Map.of());
-
-    static {
-        NODE.nested.put(4, NODE);
-        DEPLOYMENT.nested.put(2, REGION);
-        DOC.nested.put(1, PLAIN);
-    }
+    private static final PxfMeta NODE = NodePxfMeta.INSTANCE;
+    private static final PxfMeta DEPLOYMENT = DeploymentPxfMeta.INSTANCE;
+    private static final PxfMeta DOC = DocPxfMeta.INSTANCE;
+    private static final PxfMeta CATALOG = CatalogPxfMeta.INSTANCE;
 
     private static final PxfRegistry NO_REGISTRY = new PxfRegistry() {
         @Override public PxfMeta lookupMessage(String fullName) { throw new AssertionError(fullName); }
@@ -119,9 +98,10 @@ final class KeyedLiteTest {
     }
 
     /** The fixture's {@code @type} short name picks the message it binds. */
-    private static Meta metaOf(String doc) {
+    private static PxfMeta metaOf(String doc) {
         if (doc.contains("keyed.v1.Deployment")) return DEPLOYMENT;
         if (doc.contains("keyed.v1.Doc")) return DOC;
+        if (doc.contains("keyed.v1.Catalog")) return CATALOG;
         assertTrue(doc.contains("keyed.v1.Node"), doc);
         return NODE;
     }
@@ -136,7 +116,7 @@ final class KeyedLiteTest {
 
     /** Text through the wire and back: decode, then encode. */
     private static String roundTrip(String doc) {
-        Meta meta = metaOf(doc);
+        PxfMeta meta = metaOf(doc);
         return format(encode(doc, meta), meta);
     }
 
@@ -192,22 +172,38 @@ final class KeyedLiteTest {
         }
     }
 
+    @Test
+    void aKeyInAOneofTakesTheEntryName() throws IOException {
+        byte[] wire = encode(fixture("key-oneof-ok.pxf"), CATALOG);
+        // choices (1) { name (1) "alpha" }, { name "beta" }, { other (2) "x" }
+        assertArrayEquals(HexFormat.of().parseHex("0a070a05616c706861" + "0a060a0462657461" + "0a03120178"), wire);
+    }
+
+    @Test
+    void anAnonymousElementMayNullAnOptionalKey() throws IOException {
+        // tags (2) { }: the key stays absent, so no name can carry the element.
+        assertArrayEquals(HexFormat.of().parseHex("1200"), encode(fixture("key-null-anonymous-ok.pxf"), CATALOG));
+    }
+
     // -- reject fixtures -------------------------------------------------------
 
-    private static void assertRejected(String doc, Meta meta, String needle) {
+    private static void assertRejected(String doc, PxfMeta meta, String needle) {
         PxfException e = assertThrows(PxfException.class, () -> encode(doc, meta), doc);
         assertTrue(e.getMessage().contains(needle), e.getMessage());
     }
 
     @Test
     void rejectFixtures() throws IOException {
-        Map<String, String> cases = Map.of(
-            "err-duplicate-key.pxf", "duplicate key \"greeting\" in keyed field \"children\"",
-            "err-duplicate-key-spelling.pxf", "duplicate key \"greeting\" in keyed field \"children\"",
-            "err-key-conflict.pxf", "key field \"id\" = \"farewell\" conflicts with entry name \"greeting\" in keyed field \"children\"",
-            "err-empty-key.pxf", "empty entry name in keyed field \"children\": the empty string is not a valid key",
-            "err-empty-key-anonymous.pxf", "explicit empty-string assignment to key field \"id\" of keyed field \"children\"",
-            "err-quoted-name-unkeyed.pxf", "quoted entry name \"a\" is only valid inside a keyed repeated field's block");
+        Map<String, String> cases = Map.ofEntries(
+            Map.entry("err-duplicate-key.pxf", "duplicate key \"greeting\" in keyed field \"children\""),
+            Map.entry("err-duplicate-key-spelling.pxf", "duplicate key \"greeting\" in keyed field \"children\""),
+            Map.entry("err-key-conflict.pxf", "key field \"id\" = \"farewell\" conflicts with entry name \"greeting\" in keyed field \"children\""),
+            Map.entry("err-empty-key.pxf", "empty entry name in keyed field \"children\": the empty string is not a valid key"),
+            Map.entry("err-empty-key-anonymous.pxf", "explicit empty-string assignment to key field \"id\" of keyed field \"children\""),
+            Map.entry("err-quoted-name-unkeyed.pxf", "quoted entry name \"a\" is only valid inside a keyed repeated field's block"),
+            Map.entry("err-key-null.pxf", "null on key field \"name\" conflicts with entry name \"alpha\" in keyed field \"tags\""),
+            Map.entry("err-key-oneof-sibling.pxf", "field \"other\" shares oneof \"pick\" with key field \"name\""),
+            Map.entry("err-key-oneof-sibling-null.pxf", "field \"other\" shares oneof \"pick\" with key field \"name\""));
         for (Map.Entry<String, String> c : cases.entrySet()) {
             String doc = fixture(c.getKey());
             assertRejected(doc, metaOf(doc), c.getValue());
@@ -266,15 +262,6 @@ final class KeyedLiteTest {
     }
 
     @Test
-    void aOneofSiblingOfTheKeyCannotUndoTheName() {
-        Meta elem = new Meta("t.Elem", Map.of("id", 1, "other", 2), Map.of(1, STRING, 2, STRING), Set.of(), Map.of());
-        elem.oneofs = Map.of(1, "pick", 2, "pick");
-        Meta holder = new Meta("t.Holder", Map.of("kd", 1), Map.of(1, MESSAGE), Set.of(1), Map.of(1, "id"));
-        holder.nested.put(1, elem);
-        assertThrows(IllegalArgumentException.class, () -> encode("kd { alpha { other = \"x\" } }", holder));
-    }
-
-    @Test
     void anElementWithoutAKeyStaysAnonymous() {
         // The second element has no id, so no name can carry it.
         byte[] wire = encode("children = [ { id = \"a\" }, { weight = 1 } ]", NODE);
@@ -290,7 +277,7 @@ final class KeyedLiteTest {
     @Test
     void aMetaWithoutTheTableBindsAsPlain() {
         Meta plain = new Meta("keyed.v1.Node",
-            NODE.numbers, NODE.kinds, NODE.repeated, Map.of());
+            NODE.fieldNumbers(), NODE.fieldKinds(), NODE.repeatedFields(), Map.of());
         plain.nested.put(4, plain);
         byte[] wire = encode("children = [ { id = \"a\" } ]", plain);
         assertTrue(format(wire, plain).contains("children = ["), format(wire, plain));

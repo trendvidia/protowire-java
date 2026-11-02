@@ -31,7 +31,7 @@ class MapWellKnownTest {
     @ParameterizedTest
     @ValueSource(strings = {
         "ts = {\n  a: 2026-01-01T00:00:00Z\n}\n",
-        "dur = {\n  a: 1h30m\n}\n",
+        "dur = {\n  a: 1h30m0s\n}\n",
         "str = {\n  a: \"x\"\n}\n",
         "byt = {\n  a: b\"eA==\"\n}\n",
         "flag = {\n  a: true\n}\n",

@@ -1098,11 +1098,16 @@ final class FastDecoder {
                 if (current.kind() != TokenKind.BOOL) throw new PxfException(pos, "expected bool for field \"" + fd.getName() + "\"");
                 boolean bv = "true".equals(current.value()); advance(); return bv;
             case INT:
-                if (current.kind() != TokenKind.INT) throw new PxfException(pos, "expected integer for field \"" + fd.getName() + "\"");
-                int iv = (int) Long.parseLong(current.value()); advance(); return iv;
             case LONG:
                 if (current.kind() != TokenKind.INT) throw new PxfException(pos, "expected integer for field \"" + fd.getName() + "\"");
-                long lv = Long.parseLong(current.value()); advance(); return lv;
+                Object iv;
+                try {
+                    iv = parseInteger(fd, current.value());
+                } catch (NumberFormatException e) {
+                    throw new PxfException(pos, "invalid " + fd.getType().name().toLowerCase(java.util.Locale.ROOT) + ": " + current.value());
+                }
+                advance();
+                return iv;
             case FLOAT:
                 if (current.kind() != TokenKind.FLOAT && current.kind() != TokenKind.INT) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
                 float fv = Float.parseFloat(current.value()); advance(); return fv;
@@ -1123,6 +1128,21 @@ final class FastDecoder {
             default:
                 throw new PxfException(pos, "unsupported kind " + fd.getJavaType() + " for field \"" + fd.getName() + "\"");
         }
+    }
+
+    /**
+     * An integer in the range of {@code fd}'s type (draft -01 § Numeric
+     * Literals), as the boxed value {@code fd} holds: an unsigned type keeps
+     * its bits in the signed Java type. Anything outside the range is a
+     * {@link NumberFormatException}, which includes a sign on an unsigned type.
+     */
+    private static Object parseInteger(FieldDescriptor fd, String text) {
+        return switch (fd.getType()) {
+            case INT32, SINT32, SFIXED32 -> Integer.parseInt(text);
+            case UINT32, FIXED32 -> Integer.parseUnsignedInt(text);
+            case UINT64, FIXED64 -> Long.parseUnsignedLong(text);
+            default -> Long.parseLong(text);
+        };
     }
 
     /** The current literal as a {@code pxf.BigFloat}; the caller advances past it. */
@@ -1157,7 +1177,12 @@ final class FastDecoder {
                 return ev;
             }
             case INT -> {
-                int n = Integer.parseInt(current.value());
+                int n;
+                try {
+                    n = Integer.parseInt(current.value());
+                } catch (NumberFormatException e) {
+                    throw new PxfException(pos, "invalid enum number: " + current.value());
+                }
                 EnumValueDescriptor ev = fd.getEnumType().findValueByNumber(n);
                 if (ev == null) ev = fd.getEnumType().findValueByNumberCreatingIfUnknown(n);
                 advance();
@@ -1283,8 +1308,7 @@ final class FastDecoder {
             switch (fd.getJavaType()) {
                 case STRING  -> b.setField(fd, def);
                 case BOOLEAN -> b.setField(fd, parseBoolDefault(fd, def));
-                case INT     -> b.setField(fd, Integer.parseInt(def));
-                case LONG    -> b.setField(fd, Long.parseLong(def));
+                case INT, LONG -> b.setField(fd, parseInteger(fd, def));
                 case FLOAT   -> b.setField(fd, Float.parseFloat(def));
                 case DOUBLE  -> b.setField(fd, Double.parseDouble(def));
                 case BYTE_STRING -> b.setField(fd, ByteString.copyFrom(Base64.getDecoder().decode(def)));
@@ -1349,8 +1373,7 @@ final class FastDecoder {
         return switch (fd.getJavaType()) {
             case STRING  -> def;
             case BOOLEAN -> parseBoolDefault(fd, def);
-            case INT     -> Integer.parseInt(def);
-            case LONG    -> Long.parseLong(def);
+            case INT, LONG -> parseInteger(fd, def);
             case FLOAT   -> Float.parseFloat(def);
             case DOUBLE  -> Double.parseDouble(def);
             case BYTE_STRING -> ByteString.copyFrom(Base64.getDecoder().decode(def));

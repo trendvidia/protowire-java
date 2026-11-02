@@ -53,6 +53,15 @@ format changes.
 
 ### Fixed
 
+- **An integer outside its field's type is refused** (#126). `int32 x = 5000000000`
+  stored 705032704, `uint32 x = -1` stored the bits of -1, and a `uint64` or
+  `int64` beyond `long` threw `NumberFormatException`. The draft requires
+  rejecting these, and protowire-go does. Both tiers now throw `PxfException`,
+  also for a `(pxf.default)` and an enum number. **Text that relied on the
+  truncation now fails to decode.**
+- **Unsigned values print unsigned.** A `uint32` or `fixed32` at or above 2^31 and
+  a `uint64` or `fixed64` at or above 2^63 were written as negative numbers, in
+  fields, list elements and map keys. That text then failed to decode correctly.
 - **The lite tier refuses a block on a plain repeated field** (protowire#323).
   `items { id = "a" }` used to add one element; it is now the error the
   descriptor tier gives, `repeated field "items" must use list syntax`.

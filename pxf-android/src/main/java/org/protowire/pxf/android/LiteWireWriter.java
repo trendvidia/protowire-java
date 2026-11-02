@@ -714,7 +714,7 @@ public final class LiteWireWriter {
             case K_BOOL -> !asBool(v);
             case K_INT32, K_INT64, K_UINT32, K_UINT64,
                  K_SINT32, K_SINT64,
-                 K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> asLong(v) == 0L;
+                 K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> integer(v, kind) == 0L;
             case K_FLOAT  -> asFloat(v) == 0.0f;
             case K_DOUBLE -> asDouble(v) == 0.0;
             case K_STRING -> asString(v).isEmpty();
@@ -970,7 +970,7 @@ public final class LiteWireWriter {
             enumValue = mapped;
         } else if (v instanceof Ast.IntVal i) {
             // PXF accepts a bare integer for an enum field — used for unknown / forward-compat values.
-            enumValue = (int) Long.parseLong(i.raw());
+            enumValue = (int) integer(i, K_INT32);
         } else {
             throw new IllegalArgumentException(
                 "expected enum identifier or integer literal, got " + v.getClass().getSimpleName());
@@ -989,16 +989,16 @@ public final class LiteWireWriter {
                 case K_STRING   -> out.writeString(num, asString(v));
                 case K_BYTES    -> out.writeByteArray(num, asBytes(v));
                 case K_BOOL     -> out.writeBool(num, asBool(v));
-                case K_INT32    -> out.writeInt32(num, (int) asLong(v));
-                case K_INT64    -> out.writeInt64(num, asLong(v));
-                case K_UINT32   -> out.writeUInt32(num, (int) asLong(v));
-                case K_UINT64   -> out.writeUInt64(num, asLong(v));
-                case K_SINT32   -> out.writeSInt32(num, (int) asLong(v));
-                case K_SINT64   -> out.writeSInt64(num, asLong(v));
-                case K_FIXED32  -> out.writeFixed32(num, (int) asLong(v));
-                case K_FIXED64  -> out.writeFixed64(num, asLong(v));
-                case K_SFIXED32 -> out.writeSFixed32(num, (int) asLong(v));
-                case K_SFIXED64 -> out.writeSFixed64(num, asLong(v));
+                case K_INT32    -> out.writeInt32(num, (int) integer(v, K_INT32));
+                case K_INT64    -> out.writeInt64(num, integer(v, K_INT64));
+                case K_UINT32   -> out.writeUInt32(num, (int) integer(v, K_UINT32));
+                case K_UINT64   -> out.writeUInt64(num, integer(v, K_UINT64));
+                case K_SINT32   -> out.writeSInt32(num, (int) integer(v, K_SINT32));
+                case K_SINT64   -> out.writeSInt64(num, integer(v, K_SINT64));
+                case K_FIXED32  -> out.writeFixed32(num, (int) integer(v, K_FIXED32));
+                case K_FIXED64  -> out.writeFixed64(num, integer(v, K_FIXED64));
+                case K_SFIXED32 -> out.writeSFixed32(num, (int) integer(v, K_SFIXED32));
+                case K_SFIXED64 -> out.writeSFixed64(num, integer(v, K_SFIXED64));
                 case K_FLOAT    -> out.writeFloat(num, asFloat(v));
                 case K_DOUBLE   -> out.writeDouble(num, asDouble(v));
                 default -> throw new UnsupportedOperationException(
@@ -1047,12 +1047,12 @@ public final class LiteWireWriter {
     private static int computeScalarSizeNoTag(int kind, Ast.Value v) {
         return switch (kind) {
             case K_BOOL                                -> 1;
-            case K_INT32                               -> CodedOutputStream.computeInt32SizeNoTag((int) asLong(v));
-            case K_INT64                               -> CodedOutputStream.computeInt64SizeNoTag(asLong(v));
-            case K_UINT32                              -> CodedOutputStream.computeUInt32SizeNoTag((int) asLong(v));
-            case K_UINT64                              -> CodedOutputStream.computeUInt64SizeNoTag(asLong(v));
-            case K_SINT32                              -> CodedOutputStream.computeSInt32SizeNoTag((int) asLong(v));
-            case K_SINT64                              -> CodedOutputStream.computeSInt64SizeNoTag(asLong(v));
+            case K_INT32                               -> CodedOutputStream.computeInt32SizeNoTag((int) integer(v, K_INT32));
+            case K_INT64                               -> CodedOutputStream.computeInt64SizeNoTag(integer(v, K_INT64));
+            case K_UINT32                              -> CodedOutputStream.computeUInt32SizeNoTag((int) integer(v, K_UINT32));
+            case K_UINT64                              -> CodedOutputStream.computeUInt64SizeNoTag(integer(v, K_UINT64));
+            case K_SINT32                              -> CodedOutputStream.computeSInt32SizeNoTag((int) integer(v, K_SINT32));
+            case K_SINT64                              -> CodedOutputStream.computeSInt64SizeNoTag(integer(v, K_SINT64));
             case K_FIXED32, K_SFIXED32, K_FLOAT        -> 4;
             case K_FIXED64, K_SFIXED64, K_DOUBLE       -> 8;
             default -> throw new UnsupportedOperationException(
@@ -1063,16 +1063,16 @@ public final class LiteWireWriter {
     private static void writeScalarNoTag(CodedOutputStream out, int kind, Ast.Value v) throws IOException {
         switch (kind) {
             case K_BOOL     -> out.writeBoolNoTag(asBool(v));
-            case K_INT32    -> out.writeInt32NoTag((int) asLong(v));
-            case K_INT64    -> out.writeInt64NoTag(asLong(v));
-            case K_UINT32   -> out.writeUInt32NoTag((int) asLong(v));
-            case K_UINT64   -> out.writeUInt64NoTag(asLong(v));
-            case K_SINT32   -> out.writeSInt32NoTag((int) asLong(v));
-            case K_SINT64   -> out.writeSInt64NoTag(asLong(v));
-            case K_FIXED32  -> out.writeFixed32NoTag((int) asLong(v));
-            case K_FIXED64  -> out.writeFixed64NoTag(asLong(v));
-            case K_SFIXED32 -> out.writeSFixed32NoTag((int) asLong(v));
-            case K_SFIXED64 -> out.writeSFixed64NoTag(asLong(v));
+            case K_INT32    -> out.writeInt32NoTag((int) integer(v, K_INT32));
+            case K_INT64    -> out.writeInt64NoTag(integer(v, K_INT64));
+            case K_UINT32   -> out.writeUInt32NoTag((int) integer(v, K_UINT32));
+            case K_UINT64   -> out.writeUInt64NoTag(integer(v, K_UINT64));
+            case K_SINT32   -> out.writeSInt32NoTag((int) integer(v, K_SINT32));
+            case K_SINT64   -> out.writeSInt64NoTag(integer(v, K_SINT64));
+            case K_FIXED32  -> out.writeFixed32NoTag((int) integer(v, K_FIXED32));
+            case K_FIXED64  -> out.writeFixed64NoTag(integer(v, K_FIXED64));
+            case K_SFIXED32 -> out.writeSFixed32NoTag((int) integer(v, K_SFIXED32));
+            case K_SFIXED64 -> out.writeSFixed64NoTag(integer(v, K_SFIXED64));
             case K_FLOAT    -> out.writeFloatNoTag(asFloat(v));
             case K_DOUBLE   -> out.writeDoubleNoTag(asDouble(v));
             default -> throw new UnsupportedOperationException(
@@ -1103,9 +1103,25 @@ public final class LiteWireWriter {
         throw new IllegalArgumentException("expected bool, got " + v.getClass().getSimpleName());
     }
 
-    private static long asLong(Ast.Value v) {
-        if (v instanceof Ast.IntVal i) return Long.parseLong(i.raw());
-        throw new IllegalArgumentException("expected integer, got " + v.getClass().getSimpleName());
+    /**
+     * An integer in the range of field kind {@code kind} (draft -01 § Numeric
+     * Literals). An unsigned kind keeps its bits in the signed Java type,
+     * which is what {@link CodedOutputStream} takes.
+     */
+    private static long integer(Ast.Value v, int kind) {
+        if (!(v instanceof Ast.IntVal i)) {
+            throw new IllegalArgumentException("expected integer, got " + v.getClass().getSimpleName());
+        }
+        try {
+            return switch (kind) {
+                case K_INT32, K_SINT32, K_SFIXED32 -> Integer.parseInt(i.raw());
+                case K_UINT32, K_FIXED32 -> Integer.parseUnsignedInt(i.raw());
+                case K_UINT64, K_FIXED64 -> Long.parseUnsignedLong(i.raw());
+                default -> Long.parseLong(i.raw());
+            };
+        } catch (NumberFormatException e) {
+            throw new PxfException(i.pos(), "integer " + i.raw() + " is out of range for its field");
+        }
     }
 
     private static float asFloat(Ast.Value v) {

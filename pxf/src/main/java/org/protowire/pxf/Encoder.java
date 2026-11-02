@@ -305,9 +305,17 @@ final class Encoder {
                 yield Format.needsQuoting(s) ? '"' + Format.escape(s) + '"' : s;
             }
             case BOOLEAN -> ((Boolean) k) ? "true" : "false";
-            case INT -> Integer.toString((Integer) k);
-            case LONG -> Long.toString((Long) k);
+            case INT, LONG -> integerText(keyFd, k);
             default -> String.valueOf(k);
+        };
+    }
+
+    /** An unsigned type keeps its bits in the signed Java type, so it prints unsigned. */
+    private static String integerText(FieldDescriptor fd, Object v) {
+        return switch (fd.getType()) {
+            case UINT32, FIXED32 -> Integer.toUnsignedString((Integer) v);
+            case UINT64, FIXED64 -> Long.toUnsignedString((Long) v);
+            default -> v.toString();
         };
     }
 
@@ -315,8 +323,7 @@ final class Encoder {
         switch (fd.getJavaType()) {
             case STRING -> buf.append('"').append(Format.escape((String) v)).append('"');
             case BOOLEAN -> buf.append(((Boolean) v) ? "true" : "false");
-            case INT -> buf.append((int) v);
-            case LONG -> buf.append((long) v);
+            case INT, LONG -> buf.append(integerText(fd, v));
             case FLOAT -> writeFloat(((Number) v).doubleValue(), true);
             case DOUBLE -> writeFloat(((Number) v).doubleValue(), false);
             case BYTE_STRING -> buf.append("b\"").append(Base64.getEncoder().encodeToString(((ByteString) v).toByteArray())).append('"');

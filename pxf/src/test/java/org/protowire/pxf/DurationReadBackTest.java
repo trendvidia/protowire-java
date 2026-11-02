@@ -5,6 +5,8 @@ package org.protowire.pxf;
 import com.google.protobuf.Duration;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.testproto.AllTypes;
+import org.protowire.pxf.testproto.DurationList;
+import org.protowire.pxf.testproto.MapWellKnown;
 
 import java.nio.charset.StandardCharsets;
 import java.util.List;
@@ -65,6 +67,65 @@ class DurationReadBackTest {
                 .setSeconds(nanos / 1_000_000_000L)
                 .setNanos((int) (nanos % 1_000_000_000L))
                 .build();
+    }
+
+    private record LongCase(long seconds, int nanos, String text) {}
+
+    // A literal holds 64 bits of nanoseconds, about 292 years. Past that a
+    // valid Duration is written as a block, keeping its exact value (#138).
+    private static final List<LongCase> AROUND_THE_LIMIT = List.of(
+            new LongCase(9_223_372_036L, 854_775_807, "dur_field = 2562047h47m16.854775807s\n"),
+            new LongCase(-9_223_372_036L, -854_775_808, "dur_field = -2562047h47m16.854775808s\n"),
+            new LongCase(9_223_372_036L, 854_775_808,
+                    "dur_field {\n  seconds = 9223372036\n  nanos = 854775808\n}\n"),
+            new LongCase(-9_223_372_036L, -854_775_809,
+                    "dur_field {\n  seconds = -9223372036\n  nanos = -854775809\n}\n"),
+            new LongCase(9_500_000_000L, 0, "dur_field {\n  seconds = 9500000000\n}\n"),
+            new LongCase(-9_500_000_000L, -5, "dur_field {\n  seconds = -9500000000\n  nanos = -5\n}\n"),
+            new LongCase(315_576_000_000L, 999_999_999,
+                    "dur_field {\n  seconds = 315576000000\n  nanos = 999999999\n}\n"));
+
+    @Test
+    void pastTheLiteralLimitIsABlock() {
+        for (LongCase c : AROUND_THE_LIMIT) {
+            Duration d = Duration.newBuilder().setSeconds(c.seconds()).setNanos(c.nanos()).build();
+            String text = new String(Pxf.marshal(AllTypes.newBuilder().setDurField(d).build()),
+                    StandardCharsets.UTF_8);
+            assertEquals(c.text(), text);
+            assertEquals(d, decode(text), text);
+        }
+    }
+
+    @Test
+    void pastTheLiteralLimitInAMapValue() {
+        Duration d = Duration.newBuilder().setSeconds(9_500_000_000L).setNanos(1).build();
+        MapWellKnown m = MapWellKnown.newBuilder().putDur("a", d).build();
+        String text = new String(Pxf.marshal(m), StandardCharsets.UTF_8);
+        assertEquals("dur = {\n  a: {\n    seconds = 9500000000\n    nanos = 1\n  }\n}\n", text);
+        MapWellKnown.Builder back = MapWellKnown.newBuilder();
+        Pxf.unmarshal(text.getBytes(StandardCharsets.UTF_8), back);
+        assertEquals(m, back.build());
+    }
+
+    @Test
+    void pastTheLiteralLimitInAList() {
+        Duration big = Duration.newBuilder().setSeconds(9_500_000_000L).build();
+        Duration small = Duration.newBuilder().setSeconds(5400).build();
+        DurationList m = DurationList.newBuilder().addItems(small).addItems(big).build();
+        String text = new String(Pxf.marshal(m), StandardCharsets.UTF_8);
+        assertEquals("items = [\n  1h30m0s,\n  {\n    seconds = 9500000000\n  }\n]\n", text);
+        DurationList.Builder back = DurationList.newBuilder();
+        Pxf.unmarshal(text.getBytes(StandardCharsets.UTF_8), back);
+        assertEquals(m, back.build());
+    }
+
+    @Test
+    void pastTheLiteralLimitInADatasetCell() {
+        var doc = Parser.parse("@dataset test.v1.AllTypes (dur_field)\n({\n  seconds = 9500000000\n})\n");
+        var table = doc.datasets().get(0);
+        AllTypes.Builder b = AllTypes.newBuilder();
+        BindRow.bindRow(b, table.columns(), table.rows().get(0));
+        assertEquals(9_500_000_000L, b.getDurField().getSeconds());
     }
 
     private static Duration decode(String text) {

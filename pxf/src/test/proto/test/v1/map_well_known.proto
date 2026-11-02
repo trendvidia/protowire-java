@@ -29,3 +29,7 @@ message MapWellKnown {
   map<string, pxf.Decimal> dec = 13;
   map<string, pxf.BigFloat> flt = 14;
 }
+
+message DurationList {
+  repeated google.protobuf.Duration items = 1;
+}

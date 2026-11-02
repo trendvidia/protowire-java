@@ -134,9 +134,18 @@ final class Encoder {
     /** Whether {@code m} is written as a literal, wherever it is bound, rather than as a block. */
     private static boolean hasLiteral(Message m) {
         Descriptor md = m.getDescriptorForType();
-        return WellKnown.isTimestamp(md) || WellKnown.isDuration(md) || WellKnown.isWrapper(md)
+        return WellKnown.isTimestamp(md) || durationLiteral(m) || WellKnown.isWrapper(md)
                 || WellKnown.isBigInt(md) || WellKnown.isDecimal(md) || WellKnown.isBigFloat(md)
                 || secretLiteral(m);
+    }
+
+    /** Whether {@code m} is a Duration its literal can hold; a longer one is written as a block. */
+    private static boolean durationLiteral(Message m) {
+        Descriptor md = m.getDescriptorForType();
+        if (!WellKnown.isDuration(md)) return false;
+        return TimeFormats.fitsDurationLiteral(
+                (long) m.getField(md.findFieldByName("seconds")),
+                (int) m.getField(md.findFieldByName("nanos")));
     }
 
     /** Writes the literal of a message {@link #hasLiteral} accepts. */

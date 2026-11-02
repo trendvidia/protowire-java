@@ -323,6 +323,27 @@ final class LiteWireReaderTest {
         assertEquals("0a16" + "08ffffffffffffffffff01" + "1080b6ca91feffffffff01", HexFormat.of().formatHex(literal));
     }
 
+    // Past 64 bits of nanoseconds a literal can't hold the value, so it reads
+    // back to text as a block with the same wire bytes (#138).
+    @Test
+    void wkt_duration_pastLiteralLimitIsABlock() {
+        PxfMeta meta = wktMeta("ttl", 1, "com.google.protobuf.Duration", PxfMeta.WKT_DURATION);
+        for (String body : List.of("  seconds = 9223372036\n  nanos = 854775808\n",
+                "  seconds = -9500000000\n  nanos = -5\n", "  seconds = 315576000000\n")) {
+            byte[] wire = LiteWireWriter.encode(Parser.parse("ttl {\n" + body + "}\n"), meta);
+            String text = Format.formatDocument(LiteWireReader.toAst(wire, meta));
+            assertEquals("ttl = {\n" + body + "}\n", text);
+            assertArrayEquals(wire, LiteWireWriter.encode(Parser.parse(text), meta));
+        }
+    }
+
+    @Test
+    void wkt_timestamp_blockNeedsNoRegistry() {
+        PxfMeta meta = wktMeta("created", 1, "com.google.protobuf.Timestamp", PxfMeta.WKT_TIMESTAMP);
+        assertArrayEquals(LiteWireWriter.encode(Parser.parse("created = 1970-01-01T00:00:05Z\n"), meta),
+            LiteWireWriter.encode(Parser.parse("created {\n  seconds = 5\n}\n"), meta));
+    }
+
     @Test
     void wkt_stringValue_roundTrip() {
         assertRoundTrip("nickname = \"alice\"",

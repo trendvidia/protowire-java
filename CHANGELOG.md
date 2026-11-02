@@ -20,6 +20,14 @@ format changes.
 
 ### Changed
 
+- **A Duration past about 292 years is written as a block** (#138), in both
+  tiers, as a singular field, a list element or a map value:
+  `dur { seconds = 9500000000 }`. A duration literal holds 64 bits of
+  nanoseconds, and a longer value used to throw `ArithmeticException` from
+  `Pxf.marshal` and `LiteWireReader`, though protobuf defines it up to about
+  10,000 years. Literals for shorter values are unchanged, and a longer
+  literal is still an error. `TimeFormats.fitsDurationLiteral` is the check.
+
 - **Duration text now matches protowire-go byte for byte, in both tiers**
   (#136). `TimeFormats.formatGoDuration`, which `Pxf.marshal` and the lite
   tier's `LiteWireReader` share, writes what Go's `time.Duration.String()`
@@ -62,6 +70,13 @@ format changes.
   current plugin to use the form.
 
 ### Fixed
+
+- **The lite tier writes a negative Duration with one sign** (#138). `-1.5s`
+  went on the wire as seconds -2, nanos +500000000, which protobuf defines as
+  invalid and the draft forbids; it is now seconds -1, nanos -500000000.
+- **The lite tier reads a Duration or Timestamp block without a registry**
+  (#138). `ttl { seconds = 5 }` threw `IllegalStateException` asking for a
+  `PxfRegistry`, on generated companions too.
 
 - **The lite tier refuses a oneof sibling of a keyed entry's key as the descriptor
   tier does** (#128). The error is now a `PxfException` with the same message,

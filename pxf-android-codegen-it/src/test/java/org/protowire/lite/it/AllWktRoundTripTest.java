@@ -15,6 +15,8 @@ import org.protowire.proto.pxf.BigInt;
 import org.protowire.proto.pxf.Decimal;
 import wkt.test.v1.AllWkt;
 import wkt.test.v1.AllWktPxfCodec;
+import wkt.test.v1.Durations;
+import wkt.test.v1.DurationsPxfCodec;
 
 import java.util.Arrays;
 
@@ -102,6 +104,29 @@ final class AllWktRoundTripTest {
             assertEquals(true, text.contains(fragment),
                 "marshal output missing field '" + fragment + "':\n" + text);
         }
+    }
+
+    // Generated companions, past the literal's limit (#138) and negative.
+    @Test
+    void duration_pastLiteralLimit_roundTrips() {
+        for (Duration d : new Duration[]{
+                Duration.newBuilder().setSeconds(9_500_000_000L).build(),
+                Duration.newBuilder().setSeconds(-9_500_000_000L).setNanos(-5).build(),
+                Duration.newBuilder().setSeconds(-1).setNanos(-500_000_000).build()}) {
+            AllWkt msg = AllWkt.newBuilder().setDur(d).build();
+            String text = AllWktPxfCodec.marshal(msg);
+            assertEquals(d, AllWktPxfCodec.unmarshal(text).getDur(), text);
+        }
+    }
+
+    @Test
+    void duration_pastLiteralLimit_inListAndMap() {
+        Duration big = Duration.newBuilder().setSeconds(9_500_000_000L).setNanos(1).build();
+        Duration small = Duration.newBuilder().setSeconds(5400).build();
+        Durations msg = Durations.newBuilder().addList(small).addList(big)
+            .putByName("big", big).putByName("small", small).build();
+        String text = DurationsPxfCodec.marshal(msg);
+        assertEquals(msg, DurationsPxfCodec.unmarshal(text), text);
     }
 
     /**

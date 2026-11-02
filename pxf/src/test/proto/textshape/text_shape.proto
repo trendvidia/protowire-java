@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// Each place a message or a map is written. :pxf-android-codegen-it holds a
+// copy, and TextShapeTest in each module pins the same text (#141).
+
+syntax = "proto3";
+
+package textshape.v1;
+
+option java_package = "textshape.v1";
+option java_multiple_files = true;
+
+message Item {
+  string name = 1;
+}
+
+message Shapes {
+  Item one = 1;
+  map<string, Item> by_name = 2;
+  map<int32, string> by_num = 3;
+  repeated Item list = 4;
+}

@@ -154,7 +154,8 @@ public final class Format {
         }
     }
 
-    static String escape(String s) {
+    /** The body of a string literal: {@code s} with its escapes, without the quotes. */
+    public static String escape(String s) {
         StringBuilder out = new StringBuilder(s.length() + 4);
         for (int i = 0; i < s.length(); i++) {
             char c = s.charAt(i);

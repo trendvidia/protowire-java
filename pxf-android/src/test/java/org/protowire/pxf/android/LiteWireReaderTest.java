@@ -332,7 +332,7 @@ final class LiteWireReaderTest {
                 "  seconds = -9500000000\n  nanos = -5\n", "  seconds = 315576000000\n")) {
             byte[] wire = LiteWireWriter.encode(Parser.parse("ttl {\n" + body + "}\n"), meta);
             String text = Format.formatDocument(LiteWireReader.toAst(wire, meta));
-            assertEquals("ttl = {\n" + body + "}\n", text);
+            assertEquals("ttl {\n" + body + "}\n", text);
             assertArrayEquals(wire, LiteWireWriter.encode(Parser.parse(text), meta));
         }
     }
@@ -457,7 +457,7 @@ final class LiteWireReaderTest {
         while (true) {
             Ast.Value child = null;
             for (Ast.Entry e : entries) {
-                if (e instanceof Ast.Assignment a && "child".equals(a.key())) child = a.value();
+                if (e instanceof Ast.Block b && "child".equals(b.name())) child = new Ast.BlockVal(b.pos(), b.entries());
             }
             if (!(child instanceof Ast.BlockVal b)) return d;
             d++;

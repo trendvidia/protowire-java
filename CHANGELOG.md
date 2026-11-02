@@ -18,6 +18,18 @@ format changes.
 
 ## [Unreleased]
 
+## [1.4.0] — 2026-11-02
+
+A minor release, because it narrows what decodes. The lite tier catches up with
+the full tier: keyed fields, the null rule, `@required` and `@default`,
+`pxf.Secret`, a block for every well-known type, and the HARDENING limits. It also
+fixes an out-of-memory crash on a crafted `pxf.Decimal` in `LiteWireReader`. Java's
+text now matches protowire-go's in both tiers, so golden files will differ. No
+wire-format change.
+
+Generated lite companions need `protoc-gen-pxf-java-meta` from protowire v1.16.0
+for keyed fields and the null rule.
+
 ### Changed
 
 - **Float and Timestamp text matches protowire-go, in both tiers** (#147). A float
@@ -56,6 +68,64 @@ format changes.
   forms; these used to throw. Their fields, and those of a Duration or
   Timestamp block, no longer take `null`, as in the full tier.
 
+- **A keyed entry's body can't undo its entry name** (#124, protowire#480).
+  Inside a named entry, `null` on the key field, or any binding of another
+  member of the key field's oneof, is now a decode error. Before,
+  `choices { alpha { other = "x" } }` lost the key with no error. The anonymous
+  form and an agreeing `name = "alpha"` stay legal. Only a key that is optional
+  or in a oneof can reach these documents, and `Pxf.marshal` never wrote them.
+- **`MaxBigFloatExponent` (16384)** is enforced on a literal, a marshalled
+  value and the PB wire (protowire#281), and is a sixth `--limit` for
+  `check-decode`. `DecodeLimits` and `pb.UnmarshalOptions` gain it, keeping
+  their previous constructors.
+- **`MaxNumericLiteralDigits` counts mantissa digits only** (protowire#410):
+  leading zeros, an exponent and a precision suffix do not count. A
+  `pxf.Decimal` literal's scale is bounded by the same limit, as on the wire.
+- **A number may carry a precision suffix** (`1.5p64`). It is rejected,
+  naming the field, anywhere but a `pxf.BigFloat`. `Token`, `Ast.IntVal` and
+  `Ast.FloatVal` gain `prec`, keeping their previous constructors.
+- `WellKnown.setBigFloat(Builder, BigDecimal)` and `parseBigFloat` are
+  deprecated: a `BigDecimal` has no precision or negative zero to keep.
+
+These narrow what a decoder accepts, so a document that relied on one of
+them now fails. Each is a settled rule of draft -01, and protowire-kotlin
+inherits it.
+
+- **A singular field bound twice in one message body is rejected** (#103,
+  protowire#347 option a). A second scalar used to replace the first, and a
+  second block replaced the first too. `null` counts as a binding. Repeated
+  fields still concatenate.
+- **A map key bound twice in one message body is rejected** (#105,
+  protowire#396 option b), inside one literal or across two bindings of the
+  field. Keys compare as values, so `1` and `"1"` are one key of an
+  integer-keyed map. A `DynamicMessage` decode used to keep both entries.
+  Two bindings with distinct keys still merge.
+- **`null` binds only to a field with explicit presence** (#102,
+  protowire#339, #379, #380). A plain proto3 scalar, a proto2 `required`
+  field, a repeated field and a map field now reject it, in a body and in a
+  `@dataset` cell.
+- **A simple string holds no raw line feed** (#102, protowire#350), through
+  the decoder, `Pxf.parse` and every `@dataset` path.
+- **The lite tier applies the rules its tables can decide**: both
+  bound-twice rules, and `null` on a list, a map or a map value. It cannot
+  yet tell a plain scalar from an `optional` one, so `null` on a scalar stays
+  accepted there (trendvidia/protowire#477).
+
+- **`BindRow` applies `(pxf.default)` and `(pxf.required)`**, as its javadoc
+  always said. It used `Pxf.unmarshal`, which skips both.
+- **`DatasetReader` rejects a truncated row and junk between rows** (protowire#336).
+  It used to end the row sequence early and report success, so a cut-off
+  stream read as a shorter valid one. The sequence now ends only at end of
+  input or at a directive.
+- **A row's decode error is reported at the row in its document and names the
+  column**, on both dataset paths. `DatasetReader` used to report positions
+  relative to the row (#102).
+- **`Pxf.marshal` writes a `pxf.Secret` as its string literal** when `hint` and
+  `fingerprint` are empty (#122), and as a block otherwise. Text output changes
+  for those values. It decodes to the same message on this port, on
+  protowire-go, and on any reader that follows `pxf/secret.proto`, but a reader
+  built on an earlier version of this port refuses `pw = "x"`.
+
 ### Added
 
 - **`UnmarshalOptions.skipPostDecode`**, matching protowire-go's `SkipPostDecode`
@@ -88,6 +158,51 @@ format changes.
   binds as plain repeated, so companions must come from a
   `protoc-gen-pxf-java-meta` that emits `KEY_FIELDS`. Generate them with the
   current plugin to use the form.
+
+- **`pxf.Secret` takes its string literal** (#122). `pw = "x"` now decodes in a
+  singular field, a list element, a map value and a `@dataset` cell, as well as
+  `pw { value = "x" }`.
+- `Pb` maps `org.protowire.pb.BigFloat` to `pxf.BigFloat`, with the exponent
+  bound checked before the fields are handed over.
+- **The Any block's type entry** (#100, protowire#354): `@type = "<url>"` as
+  the first entry of a block bound to `google.protobuf.Any`, on a singular
+  field in either spelling, a list element or a map value. `Pxf.parse` takes
+  it as the first entry of any block, as `Ast.TypeEntry`. **`Ast.Entry` gains
+  a permitted subtype**, so an exhaustive `switch` over it needs a new arm.
+  With a resolver set, an Any block without a type entry is now its own
+  fields (`type_url`, `value`), where it used to be an error. The lite tier
+  has no resolver and rejects the entry naming that reason.
+- **`@dataset` value cells** (#99, protowire#341): a cell holds a list or a
+  block, and binds as `column = value` would in a body, on the materializing
+  and the streaming path.
+- **`@dataset` dotted column paths** (#101, protowire#342): `(id, desc.energy,
+  desc.tempo.min_bpm)`. A row's cells group into one block per prefix, so a
+  prefix with no non-empty cell leaves its sub-message absent. A header that
+  repeats a path (`(a, a)` included), names a field beside a path inside it,
+  or has an empty segment is rejected by the parse. The rules that need the row
+  type are checked when a row binds, so a table with no rows passes them.
+- `BindRow.bindRow` overload and `DatasetReader` constructor taking
+  `UnmarshalOptions`, for a cell holding an Any block with a type entry.
+- The `testdata/{any,bigfloat,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
+  run on every build. A `,` or `;` between block entries was already rejected
+  (#106), and this now holds that in place. The two editions fixtures in
+  `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no
+  field features, so it reports EXPLICIT scalars as having no presence. A test
+  pins that.
+- **A map value of a well-known type takes its literal** (#126), as a field or
+  list element does: `when: 2026-01-01T00:00:00Z`, for Timestamp, Duration, the
+  wrappers, BigInt, Decimal and BigFloat. The block form still decodes. **The
+  encoder now writes the literal, so text output changes for these maps**, and it
+  matches protowire-go.
+- **An integer outside its field's type is refused** (#126). `int32 x = 5000000000`
+  stored 705032704, `uint32 x = -1` stored the bits of -1, and a `uint64` or
+  `int64` beyond `long` threw `NumberFormatException`. The draft requires
+  rejecting these, and protowire-go does. Both tiers now throw `PxfException`,
+  also for a `(pxf.default)` and an enum number. **Text that relied on the
+  truncation now fails to decode.**
+- **Unsigned values print unsigned.** A `uint32` or `fixed32` at or above 2^31 and
+  a `uint64` or `fixed64` at or above 2^63 were written as negative numbers, in
+  fields, list elements and map keys. That text then failed to decode correctly.
 
 ### Fixed
 
@@ -156,113 +271,6 @@ format changes.
   the same situation as the `Pb` fix in 1.2.0. Text is `1.5p53`: enough digits
   to recover the value, then the precision. The lite tier shares the code,
   through the new `BigFloats`.
-
-### Changed
-
-- **A keyed entry's body can't undo its entry name** (#124, protowire#480).
-  Inside a named entry, `null` on the key field, or any binding of another
-  member of the key field's oneof, is now a decode error. Before,
-  `choices { alpha { other = "x" } }` lost the key with no error. The anonymous
-  form and an agreeing `name = "alpha"` stay legal. Only a key that is optional
-  or in a oneof can reach these documents, and `Pxf.marshal` never wrote them.
-- **`MaxBigFloatExponent` (16384)** is enforced on a literal, a marshalled
-  value and the PB wire (protowire#281), and is a sixth `--limit` for
-  `check-decode`. `DecodeLimits` and `pb.UnmarshalOptions` gain it, keeping
-  their previous constructors.
-- **`MaxNumericLiteralDigits` counts mantissa digits only** (protowire#410):
-  leading zeros, an exponent and a precision suffix do not count. A
-  `pxf.Decimal` literal's scale is bounded by the same limit, as on the wire.
-- **A number may carry a precision suffix** (`1.5p64`). It is rejected,
-  naming the field, anywhere but a `pxf.BigFloat`. `Token`, `Ast.IntVal` and
-  `Ast.FloatVal` gain `prec`, keeping their previous constructors.
-- `WellKnown.setBigFloat(Builder, BigDecimal)` and `parseBigFloat` are
-  deprecated: a `BigDecimal` has no precision or negative zero to keep.
-
-These narrow what a decoder accepts, so a document that relied on one of
-them now fails. Each is a settled rule of draft -01, and protowire-kotlin
-inherits it.
-
-- **A singular field bound twice in one message body is rejected** (#103,
-  protowire#347 option a). A second scalar used to replace the first, and a
-  second block replaced the first too. `null` counts as a binding. Repeated
-  fields still concatenate.
-- **A map key bound twice in one message body is rejected** (#105,
-  protowire#396 option b), inside one literal or across two bindings of the
-  field. Keys compare as values, so `1` and `"1"` are one key of an
-  integer-keyed map. A `DynamicMessage` decode used to keep both entries.
-  Two bindings with distinct keys still merge.
-- **`null` binds only to a field with explicit presence** (#102,
-  protowire#339, #379, #380). A plain proto3 scalar, a proto2 `required`
-  field, a repeated field and a map field now reject it, in a body and in a
-  `@dataset` cell.
-- **A simple string holds no raw line feed** (#102, protowire#350), through
-  the decoder, `Pxf.parse` and every `@dataset` path.
-- **The lite tier applies the rules its tables can decide**: both
-  bound-twice rules, and `null` on a list, a map or a map value. It cannot
-  yet tell a plain scalar from an `optional` one, so `null` on a scalar stays
-  accepted there (trendvidia/protowire#477).
-
-- **`BindRow` applies `(pxf.default)` and `(pxf.required)`**, as its javadoc
-  always said. It used `Pxf.unmarshal`, which skips both.
-- **`DatasetReader` rejects a truncated row and junk between rows** (protowire#336).
-  It used to end the row sequence early and report success, so a cut-off
-  stream read as a shorter valid one. The sequence now ends only at end of
-  input or at a directive.
-- **A row's decode error is reported at the row in its document and names the
-  column**, on both dataset paths. `DatasetReader` used to report positions
-  relative to the row (#102).
-- **`Pxf.marshal` writes a `pxf.Secret` as its string literal** when `hint` and
-  `fingerprint` are empty (#122), and as a block otherwise. Text output changes
-  for those values. It decodes to the same message on this port, on
-  protowire-go, and on any reader that follows `pxf/secret.proto`, but a reader
-  built on an earlier version of this port refuses `pw = "x"`.
-
-### Added
-
-- **`pxf.Secret` takes its string literal** (#122). `pw = "x"` now decodes in a
-  singular field, a list element, a map value and a `@dataset` cell, as well as
-  `pw { value = "x" }`.
-- `Pb` maps `org.protowire.pb.BigFloat` to `pxf.BigFloat`, with the exponent
-  bound checked before the fields are handed over.
-- **The Any block's type entry** (#100, protowire#354): `@type = "<url>"` as
-  the first entry of a block bound to `google.protobuf.Any`, on a singular
-  field in either spelling, a list element or a map value. `Pxf.parse` takes
-  it as the first entry of any block, as `Ast.TypeEntry`. **`Ast.Entry` gains
-  a permitted subtype**, so an exhaustive `switch` over it needs a new arm.
-  With a resolver set, an Any block without a type entry is now its own
-  fields (`type_url`, `value`), where it used to be an error. The lite tier
-  has no resolver and rejects the entry naming that reason.
-- **`@dataset` value cells** (#99, protowire#341): a cell holds a list or a
-  block, and binds as `column = value` would in a body, on the materializing
-  and the streaming path.
-- **`@dataset` dotted column paths** (#101, protowire#342): `(id, desc.energy,
-  desc.tempo.min_bpm)`. A row's cells group into one block per prefix, so a
-  prefix with no non-empty cell leaves its sub-message absent. A header that
-  repeats a path (`(a, a)` included), names a field beside a path inside it,
-  or has an empty segment is rejected by the parse. The rules that need the row
-  type are checked when a row binds, so a table with no rows passes them.
-- `BindRow.bindRow` overload and `DatasetReader` constructor taking
-  `UnmarshalOptions`, for a cell holding an Any block with a type entry.
-- The `testdata/{any,bigfloat,blocks,dataset,duplicates,nulls,strings}/` corpora are vendored and
-  run on every build. A `,` or `;` between block entries was already rejected
-  (#106), and this now holds that in place. The two editions fixtures in
-  `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no
-  field features, so it reports EXPLICIT scalars as having no presence. A test
-  pins that.
-- **A map value of a well-known type takes its literal** (#126), as a field or
-  list element does: `when: 2026-01-01T00:00:00Z`, for Timestamp, Duration, the
-  wrappers, BigInt, Decimal and BigFloat. The block form still decodes. **The
-  encoder now writes the literal, so text output changes for these maps**, and it
-  matches protowire-go.
-- **An integer outside its field's type is refused** (#126). `int32 x = 5000000000`
-  stored 705032704, `uint32 x = -1` stored the bits of -1, and a `uint64` or
-  `int64` beyond `long` threw `NumberFormatException`. The draft requires
-  rejecting these, and protowire-go does. Both tiers now throw `PxfException`,
-  also for a `(pxf.default)` and an enum number. **Text that relied on the
-  truncation now fails to decode.**
-- **Unsigned values print unsigned.** A `uint32` or `fixed32` at or above 2^31 and
-  a `uint64` or `fixed64` at or above 2^63 were written as negative numbers, in
-  fields, list elements and map keys. That text then failed to decode correctly.
 
 ## [1.3.0] — 2026-10-31
 

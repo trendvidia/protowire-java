@@ -80,6 +80,26 @@ final class LiteWireWriterTest {
     }
 
     @Test
+    void anIntegerOutsideItsTypeIsRefused() {
+        int[][] kinds = {{5 /* INT32 */}, {13 /* UINT32 */}, {4 /* UINT64 */}, {3 /* INT64 */}};
+        String[] docs = {"f = 5000000000", "f = -1", "f = 18446744073709551616", "f = 9223372036854775808"};
+        for (int i = 0; i < docs.length; i++) {
+            PxfMeta m = meta(Map.of("f", 1), Map.of(1, kinds[i][0]), Set.of(), Set.of());
+            Ast.Document doc = Parser.parse(docs[i]);
+            assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m), docs[i]);
+        }
+    }
+
+    @Test
+    void theTopOfAnUnsignedTypeIsAccepted() {
+        PxfMeta u64 = meta(Map.of("f", 1), Map.of(1, 4 /* UINT64 */), Set.of(), Set.of());
+        assertEquals("08ffffffffffffffffff01",
+            hex(LiteWireWriter.encode(Parser.parse("f = 18446744073709551615"), u64)));
+        PxfMeta u32 = meta(Map.of("f", 1), Map.of(1, 13 /* UINT32 */), Set.of(), Set.of());
+        assertEquals("08ffffffff0f", hex(LiteWireWriter.encode(Parser.parse("f = 4294967295"), u32)));
+    }
+
+    @Test
     void scalarInt32() {
         // int32 age = 2;  →  age = 30  →  tag 0x10, varint 0x1e
         Ast.Document doc = Parser.parse("age = 30");

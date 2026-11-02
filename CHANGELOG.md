@@ -180,6 +180,20 @@ inherits it.
   `testdata/nulls/` do not run: the protobuf-java 3.25.5 runtime reads no
   field features, so it reports EXPLICIT scalars as having no presence. A test
   pins that.
+- **A map value of a well-known type takes its literal** (#126), as a field or
+  list element does: `when: 2026-01-01T00:00:00Z`, for Timestamp, Duration, the
+  wrappers, BigInt, Decimal and BigFloat. The block form still decodes. **The
+  encoder now writes the literal, so text output changes for these maps**, and it
+  matches protowire-go.
+- **An integer outside its field's type is refused** (#126). `int32 x = 5000000000`
+  stored 705032704, `uint32 x = -1` stored the bits of -1, and a `uint64` or
+  `int64` beyond `long` threw `NumberFormatException`. The draft requires
+  rejecting these, and protowire-go does. Both tiers now throw `PxfException`,
+  also for a `(pxf.default)` and an enum number. **Text that relied on the
+  truncation now fails to decode.**
+- **Unsigned values print unsigned.** A `uint32` or `fixed32` at or above 2^31 and
+  a `uint64` or `fixed64` at or above 2^63 were written as negative numbers, in
+  fields, list elements and map keys. That text then failed to decode correctly.
 
 ## [1.3.0] — 2026-10-31
 

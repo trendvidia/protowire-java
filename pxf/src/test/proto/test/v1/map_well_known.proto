@@ -1,0 +1,31 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// One map per well-known type with a literal form (#126).
+syntax = "proto3";
+package test.v1;
+
+import "google/protobuf/duration.proto";
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "pxf/bignum.proto";
+
+option java_multiple_files = true;
+option java_package = "org.protowire.pxf.testproto";
+
+message MapWellKnown {
+  map<string, google.protobuf.Timestamp> ts = 1;
+  map<string, google.protobuf.Duration> dur = 2;
+  map<string, google.protobuf.StringValue> str = 3;
+  map<string, google.protobuf.BytesValue> byt = 4;
+  map<string, google.protobuf.BoolValue> flag = 5;
+  map<string, google.protobuf.Int32Value> i32 = 6;
+  map<string, google.protobuf.Int64Value> i64 = 7;
+  map<string, google.protobuf.UInt32Value> u32 = 8;
+  map<string, google.protobuf.UInt64Value> u64 = 9;
+  map<string, google.protobuf.FloatValue> f32 = 10;
+  map<string, google.protobuf.DoubleValue> f64 = 11;
+  map<string, pxf.BigInt> big = 12;
+  map<string, pxf.Decimal> dec = 13;
+  map<string, pxf.BigFloat> flt = 14;
+}

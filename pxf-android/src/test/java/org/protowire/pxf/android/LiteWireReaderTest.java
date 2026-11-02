@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /**
@@ -310,6 +311,16 @@ final class LiteWireReaderTest {
             byte[] wire = LiteWireWriter.encode(Parser.parse(pxf), meta);
             assertEquals(pxf, Format.formatDocument(LiteWireReader.toAst(wire, meta)));
         }
+    }
+
+    // A negative Duration has seconds and nanos of the same sign on the wire
+    // (draft -01 § Timestamps and Durations); java.time's nanos are positive.
+    @Test
+    void wkt_duration_negativeFractionHasOneSign() {
+        PxfMeta meta = wktMeta("ttl", 1, "com.google.protobuf.Duration", PxfMeta.WKT_DURATION);
+        byte[] literal = LiteWireWriter.encode(Parser.parse("ttl = -1.5s\n"), meta);
+        // field 1, 22 bytes: seconds -1, nanos -500000000, each a ten-byte varint.
+        assertEquals("0a16" + "08ffffffffffffffffff01" + "1080b6ca91feffffffff01", HexFormat.of().formatHex(literal));
     }
 
     @Test

@@ -625,7 +625,15 @@ public final class LiteWireWriter {
             }
             if (v instanceof Ast.DurationVal dv) {
                 requireWellKnownKind(num, wkt, PxfMeta.WKT_DURATION, meta, "duration");
-                writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
+                // java.time keeps nanos positive; the wire form needs seconds
+                // and nanos of the same sign (draft -01 § Timestamps and Durations).
+                long seconds = dv.value().getSeconds();
+                int nanos = dv.value().getNano();
+                if (seconds < 0 && nanos > 0) {
+                    seconds++;
+                    nanos -= 1_000_000_000;
+                }
+                writeWellKnownSecondsNanos(out, num, seconds, nanos);
                 return;
             }
 

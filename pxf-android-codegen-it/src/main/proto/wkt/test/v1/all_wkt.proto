@@ -35,3 +35,10 @@ message Secrets {
   repeated pxf.Secret list = 2;
   map<string, pxf.Secret> by_name = 3;
 }
+
+// google.protobuf.Duration in the places a block replaces its literal when the
+// value is too long for one.
+message Durations {
+  repeated google.protobuf.Duration list = 1;
+  map<string, google.protobuf.Duration> by_name = 2;
+}

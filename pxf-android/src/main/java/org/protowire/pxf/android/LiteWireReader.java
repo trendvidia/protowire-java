@@ -433,8 +433,11 @@ public final class LiteWireReader {
         return new Ast.TimestampVal(Position.UNKNOWN, t, TimeFormats.formatRfc3339(t));
     }
 
-    /** Decodes a {@code google.protobuf.Duration} payload into an Ast.DurationVal. */
-    private static Ast.DurationVal readDuration(CodedInputStream in) throws IOException {
+    /**
+     * Decodes a {@code google.protobuf.Duration} payload into an Ast.DurationVal,
+     * or into a block when the value is too long for a literal.
+     */
+    private static Ast.Value readDuration(CodedInputStream in) throws IOException {
         long seconds = 0L;
         int nanos = 0;
         while (in.getBytesUntilLimit() > 0) {
@@ -445,6 +448,14 @@ public final class LiteWireReader {
                 case 2  -> nanos   = in.readInt32();
                 default -> in.skipField(tag);
             }
+        }
+        if (!TimeFormats.fitsDurationLiteral(seconds, nanos)) {
+            List<Ast.Entry> entries = new ArrayList<>(2);
+            entries.add(new Ast.Assignment(Position.UNKNOWN, "seconds", intVal(seconds), List.of(), ""));
+            if (nanos != 0) {
+                entries.add(new Ast.Assignment(Position.UNKNOWN, "nanos", intVal(nanos), List.of(), ""));
+            }
+            return new Ast.BlockVal(Position.UNKNOWN, entries);
         }
         Duration d = Duration.ofSeconds(seconds, nanos);
         return new Ast.DurationVal(Position.UNKNOWN, d, TimeFormats.formatGoDuration(d));

@@ -625,7 +625,15 @@ public final class LiteWireWriter {
             }
             if (v instanceof Ast.DurationVal dv) {
                 requireWellKnownKind(num, wkt, PxfMeta.WKT_DURATION, meta, "duration");
-                writeWellKnownSecondsNanos(out, num, dv.value().getSeconds(), dv.value().getNano());
+                // java.time keeps nanos positive; the wire form needs seconds
+                // and nanos of the same sign (draft -01 § Timestamps and Durations).
+                long seconds = dv.value().getSeconds();
+                int nanos = dv.value().getNano();
+                if (seconds < 0 && nanos > 0) {
+                    seconds++;
+                    nanos -= 1_000_000_000;
+                }
+                writeWellKnownSecondsNanos(out, num, seconds, nanos);
                 return;
             }
 
@@ -769,6 +777,12 @@ public final class LiteWireWriter {
 
     /** The {@link PxfMeta} of message field {@code num}. */
     private static PxfMeta nestedMetaOf(int num, PxfMeta meta, PxfRegistry registry) {
+        // A Duration or Timestamp block (draft -01 § Well-Known Type Shapes)
+        // has a fixed shape, so it needs no companion or registry entry.
+        int wkt = meta.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE);
+        if (wkt == PxfMeta.WKT_DURATION || wkt == PxfMeta.WKT_TIMESTAMP) {
+            return SecondsNanosMeta.INSTANCE;
+        }
         // Prefer the meta's embedded nested reference (populated by codegen)
         // over a registry lookup. This is the path for codegen-generated
         // <Message>PxfMeta classes; registry is the fallback for hand-built

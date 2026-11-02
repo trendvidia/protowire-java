@@ -100,6 +100,22 @@ public final class TimeFormats {
     private static boolean isAsciiDigit(char c) { return c >= '0' && c <= '9'; }
 
     /**
+     * Whether a {@code google.protobuf.Duration} with these fields can be
+     * written as a literal: a literal holds a whole number of nanoseconds in
+     * 64 bits, about 292 years, as Go's {@code time.Duration} does. Past that
+     * the value is written as a block (draft -01 § Timestamps and Durations),
+     * which no decoder limits.
+     */
+    public static boolean fitsDurationLiteral(long seconds, int nanos) {
+        // Well inside the limit whatever nanos holds; int32 is about 2.1s.
+        if (seconds > -9_223_372_030L && seconds < 9_223_372_030L) return true;
+        return java.math.BigInteger.valueOf(seconds)
+                .multiply(java.math.BigInteger.valueOf(1_000_000_000L))
+                .add(java.math.BigInteger.valueOf(nanos))
+                .bitLength() < Long.SIZE;
+    }
+
+    /**
      * Format a Duration as Go's {@code time.Duration.String()} does, byte for
      * byte: "1h30m0s", "1.5s", "1m0s", "1.5ms", "312.5µs", "1ns", "0s". Below
      * one second a single unit carries a decimal fraction; from one second up

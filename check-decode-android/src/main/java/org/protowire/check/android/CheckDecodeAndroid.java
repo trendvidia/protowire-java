@@ -11,8 +11,7 @@
 //   pxf-pb              as pxf, and writes the wire bytes on stdout
 //   pb, pb-render       wire to text, through LiteWireReader
 //   pb-text             as pb-render, and writes the text on stdout
-//   sbe                 SbeWireCodec on the generated template, called directly
-//                       because the generated codec takes no limits
+//   sbe                 the generated <Message>SbeCodec, under the row's limits
 package org.protowire.check.android;
 
 import org.protowire.pxf.DecodeLimits;
@@ -21,7 +20,6 @@ import org.protowire.pxf.Parser;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.android.LiteWireReader;
 import org.protowire.pxf.android.LiteWireWriter;
-import org.protowire.sbe.runtime.SbeWireCodec;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -39,6 +37,7 @@ public final class CheckDecodeAndroid {
         Map.entry("adversarial.v1.BigNumHolder", adversarial.v1.BigNumHolderPxfMeta.INSTANCE),
         Map.entry("adversarial.v1.ListHolder", adversarial.v1.ListHolderPxfMeta.INSTANCE),
         Map.entry("adversarial.v1.SbeWithGroup", adversarial.v1.SbeWithGroupPxfMeta.INSTANCE),
+        Map.entry("adversarial.v1.SbeText", adversarial.v1.SbeTextPxfMeta.INSTANCE),
         Map.entry("text.v1.Scalars", text.v1.ScalarsPxfMeta.INSTANCE),
         Map.entry("text.v1.Shapes", text.v1.ShapesPxfMeta.INSTANCE),
         Map.entry("text.v1.WellKnown", text.v1.WellKnownPxfMeta.INSTANCE));
@@ -70,7 +69,7 @@ public final class CheckDecodeAndroid {
             System.exit(2);
         }
         try {
-            run(format, meta, input, limits);
+            run(format, schema, meta, input, limits);
             System.exit(0);
         } catch (UnsupportedFormat e) {
             System.err.println("check-decode-android: " + e.getMessage());
@@ -85,7 +84,7 @@ public final class CheckDecodeAndroid {
         }
     }
 
-    private static void run(String format, PxfMeta meta, String input, DecodeLimits limits) throws Exception {
+    private static void run(String format, String schema, PxfMeta meta, String input, DecodeLimits limits) throws Exception {
         byte[] data = Files.readAllBytes(Paths.get(input));
         switch (format) {
             case "pxf" -> LiteWireWriter.encode(Parser.parse(data, limits), meta, limits);
@@ -100,10 +99,20 @@ public final class CheckDecodeAndroid {
                 System.out.write(text);
                 System.out.flush();
             }
-            case "sbe" -> SbeWireCodec.unmarshal(data,
-                adversarial.v1.SbeWithGroupSbeMeta.writer(adversarial.v1.SbeWithGroup.newBuilder()),
-                adversarial.v1.SbeWithGroupSbeMeta.TEMPLATE, limits.maxMessageSize(), limits.maxRepeatedCount());
+            case "sbe" -> sbeDecode(data, schema, limits);
             default -> throw new UnsupportedFormat("the lite tier has no " + format + " decoder");
+        }
+    }
+
+    // Through the generated codec, so the gate proves the entry point a
+    // caller uses, not only the runtime under it (#148).
+    private static void sbeDecode(byte[] data, String schema, DecodeLimits limits) {
+        switch (schema) {
+            case "adversarial.v1.SbeWithGroup" -> adversarial.v1.SbeWithGroupSbeCodec.unmarshal(
+                data, limits.maxMessageSize(), limits.maxRepeatedCount());
+            case "adversarial.v1.SbeText" -> adversarial.v1.SbeTextSbeCodec.unmarshal(
+                data, limits.maxMessageSize(), limits.maxRepeatedCount());
+            default -> throw new UnsupportedFormat("the lite tier has no SBE template for " + schema);
         }
     }
 

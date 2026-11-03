@@ -170,6 +170,19 @@ public interface PxfMeta {
         return singular;
     }
 
+    /**
+     * Field numbers of the singular fields with no presence: a proto3 plain
+     * scalar or enum, or an editions {@code IMPLICIT} one. Such a field holding
+     * its zero value is not written, as protobuf writes it (#156). It cannot
+     * be read off {@link #nullableFields()}, which leaves out a proto2
+     * {@code required} field too, and that one is written at zero. The default
+     * is empty, so a companion that predates the table has every zero written,
+     * as before.
+     */
+    default Set<Integer> implicitPresenceFields() {
+        return Set.of();
+    }
+
     // --- Well-known type kind constants ----------------------------------------
     //
     // Stable integers that the codegen plugin emits in WELL_KNOWN_KINDS tables

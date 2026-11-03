@@ -173,19 +173,41 @@ public final class Format {
         return "nan".equals(text) || "inf".equals(text) || "+inf".equals(text) || "-inf".equals(text);
     }
 
-    /** The {@code double} a float literal denotes, non-finite spellings included. */
+    /**
+     * The {@code double} a float literal denotes, non-finite spellings
+     * included. A finite literal that rounds to infinity is refused with
+     * protowire-go's message, {@code invalid double: 1e400}: draft -01
+     * § Numeric Literals admits infinity only as {@code inf}, {@code +inf}
+     * or {@code -inf} (#158).
+     *
+     * @throws NumberFormatException if {@code text} is no float literal, or overflows
+     */
     public static double parseDouble(String text) {
         return switch (text) {
             case "nan" -> Double.NaN;
             case "inf", "+inf" -> Double.POSITIVE_INFINITY;
             case "-inf" -> Double.NEGATIVE_INFINITY;
-            default -> Double.parseDouble(text);
+            default -> {
+                double v = Double.parseDouble(text);
+                if (Double.isInfinite(v)) throw new NumberFormatException("invalid double: " + text);
+                yield v;
+            }
         };
     }
 
-    /** The {@code float} a float literal denotes, non-finite spellings included. */
+    /**
+     * The {@code float} a float literal denotes, non-finite spellings
+     * included. A finite literal that rounds to infinity as a {@code float}
+     * is refused as {@code invalid float: 3.4028236e38}, as in
+     * {@link #parseDouble}.
+     *
+     * @throws NumberFormatException if {@code text} is no float literal, or overflows
+     */
     public static float parseFloat(String text) {
-        return isNonFinite(text) ? (float) parseDouble(text) : Float.parseFloat(text);
+        if (isNonFinite(text)) return (float) parseDouble(text);
+        float v = Float.parseFloat(text);
+        if (Float.isInfinite(v)) throw new NumberFormatException("invalid float: " + text);
+        return v;
     }
 
     private static String nonFinite(double v) {

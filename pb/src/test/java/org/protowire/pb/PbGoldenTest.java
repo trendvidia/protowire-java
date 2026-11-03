@@ -15,10 +15,10 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-
-import org.junit.jupiter.api.Disabled;
 
 /**
  * {@link Pb} measured against the reference, not against itself (#77,
@@ -291,11 +291,26 @@ class PbGoldenTest {
     }
 
     @Test
-    @Disabled("#159: a non-null zero BigFloat is written as 1a00")
     void zeroBigNumbersAreOmitted() throws IOException {
         BigNums v = new BigNums();
         v.i = BigInteger.ZERO; v.d = BigDecimal.ZERO; v.f = new BigFloat(new byte[0], 0, 0, false);
         assertEncodesAs("BigNumsZero", v);
+        // Absent on the wire, so absent after: proto3 has no presence for them.
+        BigNums back = Pb.unmarshal(golden("BigNumsZero"), BigNums.class);
+        assertNull(back.i);
+        assertNull(back.d);
+        assertNull(back.f);
+    }
+
+    // A prec-0 BigFloat is ±0 whatever its other fields say (protowire#410),
+    // so it is omitted like the zero above; -0 is not the zero value.
+    @Test
+    void aPrecZeroBigFloatIsZeroWhateverItsMantissa() throws IOException {
+        OneBigFloat v = new OneBigFloat();
+        v.f = new BigFloat(new byte[] {3}, -1, 0, false);
+        assertEquals("", hex(Pb.marshal(v)));
+        v.f = new BigFloat(new byte[] {3}, -1, 0, true);
+        assertEquals("0a022001", hex(Pb.marshal(v)), "{negative: true}");
     }
 
     @Test
@@ -320,35 +335,76 @@ class PbGoldenTest {
     public static class BigFloatMap { @ProtoField(1) Map<String, BigFloat> m = new LinkedHashMap<>(); public BigFloatMap() {} }
     public static class OneBigFloat { @ProtoField(1) BigFloat f; public OneBigFloat() {} }
 
+    // A null element is the zero value's record, as Go writes a nil pointer
+    // element, so the list keeps its length; it reads back as the zero value,
+    // as Go's reads back as an allocated zero.
     @Test
-    @Disabled("#159: a null element throws NullPointerException")
     void aNullBigIntElementIsAnEmptyMessage() throws IOException {
         BigInts v = new BigInts();
         v.is = java.util.Arrays.asList(BigInteger.ONE, null);
         assertEncodesAs("BigIntsNullElement", v);
+        assertEquals(List.of(BigInteger.ONE, BigInteger.ZERO), Pb.unmarshal(golden("BigIntsNullElement"), BigInts.class).is);
     }
 
     @Test
-    @Disabled("#159: a null element throws NullPointerException")
     void aNullDecimalElementIsAnEmptyMessage() throws IOException {
         Decimals v = new Decimals();
         v.ds = java.util.Arrays.asList(BigDecimal.ONE, null);
         assertEncodesAs("DecimalsNullElement", v);
+        assertEquals(List.of(BigDecimal.ONE, BigDecimal.ZERO), Pb.unmarshal(golden("DecimalsNullElement"), Decimals.class).ds);
     }
 
+    // A null value is the zero value's record too: every entry has its key
+    // and its value (#78). It reads back as +0 at prec 0, Go's zero big.Float.
     @Test
-    @Disabled("#159: the entry is written without its value field")
     void aNullBigFloatMapValueKeepsItsValueField() throws IOException {
         BigFloatMap v = new BigFloatMap();
         v.m.put("k", null);
         assertEncodesAs("BigFloatMapNullValue", v);
+        BigFloat back = Pb.unmarshal(golden("BigFloatMapNullValue"), BigFloatMap.class).m.get("k");
+        assertNotNull(back);
+        assertBigFloat(back, "", 0, 0, false);
     }
 
+    // The record is written as the value a decoder holds: the mantissa at
+    // exactly prec bits, as Go's big.Float is (BigFloats.normalize). The bytes
+    // read back as those normalised fields, and write again unchanged.
     @Test
-    @Disabled("#159: the record's fields are written as given, not normalised")
     void anUnnormalisedBigFloatIsWrittenNormalised() throws IOException {
         OneBigFloat v = new OneBigFloat();
         v.f = new BigFloat(new byte[] {3}, -1, 64, false); // 1.5
         assertEncodesAs("BigFloatPrec64", v);
+        OneBigFloat back = Pb.unmarshal(golden("BigFloatPrec64"), OneBigFloat.class);
+        assertBigFloat(back.f, "c000000000000000", -63, 64, false);
+        assertEncodesAs("BigFloatPrec64", back);
+    }
+
+    private static void assertBigFloat(BigFloat f, String mantissa, int exponent, int prec, boolean negative) {
+        assertArrayEquals(HexFormat.of().parseHex(mantissa), f.mantissa(), "mantissa");
+        assertEquals(exponent, f.exponent(), "exponent");
+        assertEquals(prec, f.prec(), "prec");
+        assertEquals(negative, f.negative(), "negative");
+    }
+
+    // A mantissa wider than prec is the value rounded half even to prec, as
+    // Go's decoder rounds it with SetPrec; a zero at a prec keeps the prec
+    // and has no exponent.
+    @Test
+    void aWideMantissaIsRoundedAndAZeroHasNoExponent() throws IOException {
+        OneBigFloat v = new OneBigFloat();
+        v.f = new BigFloat(new byte[] {0x0b}, 0, 2, false); // 11 at 2 bits: 12, written 3 × 2^2
+        assertEquals("0a070a010310021802", hex(Pb.marshal(v)));
+        v.f = new BigFloat(new byte[] {0x00, 0x00}, 7, 53, true); // -0 at prec 53
+        assertEquals("0a0418352001", hex(Pb.marshal(v)));
+    }
+
+    // Normalising can carry a value one past MaxBigFloatExponent; it is
+    // refused, as Go's Marshal refuses it, rather than written unreadable.
+    @Test
+    void aValueRoundedPastTheExponentBoundIsRefused() {
+        OneBigFloat v = new OneBigFloat();
+        v.f = new BigFloat(new byte[] {(byte) 0xff}, Pb.MAX_BIG_FLOAT_EXPONENT - 8, 1, false);
+        IOException e = org.junit.jupiter.api.Assertions.assertThrows(IOException.class, () -> Pb.marshal(v));
+        assertTrue(e.getMessage().contains("MaxBigFloatExponent"), e.getMessage());
     }
 }

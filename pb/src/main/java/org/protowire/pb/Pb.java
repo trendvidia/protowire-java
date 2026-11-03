@@ -5,6 +5,7 @@ package org.protowire.pb;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.WireFormat;
+import org.protowire.pxf.BigFloats;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -50,10 +51,26 @@ public final class Pb {
     private Pb() {}
 
     public static byte[] marshal(Object obj) throws IOException {
+        return marshal(obj, MarshalOptions.defaults());
+    }
+
+    /**
+     * As {@link #marshal(Object)} under per-call options: a value nested more
+     * deeply than {@link MarshalOptions#maxNestingDepth()} is refused (#167).
+     */
+    public static byte[] marshal(Object obj, MarshalOptions opts) throws IOException {
         if (obj == null) throw new IllegalArgumentException("pb.marshal: object is null");
+        return marshalNested(obj, 0, opts.maxNestingDepth());
+    }
+
+    /** A struct's bytes at submessage depth {@code depth}, counted as a decoder counts it. */
+    private static byte[] marshalNested(Object obj, int depth, int maxDepth) throws IOException {
+        if (depth > maxDepth) {
+            throw new IOException("nesting depth exceeds MaxNestingDepth=" + maxDepth);
+        }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(baos);
-        marshalStruct(out, obj);
+        marshalStruct(out, obj, depth, maxDepth);
         out.flush();
         return baos.toByteArray();
     }
@@ -212,18 +229,19 @@ public final class Pb {
 
     // -- marshal -------------------------------------------------------------
 
-    private static void marshalStruct(CodedOutputStream out, Object obj) throws IOException {
+    private static void marshalStruct(CodedOutputStream out, Object obj, int depth, int maxDepth) throws IOException {
         StructInfo info = info(obj.getClass());
         for (FieldInfo fi : info.ordered) {
             try {
-                marshalField(out, fi, fi.field.get(obj));
+                marshalField(out, fi, fi.field.get(obj), depth, maxDepth);
             } catch (IllegalAccessException e) {
                 throw new IOException("field " + fi.field.getName() + ": " + e.getMessage(), e);
             }
         }
     }
 
-    private static void marshalField(CodedOutputStream out, FieldInfo fi, Object value) throws IOException {
+    private static void marshalField(CodedOutputStream out, FieldInfo fi, Object value, int depth, int maxDepth)
+            throws IOException {
         if (value == null) return;
 
         if (fi.kind == FieldKind.LIST) {
@@ -240,7 +258,7 @@ public final class Pb {
             }
             for (Object elem : list) {
                 marshalScalar(out, fi.number, fi.elementClass, elem == null ? scalarZero(fi.elementClass) : elem,
-                        fi.zigzag, true);
+                        fi.zigzag, true, depth, maxDepth);
             }
             return;
         }
@@ -254,20 +272,24 @@ public final class Pb {
             // values inherit the field's zigzag flag.
             Map<?, ?> map = (Map<?, ?>) value;
             if (map.isEmpty()) return;
+            // A map entry is a descent, as a decoder counts it.
+            if (depth + 1 > maxDepth) {
+                throw new IOException("nesting depth exceeds MaxNestingDepth=" + maxDepth);
+            }
             for (Map.Entry<?, ?> e : map.entrySet()) {
                 ByteArrayOutputStream entryBuf = new ByteArrayOutputStream();
                 CodedOutputStream entryOut = CodedOutputStream.newInstance(entryBuf);
                 Object k = e.getKey() == null ? scalarZero(fi.mapKeyClass) : e.getKey();
                 Object v = e.getValue() == null ? scalarZero(fi.elementClass) : e.getValue();
-                marshalScalar(entryOut, 1, fi.mapKeyClass, k, fi.zigzag, true);
-                marshalScalar(entryOut, 2, fi.elementClass, v, fi.zigzag, true);
+                marshalScalar(entryOut, 1, fi.mapKeyClass, k, fi.zigzag, true, depth + 1, maxDepth);
+                marshalScalar(entryOut, 2, fi.elementClass, v, fi.zigzag, true, depth + 1, maxDepth);
                 entryOut.flush();
                 out.writeByteArray(fi.number, entryBuf.toByteArray());
             }
             return;
         }
 
-        marshalScalar(out, fi.number, fi.field.getType(), value, fi.zigzag, false);
+        marshalScalar(out, fi.number, fi.field.getType(), value, fi.zigzag, false, depth, maxDepth);
     }
 
     /**
@@ -319,7 +341,7 @@ public final class Pb {
      * key / value ({@code element} true) is always written.
      */
     private static void marshalScalar(CodedOutputStream out, int num, Class<?> type, Object v,
-                                      boolean zigzag, boolean element) throws IOException {
+                                      boolean zigzag, boolean element, int depth, int maxDepth) throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             boolean b = (Boolean) v;
             if (!b && !element) return;
@@ -352,19 +374,27 @@ public final class Pb {
             byte[] b = (byte[]) v;
             if (b.length == 0 && !element) return;
             out.writeByteArray(num, b);
-        } else if (type == BigInteger.class) {
-            BigInteger bi = (BigInteger) v;
-            if (bi.signum() == 0 && !element) return;
-            byte[] msg = marshalBigInteger(bi);
-            out.writeByteArray(num, msg);
-        } else if (type == BigDecimal.class) {
-            BigDecimal bd = (BigDecimal) v;
-            if (bd.signum() == 0 && !element) return;
-            byte[] msg = marshalBigDecimal(bd);
-            out.writeByteArray(num, msg);
-        } else if (type == BigFloat.class) {
-            if (v == null) return;
-            out.writeByteArray(num, marshalBigFloat((BigFloat) v));
+        } else if (type == BigInteger.class || type == BigDecimal.class || type == BigFloat.class) {
+            // A null element or map value is the zero value's record, an
+            // empty message, as protowire-go writes a nil *big.Int /
+            // *big.Rat / *big.Float element (#159): the list keeps its
+            // length and the entry its value field. A null singular field
+            // never reaches here.
+            if (v == null) {
+                out.writeByteArray(num, new byte[0]);
+            } else if (v instanceof BigInteger bi) {
+                if (bi.signum() == 0 && !element) return;
+                out.writeByteArray(num, marshalBigInteger(bi));
+            } else if (v instanceof BigDecimal bd) {
+                if (bd.signum() == 0 && !element) return;
+                out.writeByteArray(num, marshalBigDecimal(bd));
+            } else {
+                BigFloats.Value bf = normalize((BigFloat) v);
+                // Only +0 at prec 0 is the zero value; a zero at a precision,
+                // or -0, is written (protowire#410).
+                if (bf.prec() == 0 && !bf.negative() && !element) return;
+                out.writeByteArray(num, marshalBigFloat(bf));
+            }
         } else if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
             // unsigned variants would land here only if user used custom types — fallback
             long n = ((Number) v).longValue();
@@ -378,8 +408,7 @@ public final class Pb {
                 out.writeByteArray(num, new byte[0]);
                 return;
             }
-            byte[] msg = marshal(v);
-            out.writeByteArray(num, msg);
+            out.writeByteArray(num, marshalNested(v, depth + 1, maxDepth));
         }
     }
 
@@ -527,7 +556,7 @@ public final class Pb {
             return unmarshalBigDecimal(in.readByteArray(), opts.maxNumericLiteralDigits());
         }
         if (type == BigFloat.class) {
-            return unmarshalBigFloat(in.readByteArray(), opts.maxBigFloatExponent());
+            return unmarshalBigFloat(in.readByteArray(), opts.maxBigFloatExponent(), opts.maxNumericLiteralDigits());
         }
         // nested message
         byte[] sub = in.readByteArray();
@@ -636,10 +665,33 @@ public final class Pb {
         return negative ? bd.negate() : bd;
     }
 
-    static byte[] marshalBigFloat(BigFloat bf) throws IOException {
+    /**
+     * The record's value in the form a decoder holds it, which is what
+     * protowire-go writes for a {@code big.Float} (#159): the mantissa at
+     * exactly {@code prec} bits, a wider one rounded half even and a
+     * narrower one widened, and no exponent for a zero. A prec-0 record is
+     * ±0 whatever its mantissa says. {@link BigFloats#normalize} is the
+     * rule, shared with the PXF codecs. A value a conformant reader would
+     * refuse — a prec past {@link #MAX_NUMERIC_LITERAL_DIGITS}, a binary
+     * exponent past {@link #MAX_BIG_FLOAT_EXPONENT} — is refused here.
+     */
+    static BigFloats.Value normalize(BigFloat bf) throws IOException {
+        byte[] mant = bf.mantissa() == null ? new byte[0] : bf.mantissa();
+        try {
+            return BigFloats.normalize(new BigInteger(1, mant), bf.exponent(), bf.prec(), bf.negative(),
+                    MAX_NUMERIC_LITERAL_DIGITS, MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    static byte[] marshalBigFloat(BigFloats.Value bf) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(baos);
-        if (bf.mantissa().length > 0) out.writeByteArray(1, bf.mantissa());
+        byte[] mant = stripLeadingZero(bf.mantissa().toByteArray());
+        if (mant.length > 0) out.writeByteArray(1, mant);
+        // `int32 exponent = 2`: a plain varint, a negative one sign-extended
+        // to ten bytes (#77).
         if (bf.exponent() != 0) out.writeInt32(2, bf.exponent());
         if (bf.prec() != 0) out.writeUInt32(3, bf.prec());
         if (bf.negative()) out.writeBool(4, true);
@@ -647,8 +699,14 @@ public final class Pb {
         return baos.toByteArray();
     }
 
-    /** Refuses a value past the bound before anything is built from it. A zero mantissa has no binary exponent. */
-    static BigFloat unmarshalBigFloat(byte[] data, int maxExponent) throws IOException {
+    /**
+     * Refuses a value past the bounds before anything is built from it, as
+     * protowire-go does: a prec whose literal needs more than
+     * {@code maxDigits} digits (protowire#499), and a binary exponent past
+     * {@code maxExponent} (protowire#281). A zero mantissa has no binary
+     * exponent, and a prec-0 message is zero at any exponent (#159).
+     */
+    static BigFloat unmarshalBigFloat(byte[] data, int maxExponent, int maxDigits) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
         byte[] mantissa = new byte[0];
         int exponent = 0;
@@ -664,6 +722,12 @@ public final class Pb {
                 case 4 -> negative = in.readBool();
                 default -> in.skipField(tag);
             }
+        }
+        if (prec == 0) return new BigFloat(mantissa, exponent, prec, negative);
+        long n = BigFloats.digitsFor(Integer.toUnsignedLong(prec));
+        if (n > maxDigits) {
+            throw new IOException("pxf.BigFloat prec " + Integer.toUnsignedLong(prec) + " implies " + n
+                    + " digits; MaxNumericLiteralDigits=" + maxDigits);
         }
         int first = 0;
         while (first < mantissa.length && mantissa[first] == 0) first++;

@@ -441,4 +441,57 @@ class PbTest {
                 + "2204" + "0000c07f",
             java.util.HexFormat.of().formatHex(Pb.marshal(h)));
     }
+
+    // -- BigFloat decode bounds, as protowire-go's TestBigFloatPrecBound and
+    // TestBigFloatExponentBoundEdges (#159)
+
+    public static class BigFloatHolder { @ProtoField(1) BigFloat f; public BigFloatHolder() {} }
+
+    /** {@code f = pxf.BigFloat{mantissa, exponent, prec}} on the wire. */
+    private static byte[] bigFloatWire(byte[] mant, int exp, int prec) throws IOException {
+        java.io.ByteArrayOutputStream sub = new java.io.ByteArrayOutputStream();
+        com.google.protobuf.CodedOutputStream s = com.google.protobuf.CodedOutputStream.newInstance(sub);
+        s.writeByteArray(1, mant);
+        s.writeInt32(2, exp);
+        s.writeUInt32(3, prec);
+        s.flush();
+        java.io.ByteArrayOutputStream outer = new java.io.ByteArrayOutputStream();
+        com.google.protobuf.CodedOutputStream o = com.google.protobuf.CodedOutputStream.newInstance(outer);
+        o.writeByteArray(1, sub.toByteArray());
+        o.flush();
+        return outer.toByteArray();
+    }
+
+    @Test
+    void aBigFloatPrecIsBoundedByTheDigitsItsLiteralNeeds() throws IOException {
+        BigFloatHolder h = Pb.unmarshal(bigFloatWire(new byte[] {0x19}, -3, 13603), BigFloatHolder.class);
+        assertEquals(13603, h.f.prec());
+        for (int prec : new int[] {13604, 1 << 27, Integer.MAX_VALUE, -1 /* 2^32-1 */}) {
+            IOException e = assertThrows(IOException.class,
+                    () -> Pb.unmarshal(bigFloatWire(new byte[] {0x19}, -3, prec), BigFloatHolder.class));
+            assertTrue(e.getMessage().contains("MaxNumericLiteralDigits=4096"), e.getMessage());
+        }
+        // The cap is the caller's MaxNumericLiteralDigits.
+        assertThrows(IOException.class, () -> Pb.unmarshal(bigFloatWire(new byte[] {0x19}, -3, 64), BigFloatHolder.class,
+                UnmarshalOptions.defaults().withMaxNumericLiteralDigits(20)));
+    }
+
+    @Test
+    void aPrecZeroBigFloatIsZeroAtAnyExponent() throws IOException {
+        BigFloatHolder h = Pb.unmarshal(bigFloatWire(new byte[] {1}, Integer.MIN_VALUE, 0), BigFloatHolder.class);
+        assertEquals(0, h.f.prec());
+        // ...and writes back as the zero value, which a singular field omits.
+        assertEquals(0, Pb.marshal(h).length);
+    }
+
+    @Test
+    void aZeroMantissaIsZeroAtAnyExponent() throws IOException {
+        for (byte[] mant : new byte[][] {{}, {0, 0}}) {
+            for (int exp : new int[] {Integer.MIN_VALUE, Integer.MAX_VALUE}) {
+                BigFloatHolder h = Pb.unmarshal(bigFloatWire(mant, exp, 64), BigFloatHolder.class);
+                // Written back as Go writes a zero at prec 64: no mantissa, no exponent.
+                assertEquals("0a021840", java.util.HexFormat.of().formatHex(Pb.marshal(h)));
+            }
+        }
+    }
 }

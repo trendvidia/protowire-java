@@ -63,7 +63,8 @@ public final class CheckDecodeAndroid {
                 }
             }
         }
-        PxfMeta meta = METAS.get(schema);
+        // Map.of refuses a null key, and the NPE would exit 1, the reject code.
+        PxfMeta meta = schema == null ? null : METAS.get(schema);
         if (format == null || input == null || meta == null) {
             System.err.println("check-decode-android: need --format, --input and a known --schema, got " + schema);
             System.exit(2);

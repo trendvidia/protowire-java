@@ -99,3 +99,15 @@ jobs:
 
       - name: Security gate
         run: "$PROTOWIRE_DIR/scripts/cross_security_check.sh"
+
+      # pb-go-golden.txt is a byte copy of the spec's struct-binding table
+      # (protowire#518). Until that merges the spec's main has no table, and
+      # this says so rather than fails; drop the guard once it has.
+      - name: Struct-binding table matches the spec's
+        run: |
+          table="$PROTOWIRE_DIR/testdata/values/values.tsv"
+          if [[ ! -f "$table" ]]; then
+            echo "::warning::protowire main has no testdata/values/values.tsv yet (protowire#518)"
+            exit 0
+          fi
+          cmp "$table" pb/src/test/resources/golden/pb-go-golden.txt

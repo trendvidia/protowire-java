@@ -416,4 +416,29 @@ class PbTest {
         assertThrows(IllegalArgumentException.class, () -> UnmarshalOptions.defaults().with("MaxVarintBytes", 1));
         assertThrows(IllegalArgumentException.class, () -> UnmarshalOptions.defaults().withMaxRepeatedCount(0));
     }
+
+    // -- a NaN in a struct field is written canonically (draft -01 § Numeric Literals, #161)
+
+    public static class NaNHolder {
+        @ProtoField(1) double d;
+        @ProtoField(2) float f;
+        @ProtoField(3) List<Double> ds;
+        @ProtoField(4) List<Float> fs;
+        public NaNHolder() {}
+    }
+
+    @Test
+    void nanIsWrittenCanonicallyWhateverItsPayload() throws IOException {
+        // The bytes protowire-go's pb.Marshal writes for the same struct
+        // (protowire-go canonical-nan, TestMarshalWritesNaNCanonically).
+        NaNHolder h = new NaNHolder();
+        h.d = Double.longBitsToDouble(0x7ff8000000000001L);
+        h.f = Float.intBitsToFloat(0x7fc00001);
+        h.ds = List.of(Double.longBitsToDouble(0x7ff8000000000001L), 1.0);
+        h.fs = List.of(Float.intBitsToFloat(0x7fc00001));
+        assertEquals("09000000000000f87f" + "150000c07f"
+                + "1a10" + "000000000000f87f" + "000000000000f03f"
+                + "2204" + "0000c07f",
+            java.util.HexFormat.of().formatHex(Pb.marshal(h)));
+    }
 }

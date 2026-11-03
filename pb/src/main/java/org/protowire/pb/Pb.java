@@ -304,9 +304,9 @@ public final class Pb {
                 long n = ((Number) v).longValue();
                 payload.writeUInt64NoTag(zigzag ? zigzagEncode(n) : n);
             } else if (type == float.class || type == Float.class) {
-                payload.writeFloatNoTag(((Number) v).floatValue());
+                payload.writeFixed32NoTag(Float.floatToIntBits(((Number) v).floatValue()));
             } else {
-                payload.writeDoubleNoTag(((Number) v).doubleValue());
+                payload.writeFixed64NoTag(Double.doubleToLongBits(((Number) v).doubleValue()));
             }
         }
         payload.flush();
@@ -335,11 +335,15 @@ public final class Pb {
         } else if (type == float.class || type == Float.class) {
             float f = ((Number) v).floatValue();
             if (f == 0f && !element) return;
-            out.writeFloat(num, f);
+            // floatToIntBits, not the raw form writeFloat uses: a struct
+            // field is a language value, so any NaN goes out as the canonical
+            // 0x7fc00000, payload or not (draft -01 § Numeric Literals; #161).
+            out.writeFixed32(num, Float.floatToIntBits(f));
         } else if (type == double.class || type == Double.class) {
             double d = ((Number) v).doubleValue();
             if (d == 0d && !element) return;
-            out.writeDouble(num, d);
+            // Likewise 0x7ff8000000000000 for any NaN (#161).
+            out.writeFixed64(num, Double.doubleToLongBits(d));
         } else if (type == String.class) {
             String s = (String) v;
             if (s.isEmpty() && !element) return;

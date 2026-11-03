@@ -9,7 +9,7 @@
 //
 // Contract:
 //
-//   check-decode --format <pxf|pb|sbe|envelope> \
+//   check-decode --format <pxf|pxf-pb|pb|pb-render|pb-text|sbe|envelope> \
 //                --schema <fully.qualified.MessageType> \
 //                --proto  <path-to-adversarial.proto> \
 //                --input  <path> \
@@ -24,6 +24,10 @@
 //   Exit 1 -> input was rejected (clean error; "reject: <msg>" on stderr)
 //   Other  -> bug in the decoder (uncaught exception / OOM / ...)
 //
+//   pb-text and pxf-pb also write their output on stdout, for the text gate
+//   and the write gate (protowire/scripts/cross_text_check.sh and
+//   cross_write_check.sh).
+//
 // Like the Rust and C++ ports, the Java port handles `--proto <path>.proto`
 // by reading the sibling `<stem>.binpb` (a FileDescriptorSet built with
 // --include_imports). The protobuf-java runtime cannot compile `.proto` text.
@@ -33,6 +37,7 @@ import com.google.protobuf.DescriptorProtos.FileDescriptorProto;
 import com.google.protobuf.DescriptorProtos.FileDescriptorSet;
 import com.google.protobuf.Descriptors;
 import com.google.protobuf.Descriptors.Descriptor;
+import com.google.protobuf.Descriptors.FieldDescriptor;
 import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import org.protowire.pb.Pb;
@@ -43,10 +48,12 @@ import org.protowire.pxf.UnmarshalOptions;
 import org.protowire.sbe.Codec;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -134,7 +141,7 @@ public final class CheckDecode {
             }
         }
         if (format == null || schema == null || input == null) {
-            System.err.println("usage: check-decode --format <pxf|pb|sbe|envelope> "
+            System.err.println("usage: check-decode --format <pxf|pxf-pb|pb|pb-render|pb-text|sbe|envelope> "
                     + "--schema <full.name> --proto <path> --input <path> [--limit NAME=VALUE]...");
             System.exit(2);
         }
@@ -168,6 +175,7 @@ public final class CheckDecode {
         byte[] data = Files.readAllBytes(Paths.get(input));
         switch (format) {
             case "pxf"      -> pxfDecode(data, schema, proto, limits);
+            case "pxf-pb"   -> pxfPb(data, schema, proto, limits);
             case "pb"       -> pbDecode(data, schema, limits);
             case "pb-render" -> pbRender(data, schema, proto);
             case "pb-text"  -> pbText(data, schema, proto);
@@ -214,6 +222,68 @@ public final class CheckDecode {
     // The PXF for the bytes on stdout, for the text gate
     // (protowire/scripts/cross_text_check.sh). The stock runtime reads the
     // bytes, as in pbRender, so the comparison is of the marshaller alone.
+    /**
+     * The PB bytes for a PXF document, on stdout, for the write gate
+     * (protowire#509). The full decode, as {@code dump-envelope} uses, then
+     * the stock writer, which is what a caller of this port gets.
+     */
+    private static void pxfPb(byte[] data, String schema, String protoPath, DecodeLimits limits) throws Exception {
+        if (protoPath == null || protoPath.isEmpty()) {
+            throw new RejectException("--proto is required for format=pxf-pb");
+        }
+        Descriptor desc = loadDescriptor(protoPath, schema);
+        DynamicMessage.Builder b = DynamicMessage.newBuilder(desc);
+        try {
+            UnmarshalOptions.defaults().withLimits(limits).unmarshalFull(data, b);
+        } catch (RuntimeException e) {
+            throw new RejectException(messageOf(e));
+        }
+        System.out.write(sortMaps(b.build()).toByteArray());
+        System.out.flush();
+    }
+
+    /**
+     * The write gate compares bytes with Go's deterministic writer, which
+     * puts map entries in key order (protowire#509). protobuf-java writes a
+     * DynamicMessage's map entries in insertion order, even with
+     * deterministic serialization on, so this harness sorts them, in every
+     * nested message too: false before true, integers by value (unsigned
+     * for the unsigned types), strings by their UTF-8 bytes.
+     */
+    static DynamicMessage sortMaps(DynamicMessage msg) {
+        DynamicMessage.Builder b = msg.toBuilder();
+        for (Map.Entry<FieldDescriptor, Object> f : msg.getAllFields().entrySet()) {
+            FieldDescriptor fd = f.getKey();
+            if (fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) continue;
+            if (fd.isRepeated()) {
+                List<DynamicMessage> items = new ArrayList<>();
+                for (Object o : (List<?>) f.getValue()) items.add(sortMaps((DynamicMessage) o));
+                if (fd.isMapField()) {
+                    FieldDescriptor key = fd.getMessageType().findFieldByNumber(1);
+                    items.sort((x, y) -> compareMapKeys(key, x.getField(key), y.getField(key)));
+                }
+                b.clearField(fd);
+                for (DynamicMessage m : items) b.addRepeatedField(fd, m);
+            } else {
+                b.setField(fd, sortMaps((DynamicMessage) f.getValue()));
+            }
+        }
+        return b.build();
+    }
+
+    private static int compareMapKeys(FieldDescriptor key, Object x, Object y) {
+        return switch (key.getType()) {
+            case BOOL -> Boolean.compare((Boolean) x, (Boolean) y);
+            case STRING -> Arrays.compareUnsigned(
+                ((String) x).getBytes(StandardCharsets.UTF_8), ((String) y).getBytes(StandardCharsets.UTF_8));
+            case UINT32, FIXED32 -> Integer.compareUnsigned((Integer) x, (Integer) y);
+            case UINT64, FIXED64 -> Long.compareUnsigned((Long) x, (Long) y);
+            case INT32, SINT32, SFIXED32 -> Integer.compare((Integer) x, (Integer) y);
+            case INT64, SINT64, SFIXED64 -> Long.compare((Long) x, (Long) y);
+            default -> throw new IllegalStateException("map key type " + key.getType());
+        };
+    }
+
     private static void pbText(byte[] data, String schema, String protoPath) throws Exception {
         if (protoPath == null || protoPath.isEmpty()) {
             throw new RejectException("--proto is required for format=pb-text");

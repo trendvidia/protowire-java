@@ -8,6 +8,7 @@
 // does have:
 //
 //   pxf                 text to wire, through LiteWireWriter
+//   pxf-pb              as pxf, and writes the wire bytes on stdout
 //   pb, pb-render       wire to text, through LiteWireReader
 //   pb-text             as pb-render, and writes the text on stdout
 //   sbe                 SbeWireCodec on the generated template, called directly
@@ -87,6 +88,10 @@ public final class CheckDecodeAndroid {
         byte[] data = Files.readAllBytes(Paths.get(input));
         switch (format) {
             case "pxf" -> LiteWireWriter.encode(Parser.parse(data, limits), meta, limits);
+            case "pxf-pb" -> {
+                System.out.write(LiteWireWriter.encode(Parser.parse(data, limits), meta, limits));
+                System.out.flush();
+            }
             case "pb", "pb-render" -> LiteWireReader.toAst(data, meta, limits);
             case "pb-text" -> {
                 byte[] text = Format.formatDocument(LiteWireReader.toAst(data, meta, limits))

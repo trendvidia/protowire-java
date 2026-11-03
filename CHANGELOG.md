@@ -18,6 +18,14 @@ format changes.
 
 ## [Unreleased]
 
+### Added
+
+- **`check-decode` and `check-decode-android` gain `--format pxf-pb`** (protowire#509), for the spec's new write gate. It reads a PXF document and writes the PB bytes on stdout. The full tier decodes with `unmarshalFull`, as `dump-envelope` does, and the harness sorts map entries by key before writing, because protobuf-java writes a `DynamicMessage`'s map entries in insertion order. On its first run the gate found 20 pairs that differ from protowire-go, filed as #156, #157 and #158.
+
+### Changed
+
+- **The lite tier's `LiteWireWriter` writes map entries in key order** (protowire#509): false before true, integers by value, strings by UTF-8 bytes, as protowire-go's deterministic writer does. It used to write them in document order. Protobuf leaves map order on the wire open, so readers are not affected, but bytes for a map with keys out of order change.
+
 ### Changed
 
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.

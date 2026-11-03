@@ -7,6 +7,7 @@ import org.junit.jupiter.api.Test;
 import java.io.IOException;
 import java.io.InputStream;
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.HexFormat;
 import java.util.LinkedHashMap;
@@ -17,11 +18,15 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import org.junit.jupiter.api.Disabled;
+
 /**
  * {@link Pb} measured against the reference, not against itself (#77,
- * STABILITY.md promise 2): every struct here has a twin in
- * {@code src/test/golden/main.go}, and {@code resources/golden/pb-go-golden.txt}
- * holds the bytes protowire-go's {@code encoding/pb} wrote for it. The
+ * STABILITY.md promise 2): every struct here has a twin in the spec repo's
+ * struct-binding table (protowire/testdata/values, protowire#518), and
+ * {@code resources/golden/pb-go-golden.txt} is a byte copy of its
+ * {@code values.tsv}: the bytes protowire-go's {@code encoding/pb} writes for
+ * each. CI's conformance job checks the copy against the spec repo. The
  * encode direction is compared byte for byte; the decode direction reads
  * Go's bytes back to the same values. Round trips inside this module
  * passed for years while every non-zero integer was zigzag-encoded,
@@ -254,5 +259,96 @@ class PbGoldenTest {
         env.error = new AppError();
         env.error.metadata.put("", "");
         assertEquals("22062a040a001200", hex(Pb.marshal(env)));
+    }
+
+    // -- zeros and big numbers, from the shared table (protowire#518) --------
+
+    public static class Zeros {
+        @ProtoField(1) int i;
+        @ProtoField(2) String s = "";
+        @ProtoField(3) boolean b;
+        @ProtoField(4) double d;
+        @ProtoField(5) byte[] bs = new byte[0];
+        @ProtoField(6) long u;
+        public Zeros() {}
+    }
+
+    @Test
+    void zeroScalarsAreOmitted() throws IOException {
+        assertEncodesAs("Zeros", new Zeros());
+    }
+
+    public static class BigNums {
+        @ProtoField(1) BigInteger i;
+        @ProtoField(2) BigDecimal d;
+        @ProtoField(3) BigFloat f;
+        public BigNums() {}
+    }
+
+    @Test
+    void nullBigNumbersAreOmitted() throws IOException {
+        assertEncodesAs("BigNumsNull", new BigNums());
+    }
+
+    @Test
+    @Disabled("#159: a non-null zero BigFloat is written as 1a00")
+    void zeroBigNumbersAreOmitted() throws IOException {
+        BigNums v = new BigNums();
+        v.i = BigInteger.ZERO; v.d = BigDecimal.ZERO; v.f = new BigFloat(new byte[0], 0, 0, false);
+        assertEncodesAs("BigNumsZero", v);
+    }
+
+    @Test
+    void negativeBigNumbers() throws IOException {
+        BigNums v = new BigNums();
+        v.i = new BigInteger("-12345678901234567890");
+        v.d = new BigDecimal("-0.5");
+        // -1.5 at prec 53: the mantissa widened to 53 bits, as Go writes it.
+        v.f = new BigFloat(HexFormat.of().parseHex("18000000000000"), -52, 53, true);
+        assertEncodesAs("BigNumsNegative", v);
+    }
+
+    public static class BigInts { @ProtoField(1) List<BigInteger> is; public BigInts() {} }
+
+    @Test
+    void aZeroBigIntElementIsAnEmptyMessage() throws IOException {
+        BigInts v = new BigInts();
+        v.is = List.of(BigInteger.ZERO, BigInteger.ONE);
+        assertEncodesAs("BigIntsZeroElement", v);
+    }
+
+    public static class BigFloatMap { @ProtoField(1) Map<String, BigFloat> m = new LinkedHashMap<>(); public BigFloatMap() {} }
+    public static class OneBigFloat { @ProtoField(1) BigFloat f; public OneBigFloat() {} }
+
+    @Test
+    @Disabled("#159: a null element throws NullPointerException")
+    void aNullBigIntElementIsAnEmptyMessage() throws IOException {
+        BigInts v = new BigInts();
+        v.is = java.util.Arrays.asList(BigInteger.ONE, null);
+        assertEncodesAs("BigIntsNullElement", v);
+    }
+
+    @Test
+    @Disabled("#159: a null element throws NullPointerException")
+    void aNullDecimalElementIsAnEmptyMessage() throws IOException {
+        Decimals v = new Decimals();
+        v.ds = java.util.Arrays.asList(BigDecimal.ONE, null);
+        assertEncodesAs("DecimalsNullElement", v);
+    }
+
+    @Test
+    @Disabled("#159: the entry is written without its value field")
+    void aNullBigFloatMapValueKeepsItsValueField() throws IOException {
+        BigFloatMap v = new BigFloatMap();
+        v.m.put("k", null);
+        assertEncodesAs("BigFloatMapNullValue", v);
+    }
+
+    @Test
+    @Disabled("#159: the record's fields are written as given, not normalised")
+    void anUnnormalisedBigFloatIsWrittenNormalised() throws IOException {
+        OneBigFloat v = new OneBigFloat();
+        v.f = new BigFloat(new byte[] {3}, -1, 64, false); // 1.5
+        assertEncodesAs("BigFloatPrec64", v);
     }
 }

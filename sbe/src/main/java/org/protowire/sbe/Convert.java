@@ -71,7 +71,13 @@ public final class Convert {
         b.append("message ").append(c.name).append(" {\n");
         int n = 1;
         for (XmlSchema.XmlType t : c.types) {
-            writeTypedField(b, "  ", resolveTypeToProto(t), camelToSnake(t.name), n);
+            String[] mt;
+            try {
+                mt = resolveTypeToProto(t);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("sbe: composite \"" + c.name + "\": " + e.getMessage(), e);
+            }
+            writeTypedField(b, "  ", mt, camelToSnake(t.name), n);
             n++;
         }
         for (XmlSchema.XmlRef r : c.refs) {
@@ -86,8 +92,12 @@ public final class Convert {
                                   Map<String, XmlSchema.XmlEnum> enumMap) {
         b.append("message ").append(m.name).append(" {\n");
         b.append("  option (sbe.template_id) = ").append(m.id).append(";\n");
-        for (XmlSchema.XmlField f : m.fields) writeProtoField(b, f, typeMap, compMap, enumMap, "  ");
-        for (XmlSchema.XmlGroup g : m.groups) writeProtoGroup(b, g, typeMap, compMap, enumMap, "  ");
+        try {
+            for (XmlSchema.XmlField f : m.fields) writeProtoField(b, f, typeMap, compMap, enumMap, "  ");
+            for (XmlSchema.XmlGroup g : m.groups) writeProtoGroup(b, g, typeMap, compMap, enumMap, "  ");
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("sbe: message \"" + m.name + "\": " + e.getMessage(), e);
+        }
         b.append("}\n\n");
     }
 
@@ -103,7 +113,13 @@ public final class Convert {
         }
         XmlSchema.XmlType t = typeMap.get(f.type);
         if (t != null) {
-            writeTypedField(b, indent, resolveTypeToProto(t), name, f.id);
+            String[] mt;
+            try {
+                mt = resolveTypeToProto(t);
+            } catch (IllegalArgumentException e) {
+                throw new IllegalArgumentException("field \"" + f.name + "\": " + e.getMessage(), e);
+            }
+            writeTypedField(b, indent, mt, name, f.id);
             return;
         }
         b.append(indent).append(f.type).append(' ').append(name).append(" = ").append(f.id).append(";\n");
@@ -116,7 +132,11 @@ public final class Convert {
                                 String indent) {
         String msgName = singularPascal(g.name);
         b.append(indent).append("message ").append(msgName).append(" {\n");
-        for (XmlSchema.XmlField f : g.fields) writeProtoField(b, f, typeMap, compMap, enumMap, indent + "  ");
+        try {
+            for (XmlSchema.XmlField f : g.fields) writeProtoField(b, f, typeMap, compMap, enumMap, indent + "  ");
+        } catch (IllegalArgumentException e) {
+            throw new IllegalArgumentException("group \"" + g.name + "\": " + e.getMessage(), e);
+        }
         b.append(indent).append("}\n");
         b.append(indent).append("repeated ").append(msgName).append(' ').append(camelToSnake(g.name))
                 .append(" = ").append(g.id).append(";\n");
@@ -138,13 +158,32 @@ public final class Convert {
      * UTF-8, so a Latin-1 byte would fail the whole message (draft -01
      * § Character Encoding, protowire#494, #173). As protowire-go's
      * {@code xmltoproto.go} words it.
+     *
+     * <p>A {@code uint8} or {@code int8} array (length above 1) becomes
+     * {@code bytes} of the same {@code (sbe.length)}: the same N bytes in the
+     * block. An array of a wider primitive is refused, naming the type, since
+     * no proto field holds it and importing one element would misplace every
+     * later field in the block (draft -01 § Fixed-Length Arrays, #179).
+     *
+     * @throws IllegalArgumentException for an array of a primitive wider than a byte
      */
     static String[] resolveTypeToProto(XmlSchema.XmlType t) {
-        String[] mt = resolveTypeToProto(t.primitiveType, t.length);
-        if ("char".equals(t.primitiveType) && !isUtf8Compatible(t.characterEncoding)) {
-            return new String[]{"bytes", mt[1], "SBE characterEncoding \"" + t.characterEncoding
-                    + "\" is not UTF-8 compatible, so this field is bytes."};
+        if ("char".equals(t.primitiveType)) {
+            String[] mt = resolveTypeToProto(t.primitiveType, t.length);
+            if (!isUtf8Compatible(t.characterEncoding)) {
+                return new String[]{"bytes", mt[1], "SBE characterEncoding \"" + t.characterEncoding
+                        + "\" is not UTF-8 compatible, so this field is bytes."};
+            }
+            return new String[]{mt[0], mt[1], ""};
         }
+        if (t.length > 1) {
+            if ("uint8".equals(t.primitiveType) || "int8".equals(t.primitiveType)) {
+                return new String[]{"bytes", "(sbe.length) = " + t.length, ""};
+            }
+            throw new IllegalArgumentException("type \"" + t.name + "\" is an array of " + t.length + " "
+                    + t.primitiveType + ", which no proto field represents");
+        }
+        String[] mt = resolveTypeToProto(t.primitiveType, t.length);
         return new String[]{mt[0], mt[1], ""};
     }
 
@@ -196,6 +235,7 @@ public final class Convert {
         Integer version = SbeAnnotations.fileUint32(fd, SbeAnnotations.EXT_VERSION);
 
         TreeSet<Integer> strLengths = new TreeSet<>();
+        TreeSet<Integer> bytesLengths = new TreeSet<>();
         List<Descriptor> composites = new ArrayList<>();
         Set<String> compSeen = new HashSet<>();
         List<EnumDescriptor> enums = new ArrayList<>();
@@ -205,7 +245,7 @@ public final class Convert {
 
         for (Descriptor md : fd.getMessageTypes()) {
             Integer tid = SbeAnnotations.messageUint32(md, SbeAnnotations.EXT_TEMPLATE_ID);
-            if (tid != null) collectXmlTypes(md, strLengths, composites, compSeen, enums, enumSeen);
+            if (tid != null) collectXmlTypes(md, strLengths, bytesLengths, composites, compSeen, enums, enumSeen);
             else if (compSeen.add(md.getFullName())) composites.add(md);
         }
 
@@ -227,7 +267,8 @@ public final class Convert {
         b.append("            <type name=\"blockLength\" primitiveType=\"uint16\"/>\n");
         b.append("            <type name=\"numInGroup\" primitiveType=\"uint16\"/>\n");
         b.append("        </composite>\n");
-        for (int l : strLengths) b.append("        <type name=\"str").append(l).append("\" primitiveType=\"char\" length=\"").append(l).append("\"/>\n");
+        for (int l : strLengths) b.append("        <type name=\"").append(strTypeName(l)).append("\" primitiveType=\"char\" length=\"").append(l).append("\"/>\n");
+        for (int l : bytesLengths) b.append("        <type name=\"").append(bytesTypeName(l)).append("\" primitiveType=\"uint8\" length=\"").append(l).append("\"/>\n");
         for (EnumDescriptor ed : enums) writeXmlEnum(b, ed);
         for (Descriptor md : composites) writeXmlComposite(b, md);
         b.append("    </types>\n");
@@ -239,27 +280,32 @@ public final class Convert {
         return b.toString();
     }
 
-    static void collectXmlTypes(Descriptor md, TreeSet<Integer> strLens, List<Descriptor> composites,
+    /** The {@code <types>} entry a string or bytes field of this fixed length refers to. */
+    static String strTypeName(int length) { return "str" + length; }
+    static String bytesTypeName(int length) { return "bytes" + length; }
+
+    static void collectXmlTypes(Descriptor md, TreeSet<Integer> strLens, TreeSet<Integer> bytesLens, List<Descriptor> composites,
                                 Set<String> compSeen, List<EnumDescriptor> enums, Set<String> enumSeen) {
         for (EnumDescriptor ed : md.getEnumTypes()) {
             if (enumSeen.add(ed.getFullName())) enums.add(ed);
         }
         for (FieldDescriptor f : md.getFields()) {
-            if (f.getType() == FieldDescriptor.Type.STRING || f.getType() == FieldDescriptor.Type.BYTES) {
-                Integer len = SbeAnnotations.fieldUint32(f, SbeAnnotations.EXT_LENGTH);
-                if (len != null) strLens.add(len);
+            Integer len = SbeAnnotations.fieldUint32(f, SbeAnnotations.EXT_LENGTH);
+            if (len != null) {
+                if (f.getType() == FieldDescriptor.Type.STRING) strLens.add(len);
+                else if (f.getType() == FieldDescriptor.Type.BYTES) bytesLens.add(len);
             }
             if (f.getJavaType() == FieldDescriptor.JavaType.ENUM) {
                 EnumDescriptor ed = f.getEnumType();
                 if (enumSeen.add(ed.getFullName())) enums.add(ed);
             }
             if (f.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                if (f.isRepeated()) collectXmlTypes(f.getMessageType(), strLens, composites, compSeen, enums, enumSeen);
+                if (f.isRepeated()) collectXmlTypes(f.getMessageType(), strLens, bytesLens, composites, compSeen, enums, enumSeen);
                 else {
                     Descriptor sub = f.getMessageType();
                     if (compSeen.add(sub.getFullName())) {
                         composites.add(sub);
-                        collectXmlTypes(sub, strLens, composites, compSeen, enums, enumSeen);
+                        collectXmlTypes(sub, strLens, bytesLens, composites, compSeen, enums, enumSeen);
                     }
                 }
             }
@@ -314,8 +360,7 @@ public final class Convert {
             return;
         }
         SbeTypeInfo info = protoFieldToSbe(fd);
-        if (info.length > 0) b.append(indent).append("<field name=\"").append(fn).append("\" id=\"").append(fd.getNumber()).append("\" type=\"str").append(info.length).append("\"/>\n");
-        else b.append(indent).append("<field name=\"").append(fn).append("\" id=\"").append(fd.getNumber()).append("\" type=\"").append(info.xmlType).append("\"/>\n");
+        b.append(indent).append("<field name=\"").append(fn).append("\" id=\"").append(fd.getNumber()).append("\" type=\"").append(info.xmlType).append("\"/>\n");
     }
 
     static void writeXmlGroup(StringBuilder b, FieldDescriptor fd, String indent) {
@@ -327,14 +372,23 @@ public final class Convert {
         b.append(indent).append("</group>\n");
     }
 
+    /**
+     * An SBE type for a proto field. {@code xmlType} is what a {@code <field>}
+     * names: the primitive, or for a fixed-length array the {@code <types>}
+     * entry declared for its length.
+     */
     record SbeTypeInfo(String primitiveType, String xmlType, int length) {}
 
     static SbeTypeInfo protoFieldToSbe(FieldDescriptor fd) {
         String enc = SbeAnnotations.fieldString(fd, SbeAnnotations.EXT_ENCODING);
         if (enc != null) return new SbeTypeInfo(enc, enc, 0);
+        // A bytes field is a uint8 array, not a char array: a char array
+        // imports back as a string (#179). Both are the same N bytes on the wire.
         if (fd.getType() == FieldDescriptor.Type.STRING || fd.getType() == FieldDescriptor.Type.BYTES) {
             Integer len = SbeAnnotations.fieldUint32(fd, SbeAnnotations.EXT_LENGTH);
-            return new SbeTypeInfo("char", "char", len == null ? 0 : len);
+            if (len == null || len == 0) return new SbeTypeInfo("char", "char", 0);
+            if (fd.getType() == FieldDescriptor.Type.BYTES) return new SbeTypeInfo("uint8", bytesTypeName(len), len);
+            return new SbeTypeInfo("char", strTypeName(len), len);
         }
         return switch (fd.getType()) {
             case BOOL -> new SbeTypeInfo("uint8", "uint8", 0);

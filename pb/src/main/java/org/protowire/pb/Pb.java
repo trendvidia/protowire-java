@@ -5,6 +5,7 @@ package org.protowire.pb;
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
 import com.google.protobuf.WireFormat;
+import org.protowire.pxf.BigFloats;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -352,19 +353,27 @@ public final class Pb {
             byte[] b = (byte[]) v;
             if (b.length == 0 && !element) return;
             out.writeByteArray(num, b);
-        } else if (type == BigInteger.class) {
-            BigInteger bi = (BigInteger) v;
-            if (bi.signum() == 0 && !element) return;
-            byte[] msg = marshalBigInteger(bi);
-            out.writeByteArray(num, msg);
-        } else if (type == BigDecimal.class) {
-            BigDecimal bd = (BigDecimal) v;
-            if (bd.signum() == 0 && !element) return;
-            byte[] msg = marshalBigDecimal(bd);
-            out.writeByteArray(num, msg);
-        } else if (type == BigFloat.class) {
-            if (v == null) return;
-            out.writeByteArray(num, marshalBigFloat((BigFloat) v));
+        } else if (type == BigInteger.class || type == BigDecimal.class || type == BigFloat.class) {
+            // A null element or map value is the zero value's record, an
+            // empty message, as protowire-go writes a nil *big.Int /
+            // *big.Rat / *big.Float element (#159): the list keeps its
+            // length and the entry its value field. A null singular field
+            // never reaches here.
+            if (v == null) {
+                out.writeByteArray(num, new byte[0]);
+            } else if (v instanceof BigInteger bi) {
+                if (bi.signum() == 0 && !element) return;
+                out.writeByteArray(num, marshalBigInteger(bi));
+            } else if (v instanceof BigDecimal bd) {
+                if (bd.signum() == 0 && !element) return;
+                out.writeByteArray(num, marshalBigDecimal(bd));
+            } else {
+                BigFloats.Value bf = normalize((BigFloat) v);
+                // Only +0 at prec 0 is the zero value; a zero at a precision,
+                // or -0, is written (protowire#410).
+                if (bf.prec() == 0 && !bf.negative() && !element) return;
+                out.writeByteArray(num, marshalBigFloat(bf));
+            }
         } else if (Number.class.isAssignableFrom(type) || type.isPrimitive()) {
             // unsigned variants would land here only if user used custom types — fallback
             long n = ((Number) v).longValue();
@@ -636,10 +645,33 @@ public final class Pb {
         return negative ? bd.negate() : bd;
     }
 
-    static byte[] marshalBigFloat(BigFloat bf) throws IOException {
+    /**
+     * The record's value in the form a decoder holds it, which is what
+     * protowire-go writes for a {@code big.Float} (#159): the mantissa at
+     * exactly {@code prec} bits, a wider one rounded half even and a
+     * narrower one widened, and no exponent for a zero. A prec-0 record is
+     * ±0 whatever its mantissa says. {@link BigFloats#normalize} is the
+     * rule, shared with the PXF codecs. A value a conformant reader would
+     * refuse — a prec past {@link #MAX_NUMERIC_LITERAL_DIGITS}, a binary
+     * exponent past {@link #MAX_BIG_FLOAT_EXPONENT} — is refused here.
+     */
+    static BigFloats.Value normalize(BigFloat bf) throws IOException {
+        byte[] mant = bf.mantissa() == null ? new byte[0] : bf.mantissa();
+        try {
+            return BigFloats.normalize(new BigInteger(1, mant), bf.exponent(), bf.prec(), bf.negative(),
+                    MAX_NUMERIC_LITERAL_DIGITS, MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new IOException(e.getMessage(), e);
+        }
+    }
+
+    static byte[] marshalBigFloat(BigFloats.Value bf) throws IOException {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(baos);
-        if (bf.mantissa().length > 0) out.writeByteArray(1, bf.mantissa());
+        byte[] mant = stripLeadingZero(bf.mantissa().toByteArray());
+        if (mant.length > 0) out.writeByteArray(1, mant);
+        // `int32 exponent = 2`: a plain varint, a negative one sign-extended
+        // to ten bytes (#77).
         if (bf.exponent() != 0) out.writeInt32(2, bf.exponent());
         if (bf.prec() != 0) out.writeUInt32(3, bf.prec());
         if (bf.negative()) out.writeBool(4, true);

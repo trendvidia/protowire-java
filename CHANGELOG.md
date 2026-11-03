@@ -28,6 +28,10 @@ format changes.
 
 ### Changed
 
+- **`Pb.marshal` writes null and zero big numbers as protowire-go does, and a `BigFloat` in the form a decoder holds it** (#159). A null `BigInteger` or `BigDecimal` element in a `List` threw `NullPointerException`; it is now an empty message, the zero value's record, as Go writes a nil `*big.Int` element, so the list keeps its length. A null `BigFloat` element was dropped, and a null `BigFloat` map value was written as an entry with no value field; both are an empty message now. A `BigFloat` is normalised before it is written: the mantissa at exactly `prec` bits (a wider one rounded half even, a narrower one widened), no exponent for a zero, and a prec-0 record is ±0 whatever its mantissa. So `{03, -1, 64}` (1.5) goes out as `{c000000000000000, -63, 64}`, as Go writes it, and a `+0` at prec 0 is omitted as a singular field. The value is unchanged; only its bytes change. A `BigFloat` whose prec needs more than `MaxNumericLiteralDigits` digits, or whose binary exponent after rounding is past `MaxBigFloatExponent`, is refused with an `IOException`, as Go refuses it. The rule is `BigFloats.normalize` in `:pxf-runtime`, which `:pb` now depends on; it is the form the PXF decoder already reads a BigFloat in.
+
+### Changed
+
 - **`Pb.marshal` writes any NaN as the canonical quiet NaN** (#161; draft `-01` § Numeric Literals). A `double` or `float` field, singular or in a list, holding a NaN with a payload used to go out with that payload, because `CodedOutputStream.writeDouble` keeps the raw bits. Now it goes out as `0x7ff8000000000000` (or `0x7fc00000`), as protowire-go writes it from a struct. `Double.NaN` and `Float.NaN` already had those bits, so only a NaN a program built from bits changes. Generated and dynamic messages still write their fields as they are, and PXF `nan` already decoded to the canonical NaN in both tiers.
 
 ### Changed

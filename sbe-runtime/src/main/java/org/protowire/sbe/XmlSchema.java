@@ -26,6 +26,8 @@ public final class XmlSchema {
 
     public static final class XmlType {
         public String name; public String primitiveType; public int length;
+        /** The IANA charset name a {@code char} type's bytes are in; empty when absent (US-ASCII). */
+        public String characterEncoding = "";
     }
 
     public static final class XmlComposite {
@@ -90,6 +92,7 @@ public final class XmlSchema {
         t.name = e.getAttribute("name");
         t.primitiveType = e.getAttribute("primitiveType");
         t.length = parseInt(e.getAttribute("length"), 0);
+        t.characterEncoding = e.getAttribute("characterEncoding");
         return t;
     }
 

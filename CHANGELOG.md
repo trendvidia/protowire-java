@@ -20,6 +20,10 @@ format changes.
 
 ### Changed
 
+- **`Pb.marshal` writes any NaN as the canonical quiet NaN** (#161; draft `-01` § Numeric Literals). A `double` or `float` field, singular or in a list, holding a NaN with a payload used to go out with that payload, because `CodedOutputStream.writeDouble` keeps the raw bits. Now it goes out as `0x7ff8000000000000` (or `0x7fc00000`), as protowire-go writes it from a struct. `Double.NaN` and `Float.NaN` already had those bits, so only a NaN a program built from bits changes. Generated and dynamic messages still write their fields as they are, and PXF `nan` already decoded to the canonical NaN in both tiers.
+
+### Changed
+
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
 
 ## [1.4.0] — 2026-11-02

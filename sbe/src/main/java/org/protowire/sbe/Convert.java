@@ -71,10 +71,7 @@ public final class Convert {
         b.append("message ").append(c.name).append(" {\n");
         int n = 1;
         for (XmlSchema.XmlType t : c.types) {
-            String[] mt = resolveTypeToProto(t.primitiveType, t.length);
-            String name = camelToSnake(t.name);
-            if (!mt[1].isEmpty()) b.append("  ").append(mt[0]).append(' ').append(name).append(" = ").append(n).append(" [").append(mt[1]).append("];\n");
-            else b.append("  ").append(mt[0]).append(' ').append(name).append(" = ").append(n).append(";\n");
+            writeTypedField(b, "  ", resolveTypeToProto(t), camelToSnake(t.name), n);
             n++;
         }
         for (XmlSchema.XmlRef r : c.refs) {
@@ -106,9 +103,7 @@ public final class Convert {
         }
         XmlSchema.XmlType t = typeMap.get(f.type);
         if (t != null) {
-            String[] mt = resolveTypeToProto(t.primitiveType, t.length);
-            if (!mt[1].isEmpty()) b.append(indent).append(mt[0]).append(' ').append(name).append(" = ").append(f.id).append(" [").append(mt[1]).append("];\n");
-            else b.append(indent).append(mt[0]).append(' ').append(name).append(" = ").append(f.id).append(";\n");
+            writeTypedField(b, indent, resolveTypeToProto(t), name, f.id);
             return;
         }
         b.append(indent).append(f.type).append(' ').append(name).append(" = ").append(f.id).append(";\n");
@@ -125,6 +120,53 @@ public final class Convert {
         b.append(indent).append("}\n");
         b.append(indent).append("repeated ").append(msgName).append(' ').append(camelToSnake(g.name))
                 .append(" = ").append(g.id).append(";\n");
+    }
+
+    /** Writes a field from {@link #resolveTypeToProto(XmlSchema.XmlType)}'s type, options and comment. */
+    private static void writeTypedField(StringBuilder b, String indent, String[] mt, String name, Object number) {
+        if (!mt[2].isEmpty()) b.append(indent).append("// ").append(mt[2]).append('\n');
+        b.append(indent).append(mt[0]).append(' ').append(name).append(" = ").append(number);
+        if (!mt[1].isEmpty()) b.append(" [").append(mt[1]).append(']');
+        b.append(";\n");
+    }
+
+    /**
+     * The proto type, options and a comment line (empty for none) of an SBE
+     * type. A {@code char} becomes a {@code string} only when its
+     * {@code characterEncoding} is UTF-8 compatible, and {@code bytes} of the
+     * same length otherwise: a decoder refuses a {@code string} that is not
+     * UTF-8, so a Latin-1 byte would fail the whole message (draft -01
+     * § Character Encoding, protowire#494, #173). As protowire-go's
+     * {@code xmltoproto.go} words it.
+     */
+    static String[] resolveTypeToProto(XmlSchema.XmlType t) {
+        String[] mt = resolveTypeToProto(t.primitiveType, t.length);
+        if ("char".equals(t.primitiveType) && !isUtf8Compatible(t.characterEncoding)) {
+            return new String[]{"bytes", mt[1], "SBE characterEncoding \"" + t.characterEncoding
+                    + "\" is not UTF-8 compatible, so this field is bytes."};
+        }
+        return new String[]{mt[0], mt[1], ""};
+    }
+
+    /**
+     * Whether every string in a {@code char} array of this encoding is valid
+     * UTF-8: absent (the FIX SBE default, US-ASCII), US-ASCII or UTF-8, by
+     * IANA name or alias, ignoring case, spaces and {@code -_.:}.
+     */
+    static boolean isUtf8Compatible(String encoding) {
+        StringBuilder name = new StringBuilder();
+        for (char c : (encoding == null ? "" : encoding.strip()).toCharArray()) {
+            if ("-_.: ".indexOf(c) < 0) name.append(Character.toLowerCase(c));
+        }
+        return switch (name.toString()) {
+            case "",
+                 // US-ASCII and its IANA aliases.
+                 "usascii", "ascii", "ansix341968", "ansix341986", "iso646us",
+                 "isoir6", "iso646irv1991", "us", "ibm367", "cp367", "csascii",
+                 // UTF-8.
+                 "utf8", "csutf8" -> true;
+            default -> false;
+        };
     }
 
     static String[] resolveTypeToProto(String primitive, int length) {

@@ -536,7 +536,7 @@ public final class Pb {
             return unmarshalBigDecimal(in.readByteArray(), opts.maxNumericLiteralDigits());
         }
         if (type == BigFloat.class) {
-            return unmarshalBigFloat(in.readByteArray(), opts.maxBigFloatExponent());
+            return unmarshalBigFloat(in.readByteArray(), opts.maxBigFloatExponent(), opts.maxNumericLiteralDigits());
         }
         // nested message
         byte[] sub = in.readByteArray();
@@ -679,8 +679,14 @@ public final class Pb {
         return baos.toByteArray();
     }
 
-    /** Refuses a value past the bound before anything is built from it. A zero mantissa has no binary exponent. */
-    static BigFloat unmarshalBigFloat(byte[] data, int maxExponent) throws IOException {
+    /**
+     * Refuses a value past the bounds before anything is built from it, as
+     * protowire-go does: a prec whose literal needs more than
+     * {@code maxDigits} digits (protowire#499), and a binary exponent past
+     * {@code maxExponent} (protowire#281). A zero mantissa has no binary
+     * exponent, and a prec-0 message is zero at any exponent (#159).
+     */
+    static BigFloat unmarshalBigFloat(byte[] data, int maxExponent, int maxDigits) throws IOException {
         CodedInputStream in = CodedInputStream.newInstance(data);
         byte[] mantissa = new byte[0];
         int exponent = 0;
@@ -696,6 +702,12 @@ public final class Pb {
                 case 4 -> negative = in.readBool();
                 default -> in.skipField(tag);
             }
+        }
+        if (prec == 0) return new BigFloat(mantissa, exponent, prec, negative);
+        long n = BigFloats.digitsFor(Integer.toUnsignedLong(prec));
+        if (n > maxDigits) {
+            throw new IOException("pxf.BigFloat prec " + Integer.toUnsignedLong(prec) + " implies " + n
+                    + " digits; MaxNumericLiteralDigits=" + maxDigits);
         }
         int first = 0;
         while (first < mantissa.length && mantissa[first] == 0) first++;

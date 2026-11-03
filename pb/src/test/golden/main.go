@@ -55,6 +55,9 @@ type ZeroMapEntry struct {
 type Decimal struct {
 	D *big.Rat `protowire:"1"`
 }
+type Decimals struct {
+	Ds []*big.Rat `protowire:"1"`
+}
 type Leaf struct {
 	Name string `protowire:"1"`
 	N    int32  `protowire:"2"`
@@ -81,5 +84,13 @@ func main() {
 	dump("Packed", &Packed{Xs: []int32{1, 0, -1}, Ys: []int64{300}, Bs: []bool{true, false}, Ds: []float64{1.5}, Fs: []float32{-2.5}})
 	dump("ZeroMapEntry", &ZeroMapEntry{M: map[string]string{"": ""}, Z: map[string]int32{"zero": 0}, K: map[int32]string{0: "v"}})
 	dump("Decimal", &Decimal{D: big.NewRat(31415, 10000)})
+	// A big.Rat holds no scale, so these are the reduced form the spec
+	// requires of a producer writing from a language value (protowire#508).
+	dump("DecimalOne", &Decimal{D: big.NewRat(1, 1)})            // 1.00
+	dump("DecimalFiveE2", &Decimal{D: big.NewRat(500, 1)})       // 5E+2
+	dump("DecimalFifteen", &Decimal{D: big.NewRat(15, 1)})       // 15.00
+	dump("DecimalZero", &Decimal{D: new(big.Rat)})               // 0.00
+	dump("DecimalNegative", &Decimal{D: big.NewRat(-3, 2)})      // -1.50
+	dump("Decimals", &Decimals{Ds: []*big.Rat{new(big.Rat), big.NewRat(1, 1), big.NewRat(500, 1)}}) // 0.00, 1.00, 5E+2
 	dump("Nested", &Nested{S: "x", Ls: []Leaf{{}, {Name: "l", N: -3}}, Ss: []string{"", "s"}})
 }

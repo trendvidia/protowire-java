@@ -32,4 +32,20 @@ public final class SbeUtf8 {
             throw new IllegalArgumentException("sbe: invalid UTF-8 in string field " + field);
         }
     }
+
+    /**
+     * The length to which UTF-8 {@code data} is cut to fit {@code limit}
+     * bytes without splitting a character (draft -01 § SBE Annotations,
+     * protowire#495): a byte-exact cut can leave half a character, and every
+     * strict decoder then rejects the whole message. A {@code bytes} field
+     * is cut at the limit instead.
+     */
+    public static int cutLength(byte[] data, int limit) {
+        if (data.length <= limit) return data.length;
+        int n = limit;
+        // Back up while data[n] continues a character (10xxxxxx), so the
+        // cut lands on the start of the character it would have split.
+        while (n > 0 && (data[n] & 0xC0) == 0x80) n--;
+        return n;
+    }
 }

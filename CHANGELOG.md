@@ -38,6 +38,8 @@ format changes.
 
 - **The SBE decoder rejects a string field that is not UTF-8** (#162; `docs/HARDENING.md` § UTF-8). Both tiers turned the bytes of an `(sbe.length)` `string` into a `String` with `new String(bytes, UTF_8)`, which puts U+FFFD in place of bad bytes and says nothing, so `41 42 FF FE` decoded as `"AB\uFFFD\uFFFD"`. `SbeWireCodec` and `View.stringValue` now decode strictly and throw `IllegalArgumentException` (`sbe: invalid UTF-8 in string field <name>`). A `bytes` field takes any bytes, as before. `check-decode-android` decodes `adversarial.v1.SbeText`, so the lite tier runs the spec's `sbe/utf8-*` rows.
 
+- **An SBE emitter cuts an overlong string on a character boundary** (#166; draft -01 § SBE Annotations, protowire#495). Both tiers cut an `(sbe.length)` value at the byte limit, which can split a multi-byte character, and every strict decoder, this port's now included, then rejects the whole message. `ABCDEFGé` in a string field of length 8 was written `41 42 43 44 45 46 47 C3`. A string is now cut at the last whole character at or before the limit and NUL-padded: `41 42 43 44 45 46 47 00`. A `bytes` field is still cut at the limit. Only bytes that strict decoders refuse change.
+
 ## [1.4.0] — 2026-11-02
 
 A minor release, because it narrows what decodes. The lite tier catches up with

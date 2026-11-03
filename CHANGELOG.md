@@ -18,6 +18,10 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
+
 ## [1.4.0] — 2026-11-02
 
 A minor release, because it narrows what decodes. The lite tier catches up with

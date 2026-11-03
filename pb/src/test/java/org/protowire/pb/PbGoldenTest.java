@@ -37,7 +37,7 @@ class PbGoldenTest {
             assertNotNull(in, "golden file missing");
             for (String line : new String(in.readAllBytes(), StandardCharsets.UTF_8).split("\n")) {
                 if (line.isBlank() || line.startsWith("#")) continue;
-                String[] kv = line.split("\t");
+                String[] kv = line.split("\t", -1); // an empty message is an empty hex column
                 m.put(kv[0], kv[1]);
             }
         } catch (IOException e) {
@@ -178,6 +178,34 @@ class PbGoldenTest {
         assertEncodesAs("Decimal", v);
         assertTrue(GOLDEN.get("Decimal").endsWith("1004"), "scale 4, not zigzag 8");
         assertEquals(0, new BigDecimal("3.1415").compareTo(Pb.unmarshal(golden("Decimal"), Decimal.class).d));
+    }
+
+    // -- a BigDecimal is written reduced, as Go's big.Rat is (#154) -----------
+    //
+    // Go holds no scale, so it writes the smallest non-negative one; the spec
+    // requires that of every producer writing from a language value
+    // (protowire#508). The Java value keeps its scale; only the bytes reduce.
+
+    public static class Decimals { @ProtoField(1) List<BigDecimal> ds; public Decimals() {} }
+
+    private static void assertDecimalEncodesAs(String name, String literal) throws IOException {
+        Decimal v = new Decimal(); v.d = new BigDecimal(literal);
+        assertEncodesAs(name, v);
+        BigDecimal back = Pb.unmarshal(golden(name), Decimal.class).d;
+        assertEquals(0, v.d.compareTo(back == null ? BigDecimal.ZERO : back), name + " reads back as " + literal);
+    }
+
+    @Test void decimalTrailingZerosAreDropped() throws IOException { assertDecimalEncodesAs("DecimalOne", "1.00"); }
+    @Test void decimalNegativeScaleIsWidened() throws IOException { assertDecimalEncodesAs("DecimalFiveE2", "5E+2"); }
+    @Test void decimalReducesToAWholeNumber() throws IOException { assertDecimalEncodesAs("DecimalFifteen", "15.00"); }
+    @Test void decimalZeroWithAScaleIsAbsent() throws IOException { assertDecimalEncodesAs("DecimalZero", "0.00"); }
+    @Test void decimalNegativeIsReducedToo() throws IOException { assertDecimalEncodesAs("DecimalNegative", "-1.50"); }
+
+    @Test
+    void decimalListElementsAreReducedAndAZeroIsAnEmptyMessage() throws IOException {
+        Decimals v = new Decimals();
+        v.ds = List.of(new BigDecimal("0.00"), new BigDecimal("1.00"), new BigDecimal("5E+2"));
+        assertEncodesAs("Decimals", v);
     }
 
     // -- nested messages and non-packed lists ---------------------------------

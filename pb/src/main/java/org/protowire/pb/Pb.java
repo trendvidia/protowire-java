@@ -567,7 +567,24 @@ public final class Pb {
         return negative ? v.negate() : v;
     }
 
+    /**
+     * Writes {@code bd} in reduced form: the smallest non-negative scale that
+     * holds the value exactly, so {@code 1.00} goes out as unscaled 1 and no
+     * scale, {@code 5E+2} as unscaled 500, and a zero as an empty message.
+     * That is what protowire-go writes from its scale-less {@code big.Rat},
+     * and what the spec requires of a producer writing from a language value
+     * (protowire#508; #154). The scale the caller held is not part of the
+     * value, so it is not kept. A reduced scale past
+     * {@link #MAX_NUMERIC_LITERAL_DIGITS} is refused: a conformant reader,
+     * this module's included, would reject the bytes.
+     */
     static byte[] marshalBigDecimal(BigDecimal bd) throws IOException {
+        if (bd.signum() == 0) return new byte[0];
+        bd = bd.stripTrailingZeros();
+        if (bd.scale() < 0) bd = bd.setScale(0);
+        if (bd.scale() > MAX_NUMERIC_LITERAL_DIGITS) {
+            throw new IOException("pxf.Decimal scale " + bd.scale() + " exceeds MaxNumericLiteralDigits=" + MAX_NUMERIC_LITERAL_DIGITS);
+        }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(baos);
         BigInteger unscaled = bd.unscaledValue().abs();

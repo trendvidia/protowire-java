@@ -273,10 +273,38 @@ class PbTest {
         public DecimalHolder() {}
     }
 
-    /** A pxf.Decimal message with unscaled 25 and the given scale, as this module writes it. */
+    /**
+     * A pxf.Decimal message with unscaled 25 and the given scale, built by
+     * hand: {@link Pb#marshalBigDecimal} writes the reduced form and refuses
+     * a scale past the bound, so it can no longer produce these (#154).
+     */
     private static byte[] decimalWire(int scale) throws IOException {
-        byte[] msg = Pb.marshalBigDecimal(new java.math.BigDecimal(java.math.BigInteger.valueOf(25), scale));
-        return lengthDelimited(1, msg);
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        com.google.protobuf.CodedOutputStream out = com.google.protobuf.CodedOutputStream.newInstance(baos);
+        out.writeByteArray(1, new byte[] {25});
+        out.writeTag(2, com.google.protobuf.WireFormat.WIRETYPE_VARINT);
+        out.writeUInt64NoTag(scale);
+        out.flush();
+        return lengthDelimited(1, baos.toByteArray());
+    }
+
+    @Test
+    void decimalReducedScalePastTheBoundIsRefusedOnMarshal() {
+        DecimalHolder h = new DecimalHolder();
+        h.d = new java.math.BigDecimal(java.math.BigInteger.ONE, Pb.MAX_NUMERIC_LITERAL_DIGITS + 1);
+        IOException e = assertThrows(IOException.class, () -> Pb.marshal(h));
+        assertTrue(e.getMessage().contains("scale 4097 exceeds MaxNumericLiteralDigits=4096"), e.getMessage());
+    }
+
+    @Test
+    void decimalBoundIsCheckedAfterReducing() throws IOException {
+        // Held at scale 5000, but the value is 1: its reduced scale is 0.
+        DecimalHolder h = new DecimalHolder();
+        h.d = new java.math.BigDecimal(java.math.BigInteger.TEN.pow(5000), 5000);
+        assertEquals("0a030a0101", java.util.HexFormat.of().formatHex(Pb.marshal(h)));
+        // Exactly at the bound is written.
+        h.d = new java.math.BigDecimal(java.math.BigInteger.ONE, Pb.MAX_NUMERIC_LITERAL_DIGITS);
+        assertEquals(0, h.d.compareTo(Pb.unmarshal(Pb.marshal(h), DecimalHolder.class).d));
     }
 
     @Test

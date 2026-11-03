@@ -54,6 +54,10 @@ format changes.
 
 - **An SBE emitter cuts an overlong string on a character boundary** (#166; draft -01 § SBE Annotations, protowire#495). Both tiers cut an `(sbe.length)` value at the byte limit, which can split a multi-byte character, and every strict decoder, this port's now included, then rejects the whole message. `ABCDEFGé` in a string field of length 8 was written `41 42 43 44 45 46 47 C3`. A string is now cut at the last whole character at or before the limit and NUL-padded: `41 42 43 44 45 46 47 00`. A `bytes` field is still cut at the limit. Only bytes that strict decoders refuse change.
 
+- **The lite wire reader skips a field whose wire type does not match its kind** (#160). `LiteWireReader` read each known field with its kind's reader, whatever wire type the tag carried, so a mistyped field was misread and the rest of the message with it. `3a050d01000000`, an `Int64Value` whose field 1 arrives as fixed32, failed with `malformed wire: Protocol message contained an invalid tag (zero)`, where protowire-go and the full tier print `i64_w = 0`. Such a field is now skipped as an unknown field, as they do, in a message, a repeated field, a map entry and every well-known payload read as a literal (Timestamp, Duration, the wrappers, `pxf.BigInt`, `Decimal`, `BigFloat`, `Secret`). A repeated scalar field still takes both its packed and its unpacked record.
+
+- **A lite map entry missing its key or value gets that field's zero value** (#160). An entry without its key or value, left out by the encoder or skipped as mistyped, came back as the string `""`: `by_int = { "": "x" }` where protowire-go prints `{ 0: "x" }`, and `stamps = { a: "" }` where it prints `{ a: 1970-01-01T00:00:00Z }`. An integer key is now `0`, a bool key `false`, a message value `{ }`, and a well-known value its own zero literal.
+
 ## [1.4.0] — 2026-11-02
 
 A minor release, because it narrows what decodes. The lite tier catches up with

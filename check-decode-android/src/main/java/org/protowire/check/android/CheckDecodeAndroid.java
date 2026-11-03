@@ -11,8 +11,7 @@
 //   pxf-pb              as pxf, and writes the wire bytes on stdout
 //   pb, pb-render       wire to text, through LiteWireReader
 //   pb-text             as pb-render, and writes the text on stdout
-//   sbe                 SbeWireCodec on the generated template, called directly
-//                       because the generated codec takes no limits
+//   sbe                 the generated <Message>SbeCodec, under the row's limits
 package org.protowire.check.android;
 
 import org.protowire.pxf.DecodeLimits;
@@ -21,7 +20,6 @@ import org.protowire.pxf.Parser;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.android.LiteWireReader;
 import org.protowire.pxf.android.LiteWireWriter;
-import org.protowire.sbe.runtime.SbeWireCodec;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -105,14 +103,14 @@ public final class CheckDecodeAndroid {
         }
     }
 
+    // Through the generated codec, so the gate proves the entry point a
+    // caller uses, not only the runtime under it (#148).
     private static void sbeDecode(byte[] data, String schema, DecodeLimits limits) {
         switch (schema) {
-            case "adversarial.v1.SbeWithGroup" -> SbeWireCodec.unmarshal(data,
-                adversarial.v1.SbeWithGroupSbeMeta.writer(adversarial.v1.SbeWithGroup.newBuilder()),
-                adversarial.v1.SbeWithGroupSbeMeta.TEMPLATE, limits.maxMessageSize(), limits.maxRepeatedCount());
-            case "adversarial.v1.SbeText" -> SbeWireCodec.unmarshal(data,
-                adversarial.v1.SbeTextSbeMeta.writer(adversarial.v1.SbeText.newBuilder()),
-                adversarial.v1.SbeTextSbeMeta.TEMPLATE, limits.maxMessageSize(), limits.maxRepeatedCount());
+            case "adversarial.v1.SbeWithGroup" -> adversarial.v1.SbeWithGroupSbeCodec.unmarshal(
+                data, limits.maxMessageSize(), limits.maxRepeatedCount());
+            case "adversarial.v1.SbeText" -> adversarial.v1.SbeTextSbeCodec.unmarshal(
+                data, limits.maxMessageSize(), limits.maxRepeatedCount());
             default -> throw new UnsupportedFormat("the lite tier has no SBE template for " + schema);
         }
     }

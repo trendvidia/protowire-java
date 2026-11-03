@@ -29,6 +29,8 @@ format changes.
 
 ### Changed
 
+- **The lite tier prints nothing for a plain field whose wire value is zero** (#180). `LiteWireReader` used to print `f_int32 = 0` for `2800`, where protowire-go and the full tier print nothing: a plain proto3 field has no set state, so a zero on the wire means the same as no field. A field in `PxfMeta.implicitPresenceFields()` whose last value is its zero value is now left out. A `-0.0`, an `optional` field and a map entry's key and value keep their zeros. A companion from an older plugin has an empty table and prints as before.
+
 - **Both tiers write PXF text to the same PB bytes as protowire-go** (#156, #157, #158; the spec's write gate, protowire#511). Each change below used to make a valid document write different bytes from Go, or accept one Go refuses:
   - A `float` or `double` literal that rounds to infinity is refused, as `invalid double: 1e400` or `invalid float: 3.4028236e38`. Draft `-01` § Numeric Literals admits infinity only as `inf`, `+inf` or `-inf`. Both tiers used to write it as infinity.
   - A `pxf.Decimal` negative zero keeps its sign: `-0` sets `negative`, and `-0.00` sets it with scale 2. Both tiers used to drop it on the way through `BigDecimal`, which has no negative zero. The lite tier also prints `{negative: true}` as `-0` now, as the full tier does.

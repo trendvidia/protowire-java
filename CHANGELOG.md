@@ -34,6 +34,10 @@ format changes.
 
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
 
+### Fixed
+
+- **The SBE decoder rejects a string field that is not UTF-8** (#162; `docs/HARDENING.md` § UTF-8). Both tiers turned the bytes of an `(sbe.length)` `string` into a `String` with `new String(bytes, UTF_8)`, which puts U+FFFD in place of bad bytes and says nothing, so `41 42 FF FE` decoded as `"AB\uFFFD\uFFFD"`. `SbeWireCodec` and `View.stringValue` now decode strictly and throw `IllegalArgumentException` (`sbe: invalid UTF-8 in string field <name>`). A `bytes` field takes any bytes, as before. `check-decode-android` decodes `adversarial.v1.SbeText`, so the lite tier runs the spec's `sbe/utf8-*` rows.
+
 ## [1.4.0] — 2026-11-02
 
 A minor release, because it narrows what decodes. The lite tier catches up with

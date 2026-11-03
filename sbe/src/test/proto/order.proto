@@ -28,3 +28,14 @@ message NewOrderSingle {
   }
   repeated Fill fills = 6;
 }
+
+// Text carries one (sbe.length) field of each kind at the same length, so a
+// test can show the UTF-8 rules follow the field's type: a string is
+// validated on decode and cut on a character boundary on encode, and bytes
+// are neither (HARDENING.md § UTF-8, draft -01 § SBE Annotations).
+message Text {
+  option (sbe.template_id) = 2;
+
+  string text = 1 [(sbe.length) = 8];
+  bytes raw = 2 [(sbe.length) = 8];
+}

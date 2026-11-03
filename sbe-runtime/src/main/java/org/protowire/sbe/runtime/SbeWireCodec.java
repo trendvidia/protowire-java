@@ -183,7 +183,7 @@ public final class SbeWireCodec {
                 } else {
                     int n = ft.size;
                     while (n > 0 && raw[n - 1] == 0) n--;
-                    writer.setField(ft.fieldNumber, new String(raw, 0, n, StandardCharsets.UTF_8));
+                    writer.setField(ft.fieldNumber, SbeUtf8.decode(raw, 0, n, ft.name));
                 }
             }
         }

@@ -95,10 +95,18 @@ public final class SbeWireCodec {
             case ENC_FLOAT -> buf.putFloat(off, ((Number) val).floatValue());
             case ENC_DOUBLE -> buf.putDouble(off, ((Number) val).doubleValue());
             case ENC_CHAR -> {
-                byte[] data = ft.kind == K_BYTES
-                        ? toBytes(val)
-                        : ((String) val).getBytes(StandardCharsets.UTF_8);
-                int n = Math.min(data.length, ft.size);
+                // An overlong value is cut: bytes at the limit, a string at
+                // the last whole character at or before it. The bytes left
+                // over are NUL either way (draft -01 § SBE Annotations).
+                byte[] data;
+                int n;
+                if (ft.kind == K_BYTES) {
+                    data = toBytes(val);
+                    n = Math.min(data.length, ft.size);
+                } else {
+                    data = ((String) val).getBytes(StandardCharsets.UTF_8);
+                    n = SbeUtf8.cutLength(data, ft.size);
+                }
                 for (int i = 0; i < n; i++) buf.put(off + i, data[i]);
                 for (int i = n; i < ft.size; i++) buf.put(off + i, (byte) 0);
             }
@@ -183,7 +191,7 @@ public final class SbeWireCodec {
                 } else {
                     int n = ft.size;
                     while (n > 0 && raw[n - 1] == 0) n--;
-                    writer.setField(ft.fieldNumber, new String(raw, 0, n, StandardCharsets.UTF_8));
+                    writer.setField(ft.fieldNumber, SbeUtf8.decode(raw, 0, n, ft.name));
                 }
             }
         }

@@ -154,6 +154,25 @@ public final class WellKnown {
         if (bd.signum() < 0) b.setField(d.findFieldByName("negative"), true);
     }
 
+    /**
+     * Sets a {@code pxf.Decimal} from the parts {@link #parseDecimal} returns.
+     * Unlike {@link #setDecimal(Message.Builder, BigDecimal)}, this keeps the
+     * sign of a zero: text {@code -0} and {@code -0.00} set {@code negative},
+     * as protowire-go does, since a message writes its fields as they are
+     * (protowire#508, #157). A {@code BigDecimal} has no negative zero.
+     */
+    public static void setDecimal(Message.Builder b, Object[] parts) {
+        Descriptor d = b.getDescriptorForType();
+        BigInteger unscaled = (BigInteger) parts[0];
+        int scale = (Integer) parts[1];
+        boolean negative = (Boolean) parts[2];
+        if (unscaled.signum() != 0) {
+            b.setField(d.findFieldByName("unscaled"), com.google.protobuf.ByteString.copyFrom(trimSign(unscaled.toByteArray())));
+        }
+        if (scale != 0) b.setField(d.findFieldByName("scale"), scale);
+        if (negative) b.setField(d.findFieldByName("negative"), true);
+    }
+
     public static String readDecimalStr(Message m) {
         Descriptor d = m.getDescriptorForType();
         com.google.protobuf.ByteString abs = (com.google.protobuf.ByteString) m.getField(d.findFieldByName("unscaled"));

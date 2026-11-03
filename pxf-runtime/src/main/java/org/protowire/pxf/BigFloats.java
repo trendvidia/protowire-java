@@ -53,8 +53,14 @@ public final class BigFloats {
         return BigInteger.valueOf(p).multiply(LOG10_2_Q128).shiftRight(128).intValueExact() + 1;
     }
 
-    /** N, the significant digits a prec-bit value is written with. */
-    private static long digitsFor(long prec) {
+    /**
+     * N, the significant digits a prec-bit value is written with, which
+     * {@code MaxNumericLiteralDigits} bounds wherever a prec is read or
+     * written (protowire#499).
+     *
+     * @param prec the wire's uint32, as an unsigned value
+     */
+    public static long digitsFor(long prec) {
         return (long) pow2Digits(prec) + 1;
     }
 
@@ -231,9 +237,7 @@ public final class BigFloats {
         long e = exponent;
         int excess = m.bitLength() - (int) p;
         if (excess > 0) {
-            BigInteger q = m.shiftRight(excess);
-            BigInteger rem = m.subtract(q.shiftLeft(excess));
-            m = roundHalfEven(q, rem, BigInteger.ONE.shiftLeft(excess));
+            m = roundOff(m, excess);
             e += excess;
         }
         BigInteger num = e >= 0 ? m.shiftLeft((int) e) : m;
@@ -275,6 +279,65 @@ public final class BigFloats {
             sb.append("0.").append("0".repeat(-k - 1)).append(digits);
         }
         return sb.append('p').append(p).toString();
+    }
+
+    /** {@code m / 2^bits}, round half even. */
+    private static BigInteger roundOff(BigInteger m, int bits) {
+        BigInteger q = m.shiftRight(bits);
+        return roundHalfEven(q, m.subtract(q.shiftLeft(bits)), BigInteger.ONE.shiftLeft(bits));
+    }
+
+    // -- normalising --------------------------------------------------------
+
+    /**
+     * The fields a decoder holds for a message's fields: what reading them as
+     * a value and writing that value back gives. The mantissa is the value at
+     * exactly {@code prec} bits, a wider one rounded half even as
+     * {@link #format} and {@link #parse(String, String, int, int)} round it and
+     * a narrower one widened, and the exponent is the binary exponent minus
+     * prec. A zero has no exponent; a precision of zero is zero whatever the
+     * other fields say, its sign kept (protowire#410). This is the form
+     * {@code parse} returns and protowire-go writes a {@code big.Float} in
+     * (protowire-java#159).
+     *
+     * @param mantissa unsigned
+     * @param prec     the wire's uint32, read as unsigned
+     * @throws IllegalArgumentException on a value a decoder would refuse:
+     *     a prec past {@code maxDigits}, or a binary exponent, after
+     *     rounding, past {@code maxExponent}
+     */
+    public static Value normalize(BigInteger mantissa, int exponent, int prec, boolean negative, int maxDigits, int maxExponent) {
+        if (prec == 0) return new Value(BigInteger.ZERO, 0, 0, negative);
+        long p = Integer.toUnsignedLong(prec);
+        long n = digitsFor(p);
+        if (n > maxDigits) {
+            throw new IllegalArgumentException("pxf.BigFloat prec " + p + " implies " + n
+                    + " digits; MaxNumericLiteralDigits=" + maxDigits);
+        }
+        if (mantissa.signum() == 0) return new Value(BigInteger.ZERO, 0, prec, negative);
+
+        BigInteger m = mantissa;
+        long e = exponent;
+        int excess = m.bitLength() - (int) p;
+        if (excess > 0) {
+            m = roundOff(m, excess);
+            e += excess;
+            if (m.bitLength() > p) { // rounded up past the significand, to a power of two
+                m = m.shiftRight(1);
+                e++;
+            }
+        } else if (excess < 0) {
+            m = m.shiftLeft(-excess);
+            e += excess;
+        }
+        long binary = e + p;
+        if (binary > maxExponent || binary < -maxExponent) {
+            throw new IllegalArgumentException("pxf.BigFloat binary exponent " + binary + " exceeds MaxBigFloatExponent=" + maxExponent);
+        }
+        if (e != (int) e) { // reachable only with maxExponent raised near 2^31
+            throw new IllegalArgumentException("pxf.BigFloat exponent " + e + " does not fit int32");
+        }
+        return new Value(m, (int) e, prec, negative);
     }
 
     /** Compares num/den with 10^k. */

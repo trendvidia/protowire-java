@@ -604,9 +604,13 @@ public final class LiteWireReader {
             throw new PxfException(Position.UNKNOWN, "pxf.Decimal scale " + scale
                 + " exceeds MaxNumericLiteralDigits=" + limits.maxNumericLiteralDigits());
         }
-        BigInteger signed = negative ? unscaled.negate() : unscaled;
-        BigDecimal value = new BigDecimal(signed, scale);
-        return new Ast.FloatVal(Position.UNKNOWN, value.toPlainString());
+        // The sign is written from the flag, not from the value, so a negative
+        // zero prints -0 or -0.00 as in the full tier's readDecimalStr (#157):
+        // a BigDecimal has no negative zero to carry it.
+        String magnitude = unscaled.signum() == 0 && scale < 0
+            ? "0"
+            : new BigDecimal(unscaled, scale).toPlainString();
+        return new Ast.FloatVal(Position.UNKNOWN, negative ? "-" + magnitude : magnitude);
     }
 
     /**

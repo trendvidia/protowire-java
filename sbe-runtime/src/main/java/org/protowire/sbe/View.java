@@ -3,9 +3,9 @@
 package org.protowire.sbe;
 
 import org.protowire.sbe.runtime.SbeConstants;
+import org.protowire.sbe.runtime.SbeUtf8;
 
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 
 import static org.protowire.sbe.runtime.SbeConstants.*;
 
@@ -78,7 +78,7 @@ public final class View {
         int off = blockStart + ft.offset;
         int n = ft.size;
         while (n > 0 && data[off + n - 1] == 0) n--;
-        return new String(data, off, n, StandardCharsets.UTF_8);
+        return SbeUtf8.decode(data, off, n, name);
     }
 
     public byte[] bytesValue(String name) {

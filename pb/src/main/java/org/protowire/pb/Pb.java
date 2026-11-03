@@ -50,10 +50,26 @@ public final class Pb {
     private Pb() {}
 
     public static byte[] marshal(Object obj) throws IOException {
+        return marshal(obj, MarshalOptions.defaults());
+    }
+
+    /**
+     * As {@link #marshal(Object)} under per-call options: a value nested more
+     * deeply than {@link MarshalOptions#maxNestingDepth()} is refused (#167).
+     */
+    public static byte[] marshal(Object obj, MarshalOptions opts) throws IOException {
         if (obj == null) throw new IllegalArgumentException("pb.marshal: object is null");
+        return marshalNested(obj, 0, opts.maxNestingDepth());
+    }
+
+    /** A struct's bytes at submessage depth {@code depth}, counted as a decoder counts it. */
+    private static byte[] marshalNested(Object obj, int depth, int maxDepth) throws IOException {
+        if (depth > maxDepth) {
+            throw new IOException("nesting depth exceeds MaxNestingDepth=" + maxDepth);
+        }
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         CodedOutputStream out = CodedOutputStream.newInstance(baos);
-        marshalStruct(out, obj);
+        marshalStruct(out, obj, depth, maxDepth);
         out.flush();
         return baos.toByteArray();
     }
@@ -212,18 +228,19 @@ public final class Pb {
 
     // -- marshal -------------------------------------------------------------
 
-    private static void marshalStruct(CodedOutputStream out, Object obj) throws IOException {
+    private static void marshalStruct(CodedOutputStream out, Object obj, int depth, int maxDepth) throws IOException {
         StructInfo info = info(obj.getClass());
         for (FieldInfo fi : info.ordered) {
             try {
-                marshalField(out, fi, fi.field.get(obj));
+                marshalField(out, fi, fi.field.get(obj), depth, maxDepth);
             } catch (IllegalAccessException e) {
                 throw new IOException("field " + fi.field.getName() + ": " + e.getMessage(), e);
             }
         }
     }
 
-    private static void marshalField(CodedOutputStream out, FieldInfo fi, Object value) throws IOException {
+    private static void marshalField(CodedOutputStream out, FieldInfo fi, Object value, int depth, int maxDepth)
+            throws IOException {
         if (value == null) return;
 
         if (fi.kind == FieldKind.LIST) {
@@ -240,7 +257,7 @@ public final class Pb {
             }
             for (Object elem : list) {
                 marshalScalar(out, fi.number, fi.elementClass, elem == null ? scalarZero(fi.elementClass) : elem,
-                        fi.zigzag, true);
+                        fi.zigzag, true, depth, maxDepth);
             }
             return;
         }
@@ -254,20 +271,24 @@ public final class Pb {
             // values inherit the field's zigzag flag.
             Map<?, ?> map = (Map<?, ?>) value;
             if (map.isEmpty()) return;
+            // A map entry is a descent, as a decoder counts it.
+            if (depth + 1 > maxDepth) {
+                throw new IOException("nesting depth exceeds MaxNestingDepth=" + maxDepth);
+            }
             for (Map.Entry<?, ?> e : map.entrySet()) {
                 ByteArrayOutputStream entryBuf = new ByteArrayOutputStream();
                 CodedOutputStream entryOut = CodedOutputStream.newInstance(entryBuf);
                 Object k = e.getKey() == null ? scalarZero(fi.mapKeyClass) : e.getKey();
                 Object v = e.getValue() == null ? scalarZero(fi.elementClass) : e.getValue();
-                marshalScalar(entryOut, 1, fi.mapKeyClass, k, fi.zigzag, true);
-                marshalScalar(entryOut, 2, fi.elementClass, v, fi.zigzag, true);
+                marshalScalar(entryOut, 1, fi.mapKeyClass, k, fi.zigzag, true, depth + 1, maxDepth);
+                marshalScalar(entryOut, 2, fi.elementClass, v, fi.zigzag, true, depth + 1, maxDepth);
                 entryOut.flush();
                 out.writeByteArray(fi.number, entryBuf.toByteArray());
             }
             return;
         }
 
-        marshalScalar(out, fi.number, fi.field.getType(), value, fi.zigzag, false);
+        marshalScalar(out, fi.number, fi.field.getType(), value, fi.zigzag, false, depth, maxDepth);
     }
 
     /**
@@ -319,7 +340,7 @@ public final class Pb {
      * key / value ({@code element} true) is always written.
      */
     private static void marshalScalar(CodedOutputStream out, int num, Class<?> type, Object v,
-                                      boolean zigzag, boolean element) throws IOException {
+                                      boolean zigzag, boolean element, int depth, int maxDepth) throws IOException {
         if (type == boolean.class || type == Boolean.class) {
             boolean b = (Boolean) v;
             if (!b && !element) return;
@@ -378,8 +399,7 @@ public final class Pb {
                 out.writeByteArray(num, new byte[0]);
                 return;
             }
-            byte[] msg = marshal(v);
-            out.writeByteArray(num, msg);
+            out.writeByteArray(num, marshalNested(v, depth + 1, maxDepth));
         }
     }
 

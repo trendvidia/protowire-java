@@ -732,13 +732,7 @@ final class FastDecoder {
             rejectPrecision(fd);
             Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
             Message.Builder sub = b.newBuilderForField(fd);
-            // unscaled is BigInteger absolute value
-            java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
-            int scale = (Integer) parts[1];
-            boolean neg = (Boolean) parts[2];
-            // build a BigDecimal: applies sign to unscaled
-            java.math.BigDecimal bd = new java.math.BigDecimal(neg ? unscaled.negate() : unscaled, scale);
-            WellKnown.setDecimal(sub, bd);
+            WellKnown.setDecimal(sub, parts);
             b.setField(fd, sub.build());
             advance();
             return;
@@ -944,12 +938,8 @@ final class FastDecoder {
         if (WellKnown.isDecimal(md) && (current.kind() == TokenKind.INT || current.kind() == TokenKind.FLOAT)) {
             rejectPrecision(owner);
             Object[] parts = WellKnown.parseDecimal(current.value(), limits.maxNumericLiteralDigits());
-            java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
-            int scale = (Integer) parts[1];
-            boolean neg = (Boolean) parts[2];
-            java.math.BigDecimal bd = new java.math.BigDecimal(neg ? unscaled.negate() : unscaled, scale);
             Message.Builder sub = parent.newBuilderForField(fd);
-            WellKnown.setDecimal(sub, bd);
+            WellKnown.setDecimal(sub, parts);
             advance();
             return sub.build();
         }
@@ -1152,10 +1142,18 @@ final class FastDecoder {
                 return iv;
             case FLOAT:
                 if (!isFloatLiteral()) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
-                float fv = Format.parseFloat(current.value()); advance(); return fv;
+                float fv;
+                try { fv = Format.parseFloat(current.value()); }
+                catch (NumberFormatException e) { throw new PxfException(pos, e.getMessage()); }
+                advance();
+                return fv;
             case DOUBLE:
                 if (!isFloatLiteral()) throw new PxfException(pos, "expected number for field \"" + fd.getName() + "\"");
-                double dv = Format.parseDouble(current.value()); advance(); return dv;
+                double dv;
+                try { dv = Format.parseDouble(current.value()); }
+                catch (NumberFormatException e) { throw new PxfException(pos, e.getMessage()); }
+                advance();
+                return dv;
             case BYTE_STRING:
                 if (current.kind() != TokenKind.BYTES) throw new PxfException(pos, "expected bytes for field \"" + fd.getName() + "\"");
                 byte[] decoded;
@@ -1403,11 +1401,7 @@ final class FastDecoder {
         } else if (WellKnown.isBigInt(md)) {
             WellKnown.setBigInt(sub, WellKnown.parseBigInt(def));
         } else if (WellKnown.isDecimal(md)) {
-            Object[] parts = WellKnown.parseDecimal(def);
-            java.math.BigInteger unscaled = (java.math.BigInteger) parts[0];
-            int scale = (Integer) parts[1];
-            boolean neg = (Boolean) parts[2];
-            WellKnown.setDecimal(sub, new java.math.BigDecimal(neg ? unscaled.negate() : unscaled, scale));
+            WellKnown.setDecimal(sub, WellKnown.parseDecimal(def));
         } else if (WellKnown.isBigFloat(md)) {
             WellKnown.setBigFloat(sub, BigFloats.parse(def, Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT));
         } else {

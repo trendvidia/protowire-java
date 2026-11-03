@@ -131,7 +131,7 @@ public final class LiteWireReader {
             throw new PxfException(Position.UNKNOWN, Limits.messageSizeError(wire.length, limits.maxMessageSize()));
         }
         try {
-            List<Ast.Entry> entries = readEntries(CodedInputStream.newInstance(wire), meta, registry, 0, limits);
+            List<Ast.Entry> entries = readEntries(CodedInputStream.newInstance(wire), meta, registry, 0, limits, false);
             return Ast.Document.of("", entries);
         } catch (InvalidProtocolBufferException e) {
             // Malformed input (truncated record, bad varint, invalid UTF-8 in a
@@ -148,10 +148,13 @@ public final class LiteWireReader {
     /**
      * Walks one message's wire bytes, accumulating per-field-number values
      * (singular / repeated / map), then emits the entries in field-number
-     * order.
+     * order. A singular field with no presence whose last value is its zero
+     * value is left out, as a message read from the same bytes holds nothing
+     * there (#180); a map entry ({@code mapEntry}) keeps its key and value.
      */
     private static List<Ast.Entry> readEntries(
-            CodedInputStream in, PxfMeta meta, PxfRegistry registry, int depth, DecodeLimits limits) throws IOException {
+            CodedInputStream in, PxfMeta meta, PxfRegistry registry, int depth, DecodeLimits limits,
+            boolean mapEntry) throws IOException {
         // HARDENING.md § Recursion: depth is the message's own level, the
         // top-level call being 0 and every nested message or map entry one
         // descent (as in :pb's Pb.unmarshal, protowire#301); it is passed
@@ -226,7 +229,13 @@ public final class LiteWireReader {
                 continue;
             }
 
-            singles.put(fieldNum, readSingle(in, kind, fieldNum, meta, registry, depth, limits));
+            Ast.Value single = readSingle(in, kind, fieldNum, meta, registry, depth, limits);
+            // The last value wins, so a zero after a non-zero clears the field.
+            if (!mapEntry && meta.implicitPresenceFields().contains(fieldNum) && isZero(single, fieldNum, meta, registry)) {
+                singles.remove(fieldNum);
+            } else {
+                singles.put(fieldNum, single);
+            }
         }
 
         // Emit in field-number order. Stable + matches protobuf's tag ordering.
@@ -404,7 +413,7 @@ public final class LiteWireReader {
         }
         int len = in.readRawVarint32();
         int oldLimit = in.pushLimit(len);
-        List<Ast.Entry> entries = readEntries(in, nested, registry, depth + 1, limits);
+        List<Ast.Entry> entries = readEntries(in, nested, registry, depth + 1, limits, false);
         in.popLimit(oldLimit);
         return new Ast.BlockVal(Position.UNKNOWN, entries);
     }
@@ -724,7 +733,7 @@ public final class LiteWireReader {
         // Decode the entry's two fields by walking its sub-bytes via a recursive
         // readEntries call. The result is a list with up to two assignments
         // (key and/or value); proto3 default-omission may drop one or both.
-        List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry, depth + 1, limits);
+        List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry, depth + 1, limits, true);
         in.popLimit(oldLimit);
 
         // An entry lacking its key or its value (left out, or skipped as
@@ -841,6 +850,30 @@ public final class LiteWireReader {
     private static Ast.IntVal uintVal(long value) {
         // Unsigned 64-bit — print without sign. Java's Long.toUnsignedString handles this.
         return new Ast.IntVal(Position.UNKNOWN, Long.toUnsignedString(value));
+    }
+
+    /**
+     * Whether a value read for a field with no presence is that field's zero
+     * value: 0, false, "", empty bytes, enum 0 or +0.0. A -0.0 has a bit set,
+     * so protobuf keeps it, and so does this. Only scalars and enums reach
+     * here; a message field always has presence.
+     */
+    private static boolean isZero(Ast.Value v, int fieldNum, PxfMeta meta, PxfRegistry registry) {
+        return switch (v) {
+            case Ast.IntVal i -> i.raw().equals("0");
+            case Ast.BoolVal b -> !b.value();
+            case Ast.StringVal str -> str.value().isEmpty();
+            case Ast.BytesVal b -> b.value().length == 0;
+            case Ast.FloatVal f -> f.raw().equals("0");
+            case Ast.IdentVal id -> {
+                PxfEnum em = meta.enumMetas().get(fieldNum);
+                String fqn = meta.enumTypes().get(fieldNum);
+                if (em == null && fqn != null) em = registry.lookupEnum(fqn);
+                Integer n = em == null ? null : em.values().get(id.name());
+                yield n != null && n == 0;
+            }
+            default -> false;
+        };
     }
 
     private static Ast.FloatVal floatVal(double value) {

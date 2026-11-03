@@ -185,6 +185,18 @@ public final class LiteWireReader {
             }
             int kind = fieldKinds.getOrDefault(fieldNum, 0);
 
+            // A field whose wire type does not match its declared kind is
+            // skipped as an unknown field, as protobuf-go and the full tier
+            // do (#160). A repeated packable field legitimately arrives
+            // either packed (length-delimited) or one element per record.
+            int expected = mapFields.contains(fieldNum) ? WireFormat.WIRETYPE_LENGTH_DELIMITED : wireTypeOf(kind);
+            boolean packed = repeated.contains(fieldNum) && isPackable(kind)
+                && wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED;
+            if (expected >= 0 && wireType != expected && !packed) {
+                in.skipField(tag);
+                continue;
+            }
+
             if (mapFields.contains(fieldNum)) {
                 Ast.MapEntry entry = readMapEntry(in, fieldNum, meta, registry, depth, limits);
                 List<Ast.MapEntry> acc = mapAcc.computeIfAbsent(fieldNum, k -> new ArrayList<>());
@@ -194,7 +206,7 @@ public final class LiteWireReader {
             }
 
             if (repeated.contains(fieldNum)) {
-                if (wireType == WireFormat.WIRETYPE_LENGTH_DELIMITED && isPackable(kind)) {
+                if (packed) {
                     // Packed encoding — one length-delimited record holds N values.
                     int len = in.readRawVarint32();
                     int oldLimit = in.pushLimit(len);
@@ -431,8 +443,7 @@ public final class LiteWireReader {
         int nanos = 0;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            int num = WireFormat.getTagFieldNumber(tag);
-            switch (num) {
+            switch (wireField(tag, TIME_WIRE)) {
                 case 1  -> seconds = in.readInt64();
                 case 2  -> nanos   = in.readInt32();
                 default -> in.skipField(tag);
@@ -451,8 +462,7 @@ public final class LiteWireReader {
         int nanos = 0;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            int num = WireFormat.getTagFieldNumber(tag);
-            switch (num) {
+            switch (wireField(tag, TIME_WIRE)) {
                 case 1  -> seconds = in.readInt64();
                 case 2  -> nanos   = in.readInt32();
                 default -> in.skipField(tag);
@@ -475,7 +485,7 @@ public final class LiteWireReader {
         String value = "";
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) {
+            if (wireField(tag, LEN) == 1) {
                 value = in.readStringRequireUtf8();
             } else {
                 in.skipField(tag);
@@ -489,7 +499,7 @@ public final class LiteWireReader {
         byte[] value = new byte[0];
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) {
+            if (wireField(tag, LEN) == 1) {
                 value = in.readByteArray();
             } else {
                 in.skipField(tag);
@@ -503,7 +513,7 @@ public final class LiteWireReader {
         boolean value = false;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) {
+            if (wireField(tag, VARINT) == 1) {
                 value = in.readBool();
             } else {
                 in.skipField(tag);
@@ -522,7 +532,7 @@ public final class LiteWireReader {
         long value = 0L;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) {
+            if (wireField(tag, VARINT) == 1) {
                 value = switch (kind) {
                     case K_INT32  -> in.readInt32();
                     case K_INT64  -> in.readInt64();
@@ -541,7 +551,7 @@ public final class LiteWireReader {
         float value = 0f;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) value = in.readFloat();
+            if (wireField(tag, I32) == 1) value = in.readFloat();
             else in.skipField(tag);
         }
         return value;
@@ -551,7 +561,7 @@ public final class LiteWireReader {
         double value = 0d;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            if (WireFormat.getTagFieldNumber(tag) == 1) value = in.readDouble();
+            if (wireField(tag, I64) == 1) value = in.readDouble();
             else in.skipField(tag);
         }
         return value;
@@ -568,8 +578,8 @@ public final class LiteWireReader {
         boolean negative = false;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            switch (WireFormat.getTagFieldNumber(tag)) {
-                case 1  -> abs      = unsignedBytesToBigInteger(in.readByteArray());
+            switch (wireField(tag, BIG_INT_WIRE)) {
+                case 1  -> abs     = unsignedBytesToBigInteger(in.readByteArray());
                 case 2  -> negative = in.readBool();
                 default -> in.skipField(tag);
             }
@@ -590,7 +600,7 @@ public final class LiteWireReader {
         boolean negative = false;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            switch (WireFormat.getTagFieldNumber(tag)) {
+            switch (wireField(tag, DECIMAL_WIRE)) {
                 case 1  -> unscaled = unsignedBytesToBigInteger(in.readByteArray());
                 case 2  -> scale    = in.readInt32();
                 case 3  -> negative = in.readBool();
@@ -626,7 +636,7 @@ public final class LiteWireReader {
         boolean negative = false;
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            switch (WireFormat.getTagFieldNumber(tag)) {
+            switch (wireField(tag, BIG_FLOAT_WIRE)) {
                 case 1  -> mantissa = unsignedBytesToBigInteger(in.readByteArray());
                 case 2  -> exponent = in.readInt32();
                 case 3  -> prec = in.readUInt32();
@@ -659,7 +669,7 @@ public final class LiteWireReader {
         String fingerprint = "";
         while (in.getBytesUntilLimit() > 0) {
             int tag = in.readTag();
-            switch (WireFormat.getTagFieldNumber(tag)) {
+            switch (wireField(tag, SECRET_WIRE)) {
                 case 1  -> value = in.readStringRequireUtf8();
                 case 2  -> hint = in.readStringRequireUtf8();
                 case 3  -> fingerprint = in.readStringRequireUtf8();
@@ -717,17 +727,16 @@ public final class LiteWireReader {
         List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry, depth + 1, limits);
         in.popLimit(oldLimit);
 
-        String  keyStr = "";
-        // A string key is spelled quoted unless identifier-safe (the
-        // marshaller rule, Format.needsQuoting); a bool or integer key is
-        // spelled bare. An entry lacking its key is the string "" (quoted).
-        boolean keyQuoted = true;
-        Ast.Value valueVal = new Ast.StringVal(Position.UNKNOWN, "");
+        // An entry lacking its key or its value (left out, or skipped as
+        // mistyped) has that field's zero value, as in protobuf-go: 0, false,
+        // "", or an empty message, which a well-known type spells as its own
+        // zero literal.
+        Ast.Value keyVal = null;
+        Ast.Value valueVal = null;
         for (Ast.Entry e : entryFields) {
             if (e instanceof Ast.Assignment a) {
                 if ("key".equals(a.key())) {
-                    keyStr = mapKeyString(a.value());
-                    keyQuoted = a.value() instanceof Ast.StringVal && Format.needsQuoting(keyStr);
+                    keyVal = a.value();
                 } else if ("value".equals(a.key())) {
                     valueVal = a.value();
                 }
@@ -735,7 +744,35 @@ public final class LiteWireReader {
                 valueVal = new Ast.BlockVal(Position.UNKNOWN, b.entries());
             }
         }
+        if (keyVal == null) {
+            keyVal = zeroValue(entryMeta, 1, registry, depth, limits);
+        }
+        if (valueVal == null) {
+            valueVal = zeroValue(entryMeta, 2, registry, depth, limits);
+        }
+        // A string key is spelled quoted unless identifier-safe (the
+        // marshaller rule, Format.needsQuoting); a bool or integer key is
+        // spelled bare.
+        String keyStr = mapKeyString(keyVal);
+        boolean keyQuoted = keyVal instanceof Ast.StringVal && Format.needsQuoting(keyStr);
         return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "", keyQuoted);
+    }
+
+    /**
+     * The zero value of a map entry's field, read the way the wire would
+     * give it: a zero varint, zero fixed bytes, or an empty record. Reading
+     * it, rather than spelling it here, keeps an enum's zero name and a
+     * well-known type's zero literal in step with the reader.
+     */
+    private static Ast.Value zeroValue(
+            PxfMeta entryMeta, int fieldNum, PxfRegistry registry, int depth, DecodeLimits limits) throws IOException {
+        int kind = entryMeta.fieldKinds().getOrDefault(fieldNum, K_STRING);
+        byte[] zero = switch (wireTypeOf(kind)) {
+            case WireFormat.WIRETYPE_FIXED32 -> new byte[4];
+            case WireFormat.WIRETYPE_FIXED64 -> new byte[8];
+            default                          -> new byte[1];  // a zero varint, or a zero length
+        };
+        return readSingle(CodedInputStream.newInstance(zero), kind, fieldNum, entryMeta, registry, depth + 1, limits);
     }
 
     /** Coerces an Ast.Value of a primitive map-key kind back to its parser-style string form. */
@@ -744,6 +781,43 @@ public final class LiteWireReader {
         if (v instanceof Ast.IntVal i)    return i.raw();
         if (v instanceof Ast.BoolVal b)   return Boolean.toString(b.value());
         throw new IllegalArgumentException("unsupported map key value type: " + v.getClass().getSimpleName());
+    }
+
+    /**
+     * The wire type a field of this kind is written with, or -1 for a kind
+     * this reader does not handle (left for {@link #readSingle} to reject).
+     */
+    private static int wireTypeOf(int kind) {
+        return switch (kind) {
+            case K_BOOL, K_INT32, K_INT64, K_UINT32, K_UINT64,
+                 K_SINT32, K_SINT64, K_ENUM          -> WireFormat.WIRETYPE_VARINT;
+            case K_FIXED64, K_SFIXED64, K_DOUBLE     -> WireFormat.WIRETYPE_FIXED64;
+            case K_FIXED32, K_SFIXED32, K_FLOAT      -> WireFormat.WIRETYPE_FIXED32;
+            case K_STRING, K_BYTES, K_MESSAGE        -> WireFormat.WIRETYPE_LENGTH_DELIMITED;
+            default                                  -> -1;
+        };
+    }
+
+    // The wire type of each field of a well-known payload, field 1 first.
+    private static final int VARINT = WireFormat.WIRETYPE_VARINT;
+    private static final int I64    = WireFormat.WIRETYPE_FIXED64;
+    private static final int I32    = WireFormat.WIRETYPE_FIXED32;
+    private static final int LEN    = WireFormat.WIRETYPE_LENGTH_DELIMITED;
+    private static final int[] TIME_WIRE      = {VARINT, VARINT};          // seconds, nanos
+    private static final int[] BIG_INT_WIRE   = {LEN, VARINT};             // abs, negative
+    private static final int[] DECIMAL_WIRE   = {LEN, VARINT, VARINT};     // unscaled, scale, negative
+    private static final int[] BIG_FLOAT_WIRE = {LEN, VARINT, VARINT, VARINT}; // mantissa, exponent, prec, negative
+    private static final int[] SECRET_WIRE    = {LEN, LEN, LEN};           // value, hint, fingerprint
+
+    /**
+     * The field number of a well-known payload's tag when its wire type is
+     * the one {@code wireTypes} declares for that field, and 0 otherwise, so a
+     * mistyped or unknown field falls to the caller's skip (#160).
+     */
+    private static int wireField(int tag, int... wireTypes) {
+        int num = WireFormat.getTagFieldNumber(tag);
+        return num >= 1 && num <= wireTypes.length
+            && WireFormat.getTagWireType(tag) == wireTypes[num - 1] ? num : 0;
     }
 
     private static boolean isPackable(int kind) {

@@ -727,17 +727,16 @@ public final class LiteWireReader {
         List<Ast.Entry> entryFields = readEntries(in, entryMeta, registry, depth + 1, limits);
         in.popLimit(oldLimit);
 
-        String  keyStr = "";
-        // A string key is spelled quoted unless identifier-safe (the
-        // marshaller rule, Format.needsQuoting); a bool or integer key is
-        // spelled bare. An entry lacking its key is the string "" (quoted).
-        boolean keyQuoted = true;
-        Ast.Value valueVal = new Ast.StringVal(Position.UNKNOWN, "");
+        // An entry lacking its key or its value (left out, or skipped as
+        // mistyped) has that field's zero value, as in protobuf-go: 0, false,
+        // "", or an empty message, which a well-known type spells as its own
+        // zero literal.
+        Ast.Value keyVal = null;
+        Ast.Value valueVal = null;
         for (Ast.Entry e : entryFields) {
             if (e instanceof Ast.Assignment a) {
                 if ("key".equals(a.key())) {
-                    keyStr = mapKeyString(a.value());
-                    keyQuoted = a.value() instanceof Ast.StringVal && Format.needsQuoting(keyStr);
+                    keyVal = a.value();
                 } else if ("value".equals(a.key())) {
                     valueVal = a.value();
                 }
@@ -745,7 +744,35 @@ public final class LiteWireReader {
                 valueVal = new Ast.BlockVal(Position.UNKNOWN, b.entries());
             }
         }
+        if (keyVal == null) {
+            keyVal = zeroValue(entryMeta, 1, registry, depth, limits);
+        }
+        if (valueVal == null) {
+            valueVal = zeroValue(entryMeta, 2, registry, depth, limits);
+        }
+        // A string key is spelled quoted unless identifier-safe (the
+        // marshaller rule, Format.needsQuoting); a bool or integer key is
+        // spelled bare.
+        String keyStr = mapKeyString(keyVal);
+        boolean keyQuoted = keyVal instanceof Ast.StringVal && Format.needsQuoting(keyStr);
         return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "", keyQuoted);
+    }
+
+    /**
+     * The zero value of a map entry's field, read the way the wire would
+     * give it: a zero varint, zero fixed bytes, or an empty record. Reading
+     * it, rather than spelling it here, keeps an enum's zero name and a
+     * well-known type's zero literal in step with the reader.
+     */
+    private static Ast.Value zeroValue(
+            PxfMeta entryMeta, int fieldNum, PxfRegistry registry, int depth, DecodeLimits limits) throws IOException {
+        int kind = entryMeta.fieldKinds().getOrDefault(fieldNum, K_STRING);
+        byte[] zero = switch (wireTypeOf(kind)) {
+            case WireFormat.WIRETYPE_FIXED32 -> new byte[4];
+            case WireFormat.WIRETYPE_FIXED64 -> new byte[8];
+            default                          -> new byte[1];  // a zero varint, or a zero length
+        };
+        return readSingle(CodedInputStream.newInstance(zero), kind, fieldNum, entryMeta, registry, depth + 1, limits);
     }
 
     /** Coerces an Ast.Value of a primitive map-key kind back to its parser-style string form. */

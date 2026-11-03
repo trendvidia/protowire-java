@@ -895,6 +895,12 @@ public final class LiteWireWriter {
      * map path free of duplicated scalar/message/enum dispatch logic — the
      * recursive call lands back in {@code writeEntries} against the entry
      * sub-message's PxfMeta.
+     *
+     * <p>Entries are written in key order, as protowire-go's deterministic
+     * writer puts them: false before true, integers by value, strings by
+     * their UTF-8 bytes. Protobuf leaves map order on the wire open, so no
+     * reader depends on it, but a fixed order lets the write gate compare
+     * this tier's bytes with Go's (protowire#509).
      */
     private static void writeMap(
             CodedOutputStream out,
@@ -918,6 +924,7 @@ public final class LiteWireWriter {
         }
         int keyKind = entryMeta.fieldKinds().getOrDefault(1, K_STRING);
 
+        List<Map.Entry<Ast.Value, byte[]>> encoded = new ArrayList<>();
         for (Ast.Entry entry : entries) {
             if (!(entry instanceof Ast.MapEntry me)) {
                 throw new IllegalArgumentException(
@@ -941,15 +948,31 @@ public final class LiteWireWriter {
                     new Ast.Assignment(me.pos(), "value", me.value(), List.of(), "")
                 )
             );
-            byte[] entryBytes = encode(entryDoc, entryMeta, registry, limits);
+            encoded.add(Map.entry(keyVal, encode(entryDoc, entryMeta, registry, limits)));
+        }
+        encoded.sort((x, y) -> compareMapKeys(x.getKey(), y.getKey()));
+        for (Map.Entry<Ast.Value, byte[]> e : encoded) {
+            byte[] entryBytes = e.getValue();
             try {
                 out.writeUInt32NoTag((num << 3) | 2 /* LEN */);
                 out.writeUInt32NoTag(entryBytes.length);
                 out.writeRawBytes(entryBytes);
-            } catch (IOException e) {
-                throw new IllegalStateException("CodedOutputStream write failed", e);
+            } catch (IOException ex) {
+                throw new IllegalStateException("CodedOutputStream write failed", ex);
             }
         }
+    }
+
+    /** Key order for {@link #writeMap}; both keys are of the map's key type. */
+    private static int compareMapKeys(Ast.Value x, Ast.Value y) {
+        return switch (x) {
+            case Ast.StringVal s -> java.util.Arrays.compareUnsigned(
+                s.value().getBytes(java.nio.charset.StandardCharsets.UTF_8),
+                ((Ast.StringVal) y).value().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            case Ast.BoolVal b -> Boolean.compare(b.value(), ((Ast.BoolVal) y).value());
+            case Ast.IntVal i -> new BigInteger(i.raw()).compareTo(new BigInteger(((Ast.IntVal) y).raw()));
+            default -> throw new IllegalArgumentException("unsupported map key " + x);
+        };
     }
 
     /**

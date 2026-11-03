@@ -59,6 +59,18 @@ final class Encoder {
         return Collections.emptySet();
     }
 
+    /**
+     * Refuses a block or list whose contents sit at {@code level}, the depth a
+     * decoder of the output counts there (HARDENING.md § Recursion): a
+     * producer must not write a document a reader at the same limit refuses
+     * (protowire#502, #167). As protowire-go's encoder words it.
+     */
+    private void checkDepth(int level) {
+        if (level > opts.maxNestingDepth()) {
+            throw new PxfException(Position.UNKNOWN, "pxf: nesting depth exceeds MaxNestingDepth=" + opts.maxNestingDepth());
+        }
+    }
+
     private void writeIndent(int level) { for (int i = 0; i < level; i++) buf.append(opts.indent()); }
 
     /**
@@ -121,6 +133,7 @@ final class Encoder {
             if (tryEncodeAny(fd, sub, level)) return;
         }
 
+        checkDepth(level + 1);
         writeIndent(level);
         buf.append(fd.getName()).append(" {\n");
         String saved = pathPrefix;
@@ -183,6 +196,7 @@ final class Encoder {
             encodeKeyedList(msg, fd, keyFd, level);
             return;
         }
+        checkDepth(level + 1);
         writeIndent(level);
         buf.append(fd.getName()).append(" = [\n");
         for (int i = 0; i < n; i++) {
@@ -193,6 +207,7 @@ final class Encoder {
                 if (hasLiteral(sub)) {
                     writeLiteral(sub);
                 } else {
+                    checkDepth(level + 2);
                     buf.append("{\n");
                     encodeMessage(sub, level + 2);
                     writeIndent(level + 1);
@@ -227,6 +242,7 @@ final class Encoder {
      */
     private void encodeKeyedList(Message msg, FieldDescriptor fd, FieldDescriptor keyFd, int level) {
         int n = msg.getRepeatedFieldCount(fd);
+        checkDepth(level + 2);
         writeIndent(level);
         buf.append(fd.getName()).append(" {\n");
         for (int i = 0; i < n; i++) {
@@ -248,6 +264,7 @@ final class Encoder {
     @SuppressWarnings("unchecked")
     private void encodeMap(Message msg, FieldDescriptor fd, int level) {
         int n = msg.getRepeatedFieldCount(fd);
+        checkDepth(level + 1);
         writeIndent(level);
         buf.append(fd.getName()).append(" = {\n");
 
@@ -272,6 +289,7 @@ final class Encoder {
                 writeLiteral((Message) v);
                 buf.append('\n');
             } else if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
+                checkDepth(level + 2);
                 writeIndent(level + 1);
                 buf.append(keyStr).append(": {\n");
                 encodeMessage((Message) v, level + 2);
@@ -347,7 +365,10 @@ final class Encoder {
         Descriptor anyDesc = fd.getMessageType();
         String typeUrl = (String) anyMsg.getField(anyDesc.findFieldByName("type_url"));
         ByteString valueBytes = (ByteString) anyMsg.getField(anyDesc.findFieldByName("value"));
-        if (typeUrl.isEmpty() || level >= DecodeLimits.defaults().maxNestingDepth()) return false;
+        // At the limit the block has no room for a body, and stopping here
+        // bounds a chain of Anys. A body too deep fails inside the try, and
+        // the Any stays as its own fields.
+        if (typeUrl.isEmpty() || level >= opts.maxNestingDepth()) return false;
 
         Descriptor inner = opts.typeResolver().findMessageByUrl(typeUrl);
         if (inner == null) return false;

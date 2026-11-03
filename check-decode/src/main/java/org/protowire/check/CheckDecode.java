@@ -206,12 +206,21 @@ public final class CheckDecode {
     // fields and bounding nothing, and they are then written as PXF. Pb.java
     // is bypassed on purpose, or it would refuse the row and the encoder would
     // go untested (protowire#448).
+    /** How deep {@link #pbRender}'s stock reader reads: past any producer's limit. */
+    private static final int PB_RENDER_READ_DEPTH = 10_000;
+
     private static void pbRender(byte[] data, String schema, String protoPath) throws Exception {
         if (protoPath == null || protoPath.isEmpty()) {
             throw new RejectException("--proto is required for format=pb-render");
         }
         Descriptor desc = loadDescriptor(protoPath, schema);
-        DynamicMessage msg = DynamicMessage.parseFrom(desc, data);
+        // The stock reader stops at 100 levels by default, which would refuse
+        // a 101-level row before the producer runs, and the reject row would
+        // pass untested (HARDENING.md § Recursion, #167). Read deeper, and
+        // leave the refusal to the producer.
+        com.google.protobuf.CodedInputStream in = com.google.protobuf.CodedInputStream.newInstance(data);
+        in.setRecursionLimit(PB_RENDER_READ_DEPTH);
+        DynamicMessage msg = DynamicMessage.parseFrom(desc, in);
         try {
             Pxf.marshal(msg);
         } catch (RuntimeException e) {

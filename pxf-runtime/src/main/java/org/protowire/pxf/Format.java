@@ -6,7 +6,9 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Base64;
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Predicate;
 
@@ -14,25 +16,84 @@ import java.util.function.Predicate;
 public final class Format {
     private Format() {}
 
+    /**
+     * Pretty-prints a document, preserving comments.
+     *
+     * <p>It keeps every directive, with its dataset rows, in document order
+     * (trendvidia/protowire#558, #188). {@code @type} is written first: it
+     * binds no anonymous {@code @proto}, so moving it changes nothing. The
+     * other directives follow in source order, each after its comments: a
+     * named directive's body and a {@code @proto} body as written, and a
+     * dataset as its header and then one row per line, an absent cell left
+     * empty. A document whose only directive is {@code @type} formats as it
+     * always has. The output is byte for byte protowire-go's
+     * {@code FormatDocument}.
+     */
     public static String formatDocument(Ast.Document doc) {
         StringBuilder sb = new StringBuilder();
+        List<Object> others = topDirectives(doc);
+        if (others.isEmpty()) {
+            if (!doc.typeUrl().isEmpty()) {
+                sb.append("@type ").append(doc.typeUrl()).append("\n\n");
+            }
+            writeComments(sb, doc.leadingComments(), 0);
+            formatEntries(sb, doc.entries(), 0);
+            return sb.toString();
+        }
+
         if (!doc.typeUrl().isEmpty()) {
-            sb.append("@type ").append(doc.typeUrl()).append("\n\n");
-        }
-        for (Ast.Directive d : doc.directives()) {
-            formatDirective(sb, d);
-            sb.append('\n');
-        }
-        for (Ast.DatasetDirective t : doc.datasets()) {
-            formatTableDirective(sb, t);
-            sb.append('\n');
+            sb.append("@type ").append(doc.typeUrl()).append('\n');
         }
         writeComments(sb, doc.leadingComments(), 0);
-        formatEntries(sb, doc.entries(), 0);
+        for (Object o : others) {
+            switch (o) {
+                case Ast.Directive d -> {
+                    writeComments(sb, d.leadingComments(), 0);
+                    formatNamedDirective(sb, d);
+                }
+                case Ast.DatasetDirective d -> {
+                    writeComments(sb, d.leadingComments(), 0);
+                    formatDataset(sb, d);
+                }
+                case Ast.ProtoDirective d -> {
+                    writeComments(sb, d.leadingComments(), 0);
+                    formatProto(sb, d);
+                }
+                default -> throw new IllegalStateException(
+                        "Format: unexpected directive type " + o.getClass().getSimpleName());
+            }
+        }
+        if (!doc.entries().isEmpty()) {
+            sb.append('\n');
+            formatEntries(sb, doc.entries(), 0);
+        }
         return sb.toString();
     }
 
-    private static void formatDirective(StringBuilder sb, Ast.Directive d) {
+    /**
+     * The document's directives other than {@code @type}, which the
+     * {@link Ast.Document} keeps in three lists, merged back into source
+     * order: an anonymous {@code @proto} binds the typed directive after it,
+     * so the order is part of the meaning. Each element is an
+     * {@link Ast.Directive}, {@link Ast.DatasetDirective} or
+     * {@link Ast.ProtoDirective}.
+     */
+    private static List<Object> topDirectives(Ast.Document doc) {
+        record At(int offset, Object d) {}
+        List<At> all = new ArrayList<>();
+        for (Ast.Directive d : doc.directives()) all.add(new At(d.pos().offset(), d));
+        for (Ast.DatasetDirective d : doc.datasets()) all.add(new At(d.pos().offset(), d));
+        for (Ast.ProtoDirective d : doc.protos()) all.add(new At(d.pos().offset(), d));
+        // List.sort is stable, so directives at one offset (built in code,
+        // with no position) keep the order of the lists above.
+        all.sort(Comparator.comparingInt(At::offset));
+        List<Object> out = new ArrayList<>(all.size());
+        for (At a : all) out.add(a.d());
+        return out;
+    }
+
+    /** Writes {@code @<name> prefix* [{body}]}, the body as it was written. */
+    private static void formatNamedDirective(StringBuilder sb, Ast.Directive d) {
         sb.append('@').append(d.name());
         for (String p : d.prefixes()) {
             sb.append(' ').append(p);
@@ -43,23 +104,33 @@ public final class Format {
         sb.append('\n');
     }
 
-    private static void formatTableDirective(StringBuilder sb, Ast.DatasetDirective t) {
-        sb.append("@dataset ").append(t.type()).append(" (");
-        for (int i = 0; i < t.columns().size(); i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(t.columns().get(i));
-        }
-        sb.append(")\n");
+    /** Writes the header, then one row per line. A null cell is an absent field, left empty; {@code null} is written. */
+    private static void formatDataset(StringBuilder sb, Ast.DatasetDirective t) {
+        sb.append("@dataset");
+        if (!t.type().isEmpty()) sb.append(' ').append(t.type());
+        sb.append(" (").append(String.join(", ", t.columns())).append(")\n");
         for (Ast.DatasetRow row : t.rows()) {
             sb.append('(');
             for (int i = 0; i < row.cells().size(); i++) {
                 if (i > 0) sb.append(", ");
                 Ast.Value cell = row.cells().get(i);
                 if (cell != null) formatValue(sb, cell, 0);
-                // null cell ⇒ empty between commas, leave it blank.
             }
             sb.append(")\n");
         }
+    }
+
+    /** Writes a {@code @proto} directive in the shape it was read in. */
+    private static void formatProto(StringBuilder sb, Ast.ProtoDirective d) {
+        sb.append("@proto");
+        switch (d.shape()) {
+            case ANONYMOUS -> sb.append(" {").append(new String(d.body(), StandardCharsets.UTF_8)).append('}');
+            case NAMED -> sb.append(' ').append(d.typeName())
+                    .append(" {").append(new String(d.body(), StandardCharsets.UTF_8)).append('}');
+            case SOURCE -> sb.append(" \"\"\"").append(new String(d.body(), StandardCharsets.UTF_8)).append("\"\"\"");
+            case DESCRIPTOR -> sb.append(" b\"").append(Base64.getEncoder().encodeToString(d.body())).append('"');
+        }
+        sb.append('\n');
     }
 
     private static void writeIndent(StringBuilder sb, int level) {

@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+syntax = "proto3";
+package wkt.test.v1;
+
+option java_package = "wkt.test.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/struct.proto";
+
+// The google/protobuf types PXF reads as ordinary messages. Their companions
+// ship in org.protowire.pxf.wkt; before trendvidia/protowire#539 the generated
+// meta named com.google.protobuf.AnyPxfMeta, which does not exist, and this
+// file did not compile.
+message GoogleMessages {
+  google.protobuf.Any any = 1;
+  repeated google.protobuf.Any anys = 2;
+  map<string, google.protobuf.Any> any_map = 3;
+  google.protobuf.Empty empty = 4;
+  google.protobuf.FieldMask mask = 5;
+  google.protobuf.Struct struct = 6;
+  google.protobuf.Value value = 7;
+  google.protobuf.ListValue list = 8;
+  google.protobuf.NullValue null_value = 9;
+}

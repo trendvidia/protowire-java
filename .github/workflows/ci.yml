@@ -94,6 +94,10 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      # The gates build this repo through ./gradlew. Without this the wrapper
+      # downloads Gradle on every run.
+      - uses: gradle/actions/setup-gradle@v6
+
       - name: Text gate
         run: "$PROTOWIRE_DIR/scripts/cross_text_check.sh"
 

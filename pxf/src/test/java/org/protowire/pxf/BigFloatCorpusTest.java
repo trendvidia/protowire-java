@@ -20,14 +20,14 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives the spec repo's {@code testdata/bigfloat/} corpus (#104), vendored
- * under {@code src/test/resources/corpus/bigfloat/} from
- * trendvidia/protowire 234cf29. Its expected values come from exact rational
+ * under {@code testdata/bigfloat/} and kept equal to the spec's by the
+ * conformance job. Its expected values come from exact rational
  * arithmetic in {@code generate.py}, independently of any port.
  */
 class BigFloatCorpusTest {
 
     private static byte[] binpb(String name) throws IOException {
-        try (InputStream in = BigFloatCorpusTest.class.getResourceAsStream("/corpus/bigfloat/" + name + ".binpb")) {
+        try (InputStream in = BigFloatCorpusTest.class.getResourceAsStream("/bigfloat/" + name + ".binpb")) {
             assertNotNull(in, "missing " + name + ".binpb");
             return in.readAllBytes();
         }

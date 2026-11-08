@@ -18,11 +18,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
- * Drives the spec repo's {@code testdata/map-keys/} fixtures (vendored
- * under {@code src/test/resources/map-keys/} from trendvidia/protowire
- * a0dd520, 2026-09-08, the {@code fmt-dotted-keys} pair from its branch
- * {@code map-keys-dotted-313} at f7d467f; the README there states the
- * verdicts). Bool keys (#76): three documents MUST bind to the keys true
+ * Drives the spec repo's {@code testdata/map-keys/} fixtures (the
+ * repository's {@code testdata/map-keys/}, kept equal to the spec's by the
+ * conformance job; the README there states the verdicts). Bool keys (#76): three documents MUST bind to the keys true
  * and false; every file under {@code invalid/} MUST NOT bind, with an
  * error naming the key. Key spelling (#82, #83): each {@code fmt-*} input
  * formats to exactly its {@code .expected.pxf}, the expected file is a

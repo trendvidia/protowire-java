@@ -24,3 +24,26 @@ protobuf {
 // `src/test/proto` is the protobuf plugin's default — registering it
 // explicitly via sourceSets adds it twice, which Gradle 9 rejects with
 // a duplicate-entry error in `processTestProtoResources`.
+
+// The spec corpus, one copy for both tiers: ../testdata/<dir> is protowire's
+// testdata/<dir> byte for byte (the conformance job diffs it against spec
+// main). Its schemas compile here, and its fixtures are test resources at
+// /<dir>/<file>. Two schemas stay out: settings_annotated.proto needs a v1.2
+// compiler, and protoc 3.25.5 reads nulls_editions.proto only behind
+// --experimental_editions, so the test loads a checked-in descriptor set.
+sourceSets {
+    test {
+        proto {
+            srcDir(rootDir.resolve("testdata"))
+            exclude("annotations/settings_annotated.proto", "nulls/nulls_editions.proto", "test.proto")
+        }
+        resources {
+            srcDir(rootDir.resolve("testdata"))
+            exclude("**/*.proto")
+        }
+    }
+}
+
+tasks.test {
+    systemProperty("protowire.testdata", rootDir.resolve("testdata").absolutePath)
+}

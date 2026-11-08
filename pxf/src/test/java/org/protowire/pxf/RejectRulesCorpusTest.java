@@ -30,8 +30,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives the spec repo's {@code testdata/{blocks,duplicates,nulls,strings}/}
- * corpora, vendored under {@code src/test/resources/corpus/} from
- * trendvidia/protowire 234cf29, through this port's decoder on both presence
+ * corpora, vendored under {@code testdata/} and kept equal to the spec's by
+ * the conformance job, through this port's decoder on both presence
  * paths and through the schema-less parse. Each corpus's README states the
  * verdicts.
  */
@@ -56,19 +56,28 @@ class RejectRulesCorpusTest {
         }
     }
 
-    private static int run(String dir, Function<CorpusFixtures.Fixture, Descriptor> schema) throws IOException {
+    private static int run(String dir, Function<CorpusFixtures.Fixture, Descriptor> schema) throws Throwable {
         List<CorpusFixtures.Fixture> all = CorpusFixtures.load(dir);
         for (CorpusFixtures.Fixture f : all) {
             Descriptor d = schema.apply(f);
-            if (d != null) assertVerdict(f, d);
+            if (d != null) CorpusFixtures.meet(dir, f.name(), () -> assertVerdict(f, d));
         }
         return all.size();
+    }
+
+    @Test
+    void knownGapsNameFixturesThatExist() {
+        CorpusFixtures.KNOWN_GAPS.keySet().forEach(k -> {
+            int slash = k.indexOf('/');
+            assertTrue(java.nio.file.Files.isRegularFile(
+                    CorpusFixtures.dir(k.substring(0, slash)).resolve(k.substring(slash + 1))), k);
+        });
     }
 
     // -- blocks, #106 --------------------------------------------------------
 
     @Test
-    void blocks() throws IOException {
+    void blocks() throws Throwable {
         assertEquals(7, run("blocks", f -> Doc.getDescriptor()));
     }
 
@@ -97,7 +106,7 @@ class RejectRulesCorpusTest {
     // -- duplicates, #103 and #105 -------------------------------------------
 
     @Test
-    void duplicates() throws IOException {
+    void duplicates() throws Throwable {
         assertEquals(19, run("duplicates", f -> Holder.getDescriptor()));
     }
 
@@ -148,7 +157,8 @@ class RejectRulesCorpusTest {
     private static final Map<String, Descriptor> NULL_SCHEMAS = Map.of(
             "err-proto2-required.pxf", NullsProto2.Strict.getDescriptor(),
             "proto2-scalar.pxf", NullsProto2.Legacy.getDescriptor(),
-            "required-optional.pxf", Nulls.Required.getDescriptor(),
+            "err-required-optional.pxf", Nulls.Required.getDescriptor(),
+            "err-required-wrapper.pxf", Nulls.RequiredWrapper.getDescriptor(),
             "default-optional.pxf", Nulls.Defaulted.getDescriptor());
 
     /** {@code nulls.ed.v1.Ed}, loaded from a descriptor set: see {@link #nullsEditions}. */
@@ -157,8 +167,8 @@ class RejectRulesCorpusTest {
     }
 
     @Test
-    void nulls() throws IOException {
-        assertEquals(19, run("nulls", f -> editions(f) ? null
+    void nulls() throws Throwable {
+        assertEquals(20, run("nulls", f -> editions(f) ? null
                 : NULL_SCHEMAS.getOrDefault(f.name(), Nulls.Holder.getDescriptor())));
     }
 
@@ -174,7 +184,7 @@ class RejectRulesCorpusTest {
         Map<String, String> field = Map.of(
                 "message.pxf", "msg", "wrapper.pxf", "w", "optional-scalar.pxf", "o",
                 "oneof-scalar.pxf", "ks", "oneof-message.pxf", "km", "proto2-scalar.pxf", "p",
-                "required-optional.pxf", "r", "default-optional.pxf", "d");
+                "default-optional.pxf", "d");
         Map<String, byte[]> by = byName("nulls");
         field.forEach((name, fd) -> {
             Descriptor d = NULL_SCHEMAS.getOrDefault(name, Nulls.Holder.getDescriptor());
@@ -196,7 +206,7 @@ class RejectRulesCorpusTest {
     @Test
     void nullsEditions() throws Exception {
         FileDescriptorProto proto;
-        try (InputStream in = getClass().getResourceAsStream("/corpus/nulls/nulls_editions.binpb")) {
+        try (InputStream in = getClass().getResourceAsStream("/editions/nulls_editions.binpb")) {
             assertNotNull(in, "missing nulls_editions.binpb");
             proto = FileDescriptorSet.parseFrom(in).getFile(0);
         }
@@ -212,7 +222,7 @@ class RejectRulesCorpusTest {
     // -- strings, #102 -------------------------------------------------------
 
     @Test
-    void strings() throws IOException {
+    void strings() throws Throwable {
         assertEquals(4, run("strings", f -> Strings.Holder.getDescriptor()));
     }
 

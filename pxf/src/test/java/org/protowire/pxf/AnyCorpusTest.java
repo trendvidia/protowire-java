@@ -22,7 +22,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives the spec repo's {@code testdata/any/} corpus (#100), vendored under
- * {@code src/test/resources/corpus/any/} from trendvidia/protowire 234cf29,
+ * {@code testdata/any/} and kept equal to the spec's by the conformance job,
  * through the schema-less parse and a decoder bound to {@code any.v1.Holder}
  * with a resolver that maps a URL to the message named after its last
  * {@code /}. The verdict table is the corpus README's.

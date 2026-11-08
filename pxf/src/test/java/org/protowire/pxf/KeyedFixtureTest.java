@@ -25,10 +25,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Keyed repeated fields (draft -01 §3.13, protowire#116, #50): the spec
- * repo's {@code testdata/keyed/} fixtures (vendored under
- * {@code src/test/resources/keyed/} from trendvidia/protowire, with
- * {@code keyed.proto} compiled beside the other test protos; the README
- * there states the verdicts), plus the edge cases protowire-go's
+ * repo's {@code testdata/keyed/} fixtures (the repository's {@code testdata/keyed/},
+ * kept equal to the spec's by the conformance job, with {@code keyed.proto}
+ * compiled beside the other test protos; the README there states the
+ * verdicts), plus the edge cases protowire-go's
  * {@code keyed_test.go} pins.
  */
 class KeyedFixtureTest {

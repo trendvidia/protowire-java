@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.protowire.sbe.runtime.SbeConstants;
+import org.protowire.sbe.runtime.SbeKinds;
 import org.protowire.sbe.runtime.SbeWireCodec;
 
 /**
@@ -70,6 +71,16 @@ public final class Codec {
             if (schema == null) throw new IllegalArgumentException("sbe: file " + fd.getName() + " missing (sbe.schema_id)");
             Integer version = SbeAnnotations.fileUint32(fd, SbeAnnotations.EXT_VERSION);
             int v = version == null ? 0 : version;
+            // Every header field is 16 bits; a larger id would be written as
+            // its low bits, naming another schema (protowire-go#250).
+            if (Integer.toUnsignedLong(schema) > SbeKinds.MAX_UINT16) {
+                throw new IllegalArgumentException("sbe: file " + fd.getName() + ": (sbe.schema_id) = " + Integer.toUnsignedString(schema)
+                        + " is past " + SbeKinds.MAX_UINT16 + ", the largest schemaId SBE can state");
+            }
+            if (Integer.toUnsignedLong(v) > SbeKinds.MAX_UINT16) {
+                throw new IllegalArgumentException("sbe: file " + fd.getName() + ": (sbe.version) = " + Integer.toUnsignedString(v)
+                        + " is past " + SbeKinds.MAX_UINT16 + ", the largest version SBE can state");
+            }
             for (Descriptor md : fd.getMessageTypes()) {
                 c.register(md, schema, v);
             }

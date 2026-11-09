@@ -60,6 +60,13 @@ format changes.
 
 ### Fixed
 
+- **The SBE codec refuses a value its `(sbe.encoding)` primitive or its field cannot hold, and a schema the 16-bit header cannot describe** (#197, #198; draft `-01` § SBE Annotations; protowire-go#250, #252). Both tiers share the fix: lite's generated templates check themselves when built, through the shared check in `:sbe-runtime`.
+  - **Writing:** a value outside its primitive used to keep its low bits. `int32` 300 as `int8` was written as 44, and a `double` past float's range as `+Inf`. It is now refused, as `sbe: field ranges.v1.R.i8: value 300 is outside the range of int8, [-128, 127]`.
+  - **Reading:** a wire value outside its field is refused the same way, as `wire value 2147483648 (uint32) does not fit a int32 field, [-2147483648, 2147483647]`.
+  - **Mismatched signedness** is read and written by value. A `bool` as `int8` used to throw `ClassCastException`, and a `uint32` as `int8` threw `IllegalStateException`.
+  - **Binding:** `(sbe.encoding)` on a string or bytes field, or between integer and floating point, is refused when the codec is built. So is anything past what a 16-bit header field states: an `(sbe.length)`, a block, a template id, a schema id or a version past 65535. A composite holding a oneof is refused too.
+  - **Groups:** marshal refuses a group of more than 65535 entries, which used to be written with `numInGroup` 0.
+  - **Texts:** each one is protowire-go's, naming the field by its full name. `FieldTemplate` and `GroupTemplate` gain `fullName`, through new constructors; the old ones still compile, and lite's generated templates name the field by its short name until the plugin passes the full one. The lite tier's message-level texts don't name the message, which its templates don't know.
 - **The SBE codec names a template by schema id and template id together, as protowire-go does** (#196, #199; draft `-01` § Header and Block Length, § SBE Annotations; protowire-go#253, #257). A template id is unique only within a schema, and Java looked one up by its template id alone, so bytes from one schema could decode as another schema's message with no error. The changes:
   - **Decoding** (`Codec.unmarshal` and the lite tier's generated codecs, through `SbeWireCodec`) refuses a header whose schema id is not the message's: `sbe: schema ID mismatch: got 2, want 1 for template 7`.
   - **Binding:** `Codec.of` refuses two messages sharing a template id in one schema, with Go's text. One file passed twice still binds.

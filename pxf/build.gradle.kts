@@ -31,8 +31,9 @@ protobuf {
 // testdata/<dir> byte for byte (the conformance job diffs it against spec
 // main). Its schemas compile here, and its fixtures are test resources at
 // /<dir>/<file>. Two schemas stay out: settings_annotated.proto needs a v1.2
-// compiler, and protoc 3.25.5 reads nulls_editions.proto only behind
-// --experimental_editions, so the test loads a checked-in descriptor set.
+// compiler, and nulls_editions.proto, which the test loads from a checked-in
+// descriptor set, built when protoc read editions only behind
+// --experimental_editions.
 sourceSets {
     test {
         proto {

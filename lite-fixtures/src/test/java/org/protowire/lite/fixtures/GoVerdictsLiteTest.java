@@ -38,9 +38,6 @@ class GoVerdictsLiteTest {
      * list only shrinks.
      */
     private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
-        // null on a (pxf.required) field is accepted
-        Map.entry("nulls/err-required-optional.pxf", "#189"),
-        Map.entry("nulls/err-required-wrapper.pxf", "#189"),
         // refused with IllegalArgumentException, not Go's PXF error
         Map.entry("annotations/missing-required.pxf", "#191"),
         Map.entry("nulls/err-list-element.pxf", "#191"),
@@ -51,10 +48,7 @@ class GoVerdictsLiteTest {
         Map.entry("any/map-value.pxf", "#213"),
         Map.entry("any/url-verbatim.pxf", "#213"),
         Map.entry("any/err-not-any.pxf", "#213"),
-        Map.entry("any/err-unresolved.pxf", "#213"),
-        // a scalar or an assigned block on a repeated field is accepted
-        Map.entry("repeated/err-scalar-entries.pxf", "#214"),
-        Map.entry("repeated/err-assigned-block.pxf", "#214"));
+        Map.entry("any/err-unresolved.pxf", "#213"));
 
     private static final SimplePxfRegistry ANY_TYPES = new SimplePxfRegistry();
     static {

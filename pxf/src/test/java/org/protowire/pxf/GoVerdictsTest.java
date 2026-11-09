@@ -46,9 +46,6 @@ class GoVerdictsTest {
      * list only shrinks.
      */
     private static final Map<String, String> KNOWN_GAPS = Map.of(
-            // null on a (pxf.required) field is accepted
-            "nulls/err-required-optional.pxf", "#189",
-            "nulls/err-required-wrapper.pxf", "#189",
             // protobuf-java 3.25 reads no editions features: the EXPLICIT
             // scalar has no presence, so its null is refused
             "nulls/editions-explicit.pxf", "#190");

@@ -173,6 +173,46 @@ public final class LiteWireWriter {
         }
     }
 
+    private static final String ANY = "google.protobuf.Any";
+
+    /**
+     * An Any block that opens with a type entry (draft -01 "Any Blocks"): the
+     * rest of the block is a body of the type the URL names, written into
+     * {@code value}, and the URL goes into {@code type_url} as written. The
+     * URL's last segment names the type, which {@code registry} resolves, as
+     * the full tier's TypeResolver and protowire-go's do. An Any block
+     * without a type entry is written with its own two fields.
+     */
+    private static byte[] encodeAny(Ast.TypeEntry t, List<Ast.Entry> body, PxfRegistry registry, DecodeLimits limits) {
+        String url = t.url();
+        // The AST keeps the type entry's position, not the URL's, where
+        // protowire-go reports these two.
+        if (registry == REGISTRY_REQUIRED) {
+            throw new PxfException(t.pos(), "cannot resolve Any type " + Token.quote(url)
+                + ": no PxfRegistry (LiteWireWriter.encode(doc, meta, registry))");
+        }
+        PxfMeta inner = registry.lookupMessage(url.substring(url.lastIndexOf('/') + 1));
+        if (inner == null) {
+            throw new PxfException(t.pos(), "cannot resolve Any type " + Token.quote(url) + ": not found");
+        }
+        byte[] value = encode(body, inner, registry, limits, false);
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        CodedOutputStream out = CodedOutputStream.newInstance(buf);
+        try {
+            // proto3 fields without presence: an empty one is not written.
+            if (!url.isEmpty()) {
+                out.writeString(1, url);
+            }
+            if (value.length > 0) {
+                out.writeByteArray(2, value);
+            }
+            out.flush();
+        } catch (IOException e) {
+            throw new IllegalStateException("CodedOutputStream write failed", e);
+        }
+        return buf.toByteArray();
+    }
+
     /**
      * A {@code (pxf.required)} field a body left unset, on its way out of the
      * nested bodies: each one it leaves puts its own path segment in front,
@@ -202,6 +242,9 @@ public final class LiteWireWriter {
      */
     private static byte[] encode(
             List<Ast.Entry> entries, PxfMeta meta, PxfRegistry registry, DecodeLimits limits, boolean mapEntry) {
+        if (!entries.isEmpty() && entries.get(0) instanceof Ast.TypeEntry t && ANY.equals(meta.fullName())) {
+            return encodeAny(t, entries.subList(1, entries.size()), registry, limits);
+        }
         Body body = new Body();
         // Track which field numbers were set in the input + which oneof slots
         // got claimed; needed for default application, oneof mutual-exclusion
@@ -414,12 +457,11 @@ public final class LiteWireWriter {
                 }
                 case Ast.MapEntry m -> throw new PxfException(m.pos(),
                     "unexpected ':' in message context, use '=' for field assignments");
-                // Packing the block's body needs the named type's schema,
-                // and this tier has no type resolver. An Any block here is
-                // written with its own fields, type_url and value.
+                // A type entry that opens an Any's block is read by
+                // encodeAny; anywhere else it is misplaced. The parser
+                // already refuses one that is not first in its block.
                 case Ast.TypeEntry t -> throw new PxfException(t.pos(),
-                    "@type entry in " + meta.fullName() + ": the lite tier has no type resolver for an Any block; "
-                    + "write type_url and value");
+                    "@type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 \"Any Blocks\")");
             }
         }
     }

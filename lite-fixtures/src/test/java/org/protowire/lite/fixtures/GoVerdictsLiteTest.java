@@ -38,14 +38,9 @@ class GoVerdictsLiteTest {
      * list only shrinks.
      */
     private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
-        // an Any block's @type entry is refused
-        Map.entry("any/assignment.pxf", "#213"),
-        Map.entry("any/block.pxf", "#213"),
-        Map.entry("any/list-element.pxf", "#213"),
-        Map.entry("any/map-value.pxf", "#213"),
-        Map.entry("any/url-verbatim.pxf", "#213"),
-        Map.entry("any/err-not-any.pxf", "#213"),
-        Map.entry("any/err-unresolved.pxf", "#213"));
+        // Go's text at the @type entry, not at the URL: the AST keeps no
+        // position for the URL
+        Map.entry("any/err-unresolved.pxf", "#222"));
 
     private static final SimplePxfRegistry ANY_TYPES = new SimplePxfRegistry();
     static {

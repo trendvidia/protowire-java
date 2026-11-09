@@ -1401,6 +1401,9 @@ public final class LiteWireWriter {
                 throw new PxfException(v.pos(), "null is not allowed in repeated field " + Token.quote(field));
             }
         }
+        if (list.elements().isEmpty()) {
+            return; // protobuf writes nothing for an empty list, packed or not
+        }
         if (!packed) {
             int index = 0;
             for (Ast.Value v : list.elements()) {

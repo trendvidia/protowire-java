@@ -1079,8 +1079,7 @@ final class LiteWireWriterTest {
 
     @Test
     void null_emitsNoBytes_onWrapperField() {
-        // name = null → PXF null sentinel: present for required validation,
-        // but no wire bytes emitted.
+        // name = null → PXF null: present-but-null, no wire bytes emitted.
         Ast.Document doc = Parser.parse("name = null");
         PxfMeta m = wellKnownHostMeta("test.Sample", "name", 1, "com.google.protobuf.StringValue");
 
@@ -1088,8 +1087,11 @@ final class LiteWireWriterTest {
     }
 
     @Test
-    void null_satisfiesRequired() {
-        // required field set to null → required validation passes, no bytes.
+    void null_onRequired_throws() {
+        // A required field holds a value: null on it is rejected as absence
+        // is (protowire#569, #189). The meta below states the field nullable,
+        // as a companion from a plugin before protowire#569 does, so the
+        // verdict comes from requiredFields().
         Ast.Document doc = Parser.parse("name = null");
         PxfMeta m = new PxfMeta() {
             @Override public String                fullName()           { return "test.Sample"; }
@@ -1106,10 +1108,12 @@ final class LiteWireWriterTest {
             @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
             @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
             @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Set<Integer>          nullableFields()     { return Set.of(1); }
         };
 
-        // Should NOT throw — null counts as present per the (pxf.required) Javadoc.
-        assertEquals("", hex(LiteWireWriter.encode(doc, m)));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:8: null is not allowed on required field \"name\": a required field holds a value",
+            e.getMessage());
     }
 
     // --- pxf.BigInt / pxf.Decimal / pxf.BigFloat --------------------------

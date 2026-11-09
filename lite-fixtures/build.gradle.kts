@@ -104,7 +104,10 @@ sourceSets {
 
 tasks.test {
     useJUnitPlatform()
+    // Read through a system property, so declared as an input: a changed
+    // fixture reruns the tests rather than reusing a result.
     systemProperty("protowire.testdata", rootDir.resolve("testdata").absolutePath)
+    inputs.dir(rootDir.resolve("testdata")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 protobuf {

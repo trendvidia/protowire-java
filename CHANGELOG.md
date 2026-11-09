@@ -20,6 +20,12 @@ format changes.
 
 ### Added
 
+- **`UnmarshalOptions.withOnSecretField`: a hook that receives each `pxf.Secret` value in place of the message, as protowire-go's `OnSecretField`** (#206). A caller can route secrets to protected memory and keep them out of the decoded message.
+  - **Where it's called:** in every form a Secret takes: the literal, a list element, a map value, and the block, which goes through Go's Secret block decoder with Go's errors. A dataset row's cells call it too.
+  - **What it's given:** each value's dotted path in Go's spelling, as `servers[0].password` or `tenant_keys["acme"]`.
+  - **What happens to the field:** the Secret is left present with `value` unset, and `Result` still reports `value` set. `hint` and `fingerprint` are stored as usual.
+  - **Errors:** an exception from the hook aborts the decode as `pxf.Secret hook for "<path>": <message>`.
+  - **Record change:** `UnmarshalOptions` gains the record component `onSecretField`, and the five-argument constructor is kept.
 - **`Pxf.appendDatasetHeader` and `Pxf.appendDatasetRow` write `@dataset` tables, as protowire-go's `AppendDatasetHeader` and `AppendDatasetRow` do** (#204). Java could read a table but not write one.
   - **Header:** the columns are checked as the reader checks them, dotted paths included, and so is the schema. A `(pxf.required)` field missing from the columns is refused.
   - **Rows:** a set field is written as `Pxf.marshal` writes its value, and a list, map or block on one line. An unset field is an empty cell, except where reading one would not give the field back, in which case it follows Go's rules: a zero value, `[]` or `{}`, or `null`. An unset required field with presence is refused, and so is a row the reader would reject for a required sub-message.

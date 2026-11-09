@@ -28,6 +28,10 @@ final class FastDecoder {
     private Token current;
     private final UnmarshalOptions opts;
     private final boolean trackPresence;
+    // Whether anything reads the path: the Result, or the Secret hook, which
+    // is given it (protowire-go's tracksPaths).
+    private final boolean tracksPaths;
+    private final UnmarshalOptions.OnSecretField onSecret;
     private final boolean runPostDecode;
     private Result result;
     private Message.Builder rootBuilder;
@@ -46,6 +50,8 @@ final class FastDecoder {
         this.limits = lim;
         this.opts = opts;
         this.trackPresence = trackPresence;
+        this.onSecret = opts.onSecretField();
+        this.tracksPaths = trackPresence || onSecret != null;
         this.runPostDecode = trackPresence && !opts.skipPostDecode();
         if (trackPresence) this.result = new Result();
         advance();
@@ -490,7 +496,7 @@ final class FastDecoder {
                 Message.Builder sub = b.newBuilderForField(fd);
                 sub.setField(keyFd, name);
                 keyedElem = new KeyedElem(fd.getName(), keyFd, name, true);
-                String segment = trackPresence ? fd.getName() + "[" + b.getRepeatedFieldCount(fd) + "]" : null;
+                String segment = tracksPaths ? fd.getName() + "[" + b.getRepeatedFieldCount(fd) + "]" : null;
                 // The entry name set the key field: it is present, not absent.
                 if (trackPresence) result.markPresent(pathPrefix + segment + "." + keyFd.getName());
                 decodeElementBody(sub, segment);
@@ -815,13 +821,87 @@ final class FastDecoder {
     /**
      * Binds {@code pw = "x"} into the Secret {@code sub}, which sets
      * {@code value} alone. {@code segment} is the body's path segment, or
-     * {@code null} when presence is off, so the literal reports what the
-     * block {@code pw { value = "x" }} would.
+     * {@code null} when nothing reads paths, so the literal reports what the
+     * block {@code pw { value = "x" }} would (#127). With the Secret hook,
+     * the value goes to the hook instead.
      */
     private void bindSecretLiteral(Message.Builder sub, String segment) {
         FieldDescriptor inner = sub.getDescriptorForType().findFieldByName("value");
         if (trackPresence) result.markPresent(pathPrefix + segment + "." + inner.getName());
+        if (onSecret != null) {
+            // The value goes to the hook in place of the message; the Secret
+            // is present, its value unset (#206, protowire-go's OnSecretField).
+            rejectIllegal();
+            callSecretHook(pathPrefix + segment, current.value(), current.pos());
+            advance();
+            return;
+        }
         sub.setField(inner, consumeScalar(inner));
+    }
+
+    private void callSecretHook(String path, String value, Position pos) {
+        try {
+            onSecret.accept(path, value);
+        } catch (Exception e) {
+            throw new PxfException(pos, "pxf.Secret hook for " + Token.quote(path) + ": " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * A {@code pxf.Secret} block, its {@code {} consumed, with the Secret
+     * hook set: {@code value} goes to the hook, {@code hint} and
+     * {@code fingerprint} into {@code sub}, each at most once, and the
+     * closing {@code }} is consumed. As protowire-go's
+     * decodeSecretBlockInto, word for word in its errors.
+     */
+    private void decodeSecretBlock(Message.Builder sub, String path) {
+        if (++depth > limits.maxNestingDepth()) {
+            throw new PxfException(current.pos(), "nesting depth exceeds MaxNestingDepth=" + limits.maxNestingDepth());
+        }
+        try {
+            Descriptor desc = sub.getDescriptorForType();
+            Set<String> bound = new HashSet<>();
+            while (true) {
+                switch (current.kind()) {
+                    case RBRACE -> {
+                        advance();
+                        return;
+                    }
+                    case EOF -> throw new PxfException(current.pos(), "expected '}' to close pxf.Secret block, got EOF");
+                    case IDENT -> { }
+                    default -> throw new PxfException(current.pos(),
+                            "expected pxf.Secret field name (value/hint/fingerprint), got " + current.errMsg());
+                }
+                String name = current.value();
+                Position namePos = current.pos();
+                advance();
+                if (current.kind() != TokenKind.EQUALS) {
+                    throw new PxfException(current.pos(), "expected '=' after pxf.Secret field " + Token.quote(name) + ", got " + current.kind());
+                }
+                advance();
+                rejectIllegal();
+                if (current.kind() != TokenKind.STRING) {
+                    throw new PxfException(current.pos(), "expected string value for pxf.Secret " + name + ", got " + current.kind());
+                }
+                FieldDescriptor fd;
+                switch (name) {
+                    case "value", "hint", "fingerprint" -> {
+                        fd = desc.findFieldByName(name);
+                        if (fd == null) {
+                            throw new PxfException(namePos, "unknown pxf.Secret field " + Token.quote(name) + ": this schema does not declare it");
+                        }
+                    }
+                    default -> throw new PxfException(namePos, "unknown pxf.Secret field " + Token.quote(name) + " (expected value/hint/fingerprint)");
+                }
+                if (!bound.add(name)) throw new PxfException(namePos, "field \"" + fd.getName() + "\" is already set");
+                if (name.equals("value")) callSecretHook(path, current.value(), current.pos());
+                else sub.setField(fd, current.value());
+                if (trackPresence) result.markPresent(path + "." + name);
+                advance();
+            }
+        } finally {
+            depth--;
+        }
     }
 
     /** The values a message field takes, as protowire-go's {@code msgValueForms} names them. */
@@ -843,7 +923,11 @@ final class FastDecoder {
      * map takes its pass in {@link #decodeElementBody}.
      */
     private void decodeBody(Message.Builder sub, String segment) {
-        if (!trackPresence) { decodeFields(sub, true); return; } // nothing reads the path
+        if (onSecret != null && WellKnown.isSecret(sub.getDescriptorForType())) {
+            decodeSecretBlock(sub, pathPrefix + segment);
+            return;
+        }
+        if (!tracksPaths) { decodeFields(sub, true); return; } // nothing reads the path
         String saved = pathPrefix;
         pathPrefix = pathPrefix + segment + ".";
         try {
@@ -1014,7 +1098,7 @@ final class FastDecoder {
         if (literal != null) return literal;
         if (secretLiteral(md)) {
             Message.Builder sub = parent.newBuilderForField(fd);
-            bindSecretLiteral(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
+            bindSecretLiteral(sub, tracksPaths ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
             return sub.build();
         }
         if (current.kind() != TokenKind.LBRACE) {
@@ -1026,7 +1110,7 @@ final class FastDecoder {
         // its immediate body owes the empty-key rule (draft -01 §3.13).
         FieldDescriptor keyFd = Annotations.keyField(fd);
         if (keyFd != null) keyedElem = new KeyedElem(fd.getName(), keyFd, "", false);
-        decodeElementBody(sub, trackPresence ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
+        decodeElementBody(sub, tracksPaths ? fd.getName() + "[" + parent.getRepeatedFieldCount(fd) + "]" : null);
         return sub.build();
     }
 
@@ -1074,7 +1158,7 @@ final class FastDecoder {
             entry.setField(keyFd, key);
 
             if (valFd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
-                String segment = trackPresence ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null;
+                String segment = tracksPaths ? fd.getName() + "[" + (key instanceof String ? "\"" + key + "\"" : key) + "]" : null;
                 Message literal = wellKnownLiteral(entry, valFd, fd);
                 if (literal != null) {
                     entry.setField(valFd, literal);

@@ -224,9 +224,8 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("nope = 1");
         PxfMeta m = meta(Map.of(), Map.of(), Set.of(), Set.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals("unknown field name: nope", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: unknown field \"nope\" in test.Sample", e.getMessage());
     }
 
     @Test
@@ -373,9 +372,8 @@ final class LiteWireWriterTest {
 
         PxfRegistry registry = new SimplePxfRegistry().register(statusEnum);
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, sampleMeta, registry));
-        assertEquals("unknown enum value 'STATUS_DELETED' for test.Status", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, sampleMeta, registry));
+        assertEquals("1:10: unknown enum value \"STATUS_DELETED\" for test.Status", e.getMessage());
     }
 
     @Test
@@ -586,9 +584,8 @@ final class LiteWireWriterTest {
                 Map.of(),
                 Map.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals("required field(s) missing in test.Sample: name", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: required field \"name\" is absent", e.getMessage());
     }
 
     @Test
@@ -695,10 +692,8 @@ final class LiteWireWriterTest {
                 Map.of(),
                 Map.of(2, "figure", 3, "figure"));
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(
-            "oneof 'figure' in test.Shape already has 'radius' set; cannot also set 'sides'",
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("2:1: oneof \"figure\": field \"sides\" conflicts with already-set field \"radius\"",
             e.getMessage());
     }
 
@@ -859,9 +854,8 @@ final class LiteWireWriterTest {
         PxfMeta m = mapHostMeta("test.Sample",
                 Map.of(), Map.of(), Set.of(), Map.of(), Map.of(), Set.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("outside a map field block"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: unexpected ':' in message context, use '=' for field assignments", e.getMessage());
     }
 
     // --- well-known types: Timestamp + Duration ---------------------------
@@ -986,10 +980,9 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("created = 2024-01-15T10:30:00Z");
         PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.example.SomeOtherType");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_TIMESTAMP));
-        assertEquals(true, e.getMessage().contains("<unset>"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:11: expected '{' for message field \"created\", got timestamp (\"2024-01-15T10:30:00Z\")",
+            e.getMessage());
     }
 
     @Test
@@ -997,9 +990,8 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("ttl = 1h");
         PxfMeta m = wellKnownHostMeta("test.Sample", "ttl", 1, "com.example.SomeOtherType");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_DURATION));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:7: expected '{' for message field \"ttl\", got duration (\"1h\")", e.getMessage());
     }
 
     // --- well-known *Value wrappers + null sentinel -----------------------
@@ -1079,8 +1071,7 @@ final class LiteWireWriterTest {
 
     @Test
     void null_emitsNoBytes_onWrapperField() {
-        // name = null → PXF null sentinel: present for required validation,
-        // but no wire bytes emitted.
+        // name = null → PXF null: present-but-null, no wire bytes emitted.
         Ast.Document doc = Parser.parse("name = null");
         PxfMeta m = wellKnownHostMeta("test.Sample", "name", 1, "com.google.protobuf.StringValue");
 
@@ -1088,8 +1079,11 @@ final class LiteWireWriterTest {
     }
 
     @Test
-    void null_satisfiesRequired() {
-        // required field set to null → required validation passes, no bytes.
+    void null_onRequired_throws() {
+        // A required field holds a value: null on it is rejected as absence
+        // is (protowire#569, #189). The meta below states the field nullable,
+        // as a companion from a plugin before protowire#569 does, so the
+        // verdict comes from requiredFields().
         Ast.Document doc = Parser.parse("name = null");
         PxfMeta m = new PxfMeta() {
             @Override public String                fullName()           { return "test.Sample"; }
@@ -1106,10 +1100,12 @@ final class LiteWireWriterTest {
             @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
             @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
             @Override public Map<Integer, String>  oneofOf()            { return Map.of(); }
+            @Override public Set<Integer>          nullableFields()     { return Set.of(1); }
         };
 
-        // Should NOT throw — null counts as present per the (pxf.required) Javadoc.
-        assertEquals("", hex(LiteWireWriter.encode(doc, m)));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:8: null is not allowed on required field \"name\": a required field holds a value",
+            e.getMessage());
     }
 
     // --- pxf.BigInt / pxf.Decimal / pxf.BigFloat --------------------------
@@ -1248,10 +1244,9 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("n = 3.14");
         PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("pxf.BigInt"));
-        assertEquals(true, e.getMessage().contains("integer literal"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:5: expected an integer literal or '{' for message field \"n\", got float (\"3.14\")",
+            e.getMessage());
     }
 
     // -- bool map keys: the grammar's spellings, not Boolean.parseBoolean (#76)
@@ -1383,7 +1378,8 @@ final class LiteWireWriterTest {
     void mapKeyBoundTwiceIsRejected() {
         rulesReject("m = { a: \"1\" a: \"2\" }", "map field \"m\": key \"a\" is already set");
         rulesReject("m = { a: \"1\" }\nm = { a: \"2\" }", "map field \"m\": key \"a\" is already set");
-        rulesReject("nums = { 1: \"x\" \"1\": \"y\" }", "map field \"nums\": key \"1\" is already set");
+        // An integer key is shown as the number, as protowire-go shows it.
+        rulesReject("nums = { 1: \"x\" \"1\": \"y\" }", "map field \"nums\": key 1 is already set");
     }
 
     @Test
@@ -1396,7 +1392,7 @@ final class LiteWireWriterTest {
     void nullOnAListOrAMapIsRejected() {
         rulesReject("l = null", "null is not allowed on repeated field \"l\"");
         rulesReject("m = null", "null is not allowed on map field \"m\"");
-        rulesReject("m = { a: null }", "null is not allowed as a map value in field \"m\"");
+        rulesReject("m = { a: null }", "null is not allowed as map value in field \"m\"");
     }
 
     @Test
@@ -1407,13 +1403,31 @@ final class LiteWireWriterTest {
 
     @Test
     void nullOutsideNullableFieldsIsRejected() {
-        // Every call but nullableFields() goes to rulesMeta().
+        // A plain scalar, listed with no presence: protowire-go's hint.
+        PxfException e = assertThrows(PxfException.class,
+            () -> LiteWireWriter.encode(Parser.parse("s = null"), statingPresence(true)));
+        assertEquals("1:5: null is not allowed on scalar field \"s\": declare it optional, or as a wrapper type "
+            + "(google.protobuf.StringValue or similar), to make it nullable", e.getMessage());
+        // A companion from before IMPLICIT_PRESENCE_FIELDS lists no field
+        // there, so the null reads as one on a proto2 required field. The
+        // verdict is the same.
+        e = assertThrows(PxfException.class,
+            () -> LiteWireWriter.encode(Parser.parse("s = null"), statingPresence(false)));
+        assertEquals("1:5: null is not allowed on scalar field \"s\": the field is required, so it must be set",
+            e.getMessage());
+    }
+
+    /** rulesMeta() with no nullable field, and every singular field without presence when {@code implicit}. */
+    private static PxfMeta statingPresence(boolean implicit) {
         PxfMeta rules = rulesMeta();
-        PxfMeta meta = (PxfMeta) java.lang.reflect.Proxy.newProxyInstance(
+        Set<Integer> singular = new java.util.HashSet<>(rules.fieldNumbers().values());
+        singular.removeAll(rules.repeatedFields());
+        return (PxfMeta) java.lang.reflect.Proxy.newProxyInstance(
             PxfMeta.class.getClassLoader(), new Class<?>[] {PxfMeta.class},
-            (proxy, method, args) -> method.getName().equals("nullableFields")
-                ? Set.of() : method.invoke(rules, args));
-        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(Parser.parse("s = null"), meta));
-        assertEquals(true, e.getMessage().contains("null is not allowed on field \"s\""), e.getMessage());
+            (proxy, method, args) -> switch (method.getName()) {
+                case "nullableFields" -> Set.of();
+                case "implicitPresenceFields" -> implicit ? singular : Set.of();
+                default -> method.invoke(rules, args);
+            });
     }
 }

@@ -1,0 +1,33 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// The schema of protowire-go's TestRequiredRejectsNull (#189, protowire#569):
+// a required field in each spelling, type and presence. `@required` is
+// written as the 1327 carrier settings_annotated.proto declares, since stock
+// protoc has no v1.2 syntax.
+syntax = "proto3";
+
+package reqnull.v1;
+
+option java_package = "reqnull.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/wrappers.proto";
+import "pxf/annotations.proto";
+import "settings_annotated.proto";
+
+message Sub {
+  int32 x = 1;
+}
+
+message Req {
+  optional int32 r = 1 [(pxf.required) = true];
+  optional int32 a = 2 [(settings.annotated.v1.carrier) = { entries: { name: "protowire.schema.v1.required" } }];
+  google.protobuf.Int32Value w = 3 [(pxf.required) = true];
+  Sub s = 4 [(settings.annotated.v1.carrier) = { entries: { name: "protowire.schema.v1.required" } }];
+  int32 plain = 5 [(pxf.required) = true];
+}
+
+message Outer {
+  Req in = 1;
+}

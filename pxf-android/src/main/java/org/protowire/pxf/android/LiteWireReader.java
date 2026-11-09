@@ -24,7 +24,6 @@ import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -238,12 +237,18 @@ public final class LiteWireReader {
             }
         }
 
-        // Emit in field-number order. Stable + matches protobuf's tag ordering.
+        if (!mapEntry) {
+            writeUnsetAnnotated(meta, singles, repeatedAcc, mapAcc, registry, depth, limits);
+        }
+
+        // Emit in declaration order, as protowire-go and the full tier write
+        // a message (#224); a companion without FIELD_ORDER gives number order.
         List<Integer> nums = new ArrayList<>();
-        nums.addAll(singles.keySet());
-        nums.addAll(repeatedAcc.keySet());
-        nums.addAll(mapAcc.keySet());
-        nums.sort(Comparator.naturalOrder());
+        for (int num : meta.fieldOrder()) {
+            if (singles.containsKey(num) || repeatedAcc.containsKey(num) || mapAcc.containsKey(num)) {
+                nums.add(num);
+            }
+        }
 
         List<Ast.Entry> out = new ArrayList<>(nums.size());
         for (int num : nums) {
@@ -655,8 +660,10 @@ public final class LiteWireReader {
         }
         String literal;
         try {
+            // Decoded as a decoder accepts it: a value that rounds past the
+            // bound is refused when its literal is written (#186).
             literal = BigFloats.format(mantissa, exponent, prec, negative,
-                    limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent());
+                    limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent(), false);
         } catch (IllegalArgumentException e) {
             throw new PxfException(Position.UNKNOWN, e.getMessage());
         }
@@ -765,6 +772,69 @@ public final class LiteWireReader {
         String keyStr = mapKeyString(keyVal);
         boolean keyQuoted = keyVal instanceof Ast.StringVal && Format.needsQuoting(keyStr);
         return new Ast.MapEntry(Position.UNKNOWN, keyStr, valueVal, List.of(), "", keyQuoted);
+    }
+
+    /**
+     * Adds the unset fields a reader that applies (pxf.default) and checks
+     * (pxf.required) would not read back as unset (draft -01 § Common Schema
+     * Layer; protowire-go#259, #263, #267, #268), as the full tier's Encoder
+     * and protowire-go's unsetField decide. One without presence, a plain
+     * scalar, list or map, is written as its zero value, {@code []} or
+     * {@code {}}. A message-typed one with a default is written {@code null}.
+     * A required one with presence cannot be written, since a reader refuses
+     * it absent and refuses it null, so it is an error. A oneof member whose
+     * sibling is set, and an {@code optional} or oneof scalar with a default,
+     * are left out.
+     *
+     * <p>A scalar has no presence when {@link PxfMeta#implicitPresenceFields()}
+     * lists it. A companion from a plugin before that table lists none, so
+     * every scalar there has presence: an unset required one is refused and a
+     * defaulted one left out, as before the table.
+     */
+    private static void writeUnsetAnnotated(
+            PxfMeta meta,
+            Map<Integer, Ast.Value> singles,
+            Map<Integer, List<Ast.Value>> repeatedAcc,
+            Map<Integer, List<Ast.MapEntry>> mapAcc,
+            PxfRegistry registry, int depth, DecodeLimits limits) throws IOException {
+        Set<Integer> required = meta.requiredFields();
+        Map<Integer, String> defaults = meta.defaults();
+        if (required.isEmpty() && defaults.isEmpty()) {
+            return;
+        }
+        Set<Integer> implicit = meta.implicitPresenceFields();
+        Map<Integer, String> oneofOf = meta.oneofOf();
+        Set<String> chosen = new HashSet<>(); // the oneofs a set member chose
+        for (int n : singles.keySet()) {
+            if (oneofOf.containsKey(n)) chosen.add(oneofOf.get(n));
+        }
+        for (Map.Entry<String, Integer> f : meta.fieldNumbers().entrySet()) {
+            int num = f.getValue();
+            boolean req = required.contains(num);
+            if ((!req && !defaults.containsKey(num))
+                    || singles.containsKey(num) || repeatedAcc.containsKey(num) || mapAcc.containsKey(num)) {
+                continue;
+            }
+            if (meta.mapFields().contains(num)) {
+                mapAcc.put(num, new ArrayList<>());
+                continue;
+            }
+            if (meta.repeatedFields().contains(num)) {
+                repeatedAcc.put(num, new ArrayList<>());
+                continue;
+            }
+            int kind = meta.fieldKinds().getOrDefault(num, 0);
+            boolean message = kind == K_MESSAGE;
+            boolean presence = message || !implicit.contains(num);
+            if (!presence) {
+                singles.put(num, zeroValue(meta, num, registry, depth, limits));
+            } else if (req) {
+                throw new PxfException(Position.UNKNOWN,
+                    "pxf: " + meta.fullName() + "." + f.getKey() + " is unset, and the field is (pxf.required)");
+            } else if (message && !chosen.contains(oneofOf.get(num))) {
+                singles.put(num, new Ast.NullVal(Position.UNKNOWN));
+            }
+        }
     }
 
     /**

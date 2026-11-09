@@ -232,8 +232,39 @@ final class Lexer {
         if (ch == '-' || ch == '+' || isDigit(ch)) return lexNumber(pp);
         if (isIdentStart(ch)) return lexIdent(pp);
 
-        advance();
-        return new Token(TokenKind.ILLEGAL, String.valueOf((char) (ch & 0xff)), pp);
+        return lexIllegalRune(pp);
+    }
+
+    /**
+     * Consumes the character no token can start with and names it, as
+     * protowire-go's lexIllegalRune does: a whole UTF-8 character, so
+     * {@code 'μ'} is one diagnostic rather than one per byte, and the lead
+     * byte in hex when the bytes are not UTF-8.
+     */
+    private Token lexIllegalRune(Position pp) {
+        int cp = runeAt(pos);
+        if (cp < 0) {
+            return new Token(TokenKind.ILLEGAL, String.format("unexpected byte 0x%02x", advance() & 0xff), pp);
+        }
+        for (int n = Character.toString(cp).getBytes(StandardCharsets.UTF_8).length; n > 0; n--) advance();
+        return new Token(TokenKind.ILLEGAL, "unexpected character " + Token.quoteRune(cp), pp);
+    }
+
+    /** The code point whose UTF-8 encoding starts at {@code i}, or -1 when the bytes there are not one. */
+    private int runeAt(int i) {
+        int b0 = input[i] & 0xff;
+        if (b0 < 0x80) return b0;
+        int n = b0 >= 0xc2 && b0 <= 0xdf ? 2 : b0 >= 0xe0 && b0 <= 0xef ? 3 : b0 >= 0xf0 && b0 <= 0xf4 ? 4 : 0;
+        if (n == 0 || i + n > input.length) return -1;
+        int cp = b0 & (0xff >> (n + 1));
+        for (int k = 1; k < n; k++) {
+            int b = input[i + k] & 0xff;
+            if ((b & 0xc0) != 0x80) return -1;
+            cp = cp << 6 | (b & 0x3f);
+        }
+        int min = n == 2 ? 0x80 : n == 3 ? 0x800 : 0x10000;
+        if (cp < min || cp > 0x10ffff || (cp >= 0xd800 && cp <= 0xdfff)) return -1;
+        return cp;
     }
 
     private Token lexLineComment(Position pp) {
@@ -288,7 +319,7 @@ final class Lexer {
                 // LF (protowire#350). \n is the escape, and a triple-quoted
                 // string is the multi-line form.
                 return new Token(TokenKind.ILLEGAL,
-                        "raw newline in string literal: write \\n, or use a triple-quoted string", pp);
+                        "newline in string literal: write it as \\n, or use a \"\"\"triple-quoted\"\"\" string", pp);
             }
             if (ch != '\\') {
                 out.write(ch);

@@ -9,6 +9,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import bench.v1.OrderPxfCodec;
 import bench.v1.OrderSbeCodec;
 import org.junit.jupiter.api.Test;
+import org.protowire.pxf.PxfException;
 import settings.v1.SettingsPxfCodec;
 
 /**
@@ -50,9 +51,8 @@ class FixtureModesTest {
     @Test
     void missingRequired_isRejected() {
         // `name` carries (pxf.required) = 1314 and is absent.
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-            () -> SettingsPxfCodec.unmarshal(MISSING_REQUIRED_PXF));
-        assertTrue(e.getMessage().contains("name"), e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> SettingsPxfCodec.unmarshal(MISSING_REQUIRED_PXF));
+        assertEquals("1:1: required field \"name\" is absent", e.getMessage());
     }
 
     @Test

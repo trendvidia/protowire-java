@@ -231,7 +231,7 @@ class RejectRulesCorpusTest {
         for (CorpusFixtures.Fixture f : CorpusFixtures.load("strings")) {
             if (f.rejects()) {
                 PxfException e = assertThrows(PxfException.class, () -> Pxf.parse(f.data()), f.name());
-                assertTrue(e.getMessage().contains("raw newline"), e.getMessage());
+                assertTrue(e.getMessage().contains("newline in string literal"), e.getMessage());
             } else {
                 assertNotNull(Pxf.parse(f.data()), f.name());
             }

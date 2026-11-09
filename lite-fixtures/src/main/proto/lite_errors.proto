@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// Shapes the spec corpus does not reach, for LiteErrorsTest (#191): a
+// (pxf.required) field inside a singular, repeated, keyed and map field, so
+// a missing one is named by its path, and a scalar of each kind. The test's
+// expected errors are protowire-go's on this schema.
+syntax = "proto3";
+
+package liteerrors.v1;
+
+option java_package = "liteerrors.v1";
+option java_multiple_files = true;
+
+import "google/protobuf/any.proto";
+import "pxf/annotations.proto";
+
+message Item {
+  string id = 1;
+  string name = 2 [(pxf.required) = true];
+}
+
+enum Color {
+  COLOR_UNSPECIFIED = 0;
+  COLOR_RED = 1;
+}
+
+message Holder {
+  Item one = 1;
+  repeated Item items = 2;
+  repeated Item keyed = 3 [(pxf.key) = "id"];
+  map<string, Item> by_key = 4;
+  map<int32, Item> by_num = 5;
+  string s = 6;
+  int32 i32 = 7;
+  uint64 u64 = 8;
+  double d = 9;
+  bool flag = 10;
+  bytes raw = 11;
+  Color color = 12;
+  repeated int32 nums = 13;
+  map<string, int32> counts = 14;
+  google.protobuf.Any payload = 15;
+}

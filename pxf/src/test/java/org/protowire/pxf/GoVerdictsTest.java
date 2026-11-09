@@ -45,10 +45,7 @@ class GoVerdictsTest {
      * issue for each. A listed document that does fails the test, so the
      * list only shrinks.
      */
-    private static final Map<String, String> KNOWN_GAPS = Map.of(
-            // protobuf-java 3.25 reads no editions features: the EXPLICIT
-            // scalar has no presence, so its null is refused
-            "nulls/editions-explicit.pxf", "#190");
+    private static final Map<String, String> KNOWN_GAPS = Map.of();
 
     record Row(String doc, String type, String decode, String parse) {}
 

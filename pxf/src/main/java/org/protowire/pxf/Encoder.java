@@ -116,8 +116,8 @@ final class Encoder {
             throw new PxfException(Position.UNKNOWN,
                     "pxf: " + fd.getFullName() + " is unset, and the field is (pxf.required)");
         }
-        var oneof = fd.getContainingOneof();
-        if (oneof != null && !oneof.isSynthetic() && msg.getOneofFieldDescriptor(oneof) != null) return Unset.SKIP;
+        var oneof = fd.getRealContainingOneof();
+        if (oneof != null && msg.getOneofFieldDescriptor(oneof) != null) return Unset.SKIP;
         return fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE ? Unset.NULL : Unset.SKIP;
     }
 

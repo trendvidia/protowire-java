@@ -7,7 +7,7 @@ plugins {
 
 dependencies {
     implementation(project(":pxf"))
-    implementation("com.google.protobuf:protobuf-java:3.25.5")
+    implementation("com.google.protobuf:protobuf-java:4.36.2")
 }
 
 application {

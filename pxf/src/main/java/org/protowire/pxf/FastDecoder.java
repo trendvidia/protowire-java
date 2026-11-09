@@ -663,13 +663,21 @@ final class FastDecoder {
      * singular field with explicit presence, which it leaves unset and
      * present-but-null. A scalar without presence has no unset state, a
      * proto2 required field would make the message invalid in binary, and a
-     * list or map is never nullable.
+     * list or map is never nullable. Nor is a field with (pxf.required) or
+     * {@code @required}, whatever its presence: a required field holds a
+     * value, so null is rejected as absence is (protowire#569,
+     * protowire-go#268). {@link Annotations#isRequired} reads the options,
+     * so it is asked last.
      */
     private static boolean nullable(FieldDescriptor fd) {
-        return fd.hasPresence() && !fd.isRepeated() && !fd.isRequired();
+        return fd.hasPresence() && !fd.isRepeated() && !fd.isRequired() && !Annotations.isRequired(fd);
     }
 
     private static PxfException nullNotAllowed(Position pos, FieldDescriptor fd) {
+        if (!fd.isRepeated() && !fd.isRequired() && Annotations.isRequired(fd)) {
+            return new PxfException(pos, "null is not allowed on required field \"" + fd.getName()
+                    + "\": a required field holds a value");
+        }
         String kind = fd.isMapField() ? "map" : fd.isRepeated() ? "repeated" : fd.isRequired() ? "required" : "scalar";
         return new PxfException(pos, "null is not allowed on " + kind + " field \"" + fd.getName() + "\"");
     }

@@ -51,6 +51,15 @@ class LiteErrorsTest {
         GO.put("one = 5", "1:7: expected '{' for message field \"one\", got integer (\"5\")");
         GO.put("nums = [1, \"x\"]", "1:12: expected integer for field \"nums\"");
         GO.put("counts = { a: \"x\" }", "1:15: expected integer for field \"counts\"");
+        // A map block's entry that is not a ':' entry: at the '=' or the
+        // '{', and at the entry for @type (#222).
+        GO.put("counts = { a = 1 }", "1:14: unexpected '=' in map, use ':' for map entries");
+        GO.put("counts = { a   =   1 }", "1:16: unexpected '=' in map, use ':' for map entries");
+        GO.put("counts = { \"a\" = 1 }", "1:16: unexpected '=' in map, use ':' for map entries");
+        GO.put("by_key = { k: { name = \"n\" } x = 1 }", "1:32: unexpected '=' in map, use ':' for map entries");
+        GO.put("counts = { a { } }", "1:14: expected ':' after map key, got {");
+        GO.put("counts = { a   { } }", "1:16: expected ':' after map key, got {");
+        GO.put("counts = { @type = \"x\" }", "1:12: expected map key, got @type (\"@type\")");
     }
 
     private static void encode(String doc) {
@@ -72,11 +81,23 @@ class LiteErrorsTest {
         assertEquals("1:1: required field \"payload.name\" is absent", e.getMessage());
     }
 
+    /**
+     * An Any's URL that the registry does not know is reported at the URL,
+     * where protowire-go reports it (#222). Go words the reason after its
+     * own resolver; this is the lite registry's.
+     */
     @Test
-    void anAssignmentInAMapIsReportedAtTheEntry() {
-        // Go says 1:14, at the '='. The AST keeps no position for it, so the
-        // lite tier reports the entry; the text is Go's.
-        assertEquals("1:12: unexpected '=' in map, use ':' for map entries",
-            assertThrows(PxfException.class, () -> encode("counts = { a = 1 }")).getMessage());
+    void anUnresolvedAnyIsReportedAtItsUrl() {
+        org.protowire.pxf.SimplePxfRegistry types = new org.protowire.pxf.SimplePxfRegistry();
+        types.register(liteerrors.v1.ItemPxfMeta.INSTANCE);
+        Map<String, String> go = Map.of(
+            "payload { @type = \"liteerrors.v1.Nope\" }", "1:19",
+            "payload { @type   =    \"liteerrors.v1.Nope\" }", "1:24",
+            "payload {\n  @type =\n    \"liteerrors.v1.Nope\" }", "3:5");
+        go.forEach((doc, pos) -> {
+            PxfException e = assertThrows(PxfException.class,
+                () -> LiteWireWriter.encode(Parser.parse(doc), HolderPxfMeta.INSTANCE, types));
+            assertEquals(pos + ": cannot resolve Any type \"liteerrors.v1.Nope\": not found", e.getMessage(), doc);
+        });
     }
 }

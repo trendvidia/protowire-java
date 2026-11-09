@@ -185,15 +185,14 @@ public final class LiteWireWriter {
      */
     private static byte[] encodeAny(Ast.TypeEntry t, List<Ast.Entry> body, PxfRegistry registry, DecodeLimits limits) {
         String url = t.url();
-        // The AST keeps the type entry's position, not the URL's, where
-        // protowire-go reports these two.
+        // At the URL, where protowire-go reports these two (#222).
         if (registry == REGISTRY_REQUIRED) {
-            throw new PxfException(t.pos(), "cannot resolve Any type " + Token.quote(url)
+            throw new PxfException(t.urlPos(), "cannot resolve Any type " + Token.quote(url)
                 + ": no PxfRegistry (LiteWireWriter.encode(doc, meta, registry))");
         }
         PxfMeta inner = registry.lookupMessage(url.substring(url.lastIndexOf('/') + 1));
         if (inner == null) {
-            throw new PxfException(t.pos(), "cannot resolve Any type " + Token.quote(url) + ": not found");
+            throw new PxfException(t.urlPos(), "cannot resolve Any type " + Token.quote(url) + ": not found");
         }
         byte[] value = encode(body, inner, registry, limits, false);
         ByteArrayOutputStream buf = new ByteArrayOutputStream();
@@ -1188,13 +1187,13 @@ public final class LiteWireWriter {
         List<Map.Entry<Ast.Value, byte[]>> encoded = new ArrayList<>();
         for (Ast.Entry entry : entries) {
             if (!(entry instanceof Ast.MapEntry me)) {
-                // As protowire-go words it, at the entry: the AST keeps no
-                // position for the '=' or '{' Go reports at.
-                throw new PxfException(entry.pos(), switch (entry) {
-                    case Ast.Assignment a -> "unexpected '=' in map, use ':' for map entries";
-                    case Ast.Block b -> "expected ':' after map key, got {";
-                    default -> "expected map key, got @type (\"@type\")";
-                });
+                // As protowire-go words and places it: at the '=' or the
+                // '{', and at the entry for @type (#222).
+                throw switch (entry) {
+                    case Ast.Assignment a -> new PxfException(a.equalsPos(), "unexpected '=' in map, use ':' for map entries");
+                    case Ast.Block b -> new PxfException(b.bracePos(), "expected ':' after map key, got {");
+                    default -> new PxfException(entry.pos(), "expected map key, got @type (\"@type\")");
+                };
             }
             if (me.value() instanceof Ast.NullVal) {
                 throw new PxfException(me.value().pos(), "null is not allowed as map value in field \""

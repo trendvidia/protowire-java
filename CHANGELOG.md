@@ -20,6 +20,8 @@ format changes.
 
 ### Added
 
+- **`Ast.Assignment.equalsPos`, `Ast.Block.bracePos` and `Ast.TypeEntry.urlPos`: where an entry's `=`, its `{` and its type URL stand** (#222). The parser fills them in. Each record keeps its existing constructors, which set the new position to the entry's own `pos`. Code that takes these records apart with a record pattern must add the new component.
+
 - **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
   - **pb:** `org.protowire.pb.Encoder` and `Decoder` frame each message with a varint length.
   - **SBE:** `Codec.newEncoder` and `Codec.newDecoder` frame each message with a Simple Open Framing Header (SOFH), encoding type 0xEB50.
@@ -88,6 +90,11 @@ format changes.
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
 
 ### Fixed
+
+- **The lite tier reports three errors where protowire-go does** (#222). The texts already matched; the line:column was one token off.
+  - `counts = { a = 1 }` is refused at the `=` (`1:14: unexpected '=' in map, use ':' for map entries`). It used to be refused at the entry, `1:12`.
+  - `counts = { a { } }` is refused at the `{` (`1:14: expected ':' after map key, got {`), not at the entry.
+  - An Any whose `@type` URL cannot be resolved is refused at the URL, as the full tier does: `testdata/any/err-unresolved.pxf` gives `5:11: cannot resolve Any type "any.v1.Nope": not found`, not `5:3`.
 
 - **The SBE codec refuses a value its `(sbe.encoding)` primitive or its field cannot hold, and a schema the 16-bit header cannot describe** (#197, #198; draft `-01` § SBE Annotations; protowire-go#250, #252). Both tiers share the fix: lite's generated templates check themselves when built, through the shared check in `:sbe-runtime`.
   - **Writing:** a value outside its primitive used to keep its low bits. `int32` 300 as `int8` was written as 44, and a `double` past float's range as `+Inf`. It is now refused, as `sbe: field ranges.v1.R.i8: value 300 is outside the range of int8, [-128, 127]`.

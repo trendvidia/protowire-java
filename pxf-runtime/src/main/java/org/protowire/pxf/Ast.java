@@ -171,6 +171,9 @@ public final class Ast {
      *     unabbreviated form of a named entry. {@code key} always holds the
      *     unquoted value; the flag preserves the source spelling for
      *     {@link Format}.
+     * @param equalsPos where the {@code =} stands. A schema layer that
+     *     refuses the assignment because of its {@code =}, such as one
+     *     inside a map block, reports it here, as protowire-go does (#222).
      */
     public record Assignment(
             Position pos,
@@ -178,10 +181,17 @@ public final class Ast {
             Value value,
             List<Comment> leadingComments,
             String trailingComment,
-            boolean keyQuoted) implements Entry {
-        /** As the six-argument form with {@code keyQuoted = false}. */
+            boolean keyQuoted,
+            Position equalsPos) implements Entry {
+        /** As the seven-argument form with {@code equalsPos = pos}. */
+        public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment,
+                boolean keyQuoted) {
+            this(pos, key, value, leadingComments, trailingComment, keyQuoted, pos);
+        }
+
+        /** As the seven-argument form with {@code keyQuoted = false} and {@code equalsPos = pos}. */
         public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment) {
-            this(pos, key, value, leadingComments, trailingComment, false);
+            this(pos, key, value, leadingComments, trailingComment, false, pos);
         }
     }
 
@@ -222,6 +232,9 @@ public final class Ast {
      *     source spelling for {@link Format}. A quoted name is only
      *     meaningful as the key of a keyed repeated field's entry — the
      *     schema layer rejects it anywhere else.
+     * @param bracePos where the opening brace stands. A schema layer
+     *     that refuses the block because of its brace, such as one inside a
+     *     map block, reports it here, as protowire-go does (#222).
      */
     public record Block(
             Position pos,
@@ -229,10 +242,17 @@ public final class Ast {
             List<Entry> entries,
             List<Comment> leadingComments,
             String trailingComment,
-            boolean nameQuoted) implements Entry {
-        /** As the six-argument form with {@code nameQuoted = false}. */
+            boolean nameQuoted,
+            Position bracePos) implements Entry {
+        /** As the seven-argument form with {@code bracePos = pos}. */
+        public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
+                boolean nameQuoted) {
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, pos);
+        }
+
+        /** As the seven-argument form with {@code nameQuoted = false} and {@code bracePos = pos}. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment) {
-            this(pos, name, entries, leadingComments, trailingComment, false);
+            this(pos, name, entries, leadingComments, trailingComment, false, pos);
         }
     }
 
@@ -242,12 +262,21 @@ public final class Ast {
      * parser has no schema and cannot tell which blocks are Any, so it accepts
      * this as the first entry of any block, and the decoder rejects it on a
      * block that is not one.
+     *
+     * @param urlPos where the URL's string literal stands. A decoder that
+     *     cannot resolve the URL reports it here, as protowire-go does (#222).
      */
     public record TypeEntry(
             Position pos,
             String url,
             List<Comment> leadingComments,
-            String trailingComment) implements Entry {}
+            String trailingComment,
+            Position urlPos) implements Entry {
+        /** As the five-argument form with {@code urlPos = pos}. */
+        public TypeEntry(Position pos, String url, List<Comment> leadingComments, String trailingComment) {
+            this(pos, url, leadingComments, trailingComment, pos);
+        }
+    }
 
     /** Right-hand-side value. */
     public sealed interface Value permits StringVal, IntVal, FloatVal, BoolVal, BytesVal, NullVal,

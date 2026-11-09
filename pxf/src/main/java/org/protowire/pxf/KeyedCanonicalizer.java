@@ -57,7 +57,7 @@ public final class KeyedCanonicalizer {
                     out.add(canonKeyedEntries(b, fd, keyFd));
                 } else if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && !fd.isRepeated()) {
                     out.add(new Ast.Block(b.pos(), b.name(), canonEntries(b.entries(), fd.getMessageType()),
-                            b.leadingComments(), b.trailingComment(), false));
+                            b.leadingComments(), b.trailingComment(), false, b.bracePos()));
                 } else {
                     out.add(b);
                 }
@@ -110,7 +110,7 @@ public final class KeyedCanonicalizer {
     }
 
     private static Ast.Assignment withValue(Ast.Assignment a, Ast.Value v) {
-        return new Ast.Assignment(a.pos(), a.key(), v, a.leadingComments(), a.trailingComment(), a.keyQuoted());
+        return new Ast.Assignment(a.pos(), a.key(), v, a.leadingComments(), a.trailingComment(), a.keyQuoted(), a.equalsPos());
     }
 
     /**
@@ -132,9 +132,9 @@ public final class KeyedCanonicalizer {
             if (eb == null) { out.add(e); continue; } // malformed entry; leave untouched
             boolean quoted = eb.nameQuoted() && !Format.identSafeEntryName(eb.name());
             List<Ast.Entry> body = canonEntries(dropKeyAssignments(eb.entries(), keyName, eb.name()), fd.getMessageType());
-            out.add(new Ast.Block(eb.pos(), eb.name(), body, eb.leadingComments(), eb.trailingComment(), quoted));
+            out.add(new Ast.Block(eb.pos(), eb.name(), body, eb.leadingComments(), eb.trailingComment(), quoted, eb.bracePos()));
         }
-        return new Ast.Block(b.pos(), b.name(), List.copyOf(out), b.leadingComments(), b.trailingComment(), false);
+        return new Ast.Block(b.pos(), b.name(), List.copyOf(out), b.leadingComments(), b.trailingComment(), false, b.bracePos());
     }
 
     /**
@@ -157,10 +157,10 @@ public final class KeyedCanonicalizer {
                 List<Ast.Comment> merged = new ArrayList<>(pending);
                 merged.addAll(e.leadingComments());
                 e = switch (e) {
-                    case Ast.Assignment a -> new Ast.Assignment(a.pos(), a.key(), a.value(), List.copyOf(merged), a.trailingComment(), a.keyQuoted());
-                    case Ast.Block bl -> new Ast.Block(bl.pos(), bl.name(), bl.entries(), List.copyOf(merged), bl.trailingComment(), bl.nameQuoted());
+                    case Ast.Assignment a -> new Ast.Assignment(a.pos(), a.key(), a.value(), List.copyOf(merged), a.trailingComment(), a.keyQuoted(), a.equalsPos());
+                    case Ast.Block bl -> new Ast.Block(bl.pos(), bl.name(), bl.entries(), List.copyOf(merged), bl.trailingComment(), bl.nameQuoted(), bl.bracePos());
                     case Ast.MapEntry me -> new Ast.MapEntry(me.pos(), me.key(), me.value(), List.copyOf(merged), me.trailingComment(), me.keyQuoted());
-                    case Ast.TypeEntry te -> new Ast.TypeEntry(te.pos(), te.url(), List.copyOf(merged), te.trailingComment());
+                    case Ast.TypeEntry te -> new Ast.TypeEntry(te.pos(), te.url(), List.copyOf(merged), te.trailingComment(), te.urlPos());
                 };
                 pending.clear();
             }

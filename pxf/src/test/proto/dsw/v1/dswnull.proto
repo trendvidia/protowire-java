@@ -1,0 +1,23 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// protowire-go's TestDatasetWrite_NullMask schema
+// (encoding/pxf/dataset_write_test.go, v1.17.0), byte for byte but for
+// the java options, so the dataset writer's tests run on the schema Go's do
+// (#204).
+syntax = "proto3";
+package dswnull.v1;
+
+option java_package = "org.protowire.pxf.testproto.dswnull";
+option java_multiple_files = true;
+import "google/protobuf/field_mask.proto";
+import "google/protobuf/wrappers.proto";
+import "pxf/annotations.proto";
+message N {
+  google.protobuf.StringValue w = 1;
+  google.protobuf.Int32Value dw = 2 [(pxf.default) = "9"];
+  google.protobuf.Int32Value rw = 3 [(pxf.required) = true];
+  int32 n = 4;
+  google.protobuf.FieldMask _null = 5;
+  optional int32 o = 6 [(pxf.default) = "7"];
+}

@@ -8,6 +8,7 @@ import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 /**
  * Top-level entry points for PXF encoding/decoding.
@@ -66,6 +67,63 @@ public final class Pxf {
     }
 
     // -- post-decode rules, for a caller using skipPostDecode --------------
+
+    /**
+     * Appends the header {@code @dataset <type> (<columns>)} for rows of type
+     * {@code desc}, and a newline, to {@code dst}, as protowire-go's
+     * {@code AppendDatasetHeader} (#204).
+     *
+     * <p>Any field of {@code desc} can be a column, a cell holding a list or
+     * a block too (protowire#341), and so can a path into a sub-message such
+     * as {@code inner.x} (protowire#342), through singular message fields
+     * only.
+     *
+     * @throws PxfException with {@code dst} unchanged, for an empty column
+     *     list, a column the reader would refuse (a name that is not a field,
+     *     an empty segment, a column twice, a field beside a path inside it,
+     *     a path through a repeated or map field or into a type written as a
+     *     literal), a {@code (pxf.required)} field of {@code desc} not among
+     *     the columns, or a schema {@link SchemaValidator} refuses
+     */
+    public static StringBuilder appendDatasetHeader(StringBuilder dst, Descriptor desc, List<String> columns) {
+        return DatasetWriter.appendHeader(dst, desc, columns);
+    }
+
+    /**
+     * Appends {@code msg} as one row of a {@code @dataset} table with these
+     * columns, and a newline, to {@code dst}, as protowire-go's
+     * {@code AppendDatasetRow} (#204). Use the columns given to
+     * {@link #appendDatasetHeader}. {@link DatasetReader} reads the row back
+     * to {@code msg}, but for fields outside the columns.
+     *
+     * <p>A set field is written as {@link #marshal} writes its value. An
+     * unset field is an empty cell, which reads back as absent, except where
+     * reading an empty cell would not give back the unset field:
+     * <ul>
+     *   <li>A field with {@code (pxf.default)} would take the default. A
+     *       scalar without presence is written as its zero value, and a
+     *       message-typed field (a wrapper, a Timestamp) {@code null}. A
+     *       scalar with presence ({@code optional}, or a oneof member) stays
+     *       empty and reads back as its default. A oneof member stays empty
+     *       when another member of its oneof is set and among the columns.
+     *   <li>A {@code (pxf.required)} field would be rejected. A scalar
+     *       without presence is written as its zero value, an empty repeated
+     *       field {@code []} and an empty map {@code {}}, which the reader
+     *       counts as supplied; an unset one with presence is an error.
+     * </ul>
+     * A message-typed field named in the message's {@code _null} mask is
+     * written {@code null}. A list, map or block is written as marshal writes
+     * it, on one line. A dotted column is written through its parents: an
+     * unset parent makes the cell empty. A row the reader would reject is
+     * refused: a required sub-message whose cells are all empty, or one that
+     * reads back present while one of its required fields is not a column.
+     *
+     * @throws PxfException with {@code dst} unchanged, for the column errors
+     *     of {@link #appendDatasetHeader}, and for a value marshal refuses
+     */
+    public static StringBuilder appendDatasetRow(StringBuilder dst, Message msg, List<String> columns) {
+        return DatasetWriter.appendRow(dst, msg, columns);
+    }
 
     /**
      * Whether {@code fd} is required, by {@code [(pxf.required) = true]} or by

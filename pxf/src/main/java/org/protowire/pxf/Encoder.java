@@ -27,12 +27,26 @@ import java.util.TreeMap;
  */
 final class Encoder {
     private final MarshalOptions opts;
-    private final StringBuilder buf = new StringBuilder();
+    final StringBuilder buf = new StringBuilder();
     private FieldDescriptor nullMaskFd;
     private Set<String> nullSet;
     private String pathPrefix = "";
 
     Encoder(MarshalOptions opts) { this.opts = opts; }
+
+    /**
+     * An encoder for a {@code @dataset} row and its cells
+     * ({@link DatasetWriter}): the row's {@code _null} set, and no mask
+     * field of its own to skip, as protowire-go's cell encoder has.
+     */
+    Encoder(MarshalOptions opts, Set<String> nullSet) {
+        this.opts = opts;
+        this.nullSet = nullSet;
+    }
+
+    Set<String> nullSet() { return nullSet; }
+
+    boolean nullSetContains(String path) { return nullSet.contains(path); }
 
     byte[] encode(Message msg) {
         Descriptor desc = msg.getDescriptorForType();
@@ -179,7 +193,7 @@ final class Encoder {
         }
     }
 
-    private void encodeMessageField(FieldDescriptor fd, Message sub, int level) {
+    void encodeMessageField(FieldDescriptor fd, Message sub, int level) {
         Descriptor md = fd.getMessageType();
 
         if (hasLiteral(sub)) {
@@ -205,7 +219,7 @@ final class Encoder {
     }
 
     /** Whether {@code m} is written as a literal, wherever it is bound, rather than as a block. */
-    private static boolean hasLiteral(Message m) {
+    static boolean hasLiteral(Message m) {
         Descriptor md = m.getDescriptorForType();
         return WellKnown.isTimestamp(md) || durationLiteral(m) || WellKnown.isWrapper(md)
                 || WellKnown.isBigInt(md) || WellKnown.isDecimal(md) || WellKnown.isBigFloat(md)
@@ -222,7 +236,7 @@ final class Encoder {
     }
 
     /** Writes the literal of a message {@link #hasLiteral} accepts. */
-    private void writeLiteral(Message m) {
+    void writeLiteral(Message m) {
         Descriptor md = m.getDescriptorForType();
         if (WellKnown.isTimestamp(md))      buf.append(WellKnown.formatRfc3339(WellKnown.readTimestamp(m)));
         else if (WellKnown.isDuration(md))  buf.append(WellKnown.formatGoDuration(WellKnown.readDuration(m)));
@@ -245,7 +259,7 @@ final class Encoder {
         writeScalar(inner, m.getField(inner));
     }
 
-    private void encodeList(Message msg, FieldDescriptor fd, int level) {
+    void encodeList(Message msg, FieldDescriptor fd, int level) {
         int n = msg.getRepeatedFieldCount(fd);
         // Keyed repeated field (draft -01 §3.13): emit the keyed block form
         // whenever every element's key is present, non-empty, and distinct;
@@ -322,7 +336,7 @@ final class Encoder {
     }
 
     @SuppressWarnings("unchecked")
-    private void encodeMap(Message msg, FieldDescriptor fd, int level) {
+    void encodeMap(Message msg, FieldDescriptor fd, int level) {
         int n = msg.getRepeatedFieldCount(fd);
         checkDepth(level + 1);
         writeIndent(level);
@@ -387,7 +401,7 @@ final class Encoder {
         };
     }
 
-    private void writeScalar(FieldDescriptor fd, Object v) {
+    void writeScalar(FieldDescriptor fd, Object v) {
         switch (fd.getJavaType()) {
             case STRING -> buf.append('"').append(Format.escape((String) v)).append('"');
             case BOOLEAN -> buf.append(((Boolean) v) ? "true" : "false");

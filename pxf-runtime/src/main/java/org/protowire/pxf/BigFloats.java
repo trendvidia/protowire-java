@@ -150,22 +150,66 @@ public final class BigFloats {
             throw new IllegalArgumentException("invalid big float: " + clip(number));
         }
         if (d.signum() == 0) return new Value(BigInteger.ZERO, 0, suffixed ? prec : 0, negative);
+        long bits = Integer.toUnsignedLong(prec);
 
-        // value = d × 10^exp10, so 10^(top-1) <= value < 10^top. A bound of
-        // log10(2) × maxExponent + 2 decades cannot reject a value within
-        // MaxBigFloatExponent, and it keeps 10^exp10 from being computed for
-        // the exponent of a thirteen-byte literal. The exact check follows
-        // the rounding, because a literal can lie just past the bound and
-        // still read back (protowire#410).
+        // value = d × 10^exp10, so 10^(top-1) <= value < 10^top, and its
+        // binary exponent E (2^(E-1) <= value < 2^E) satisfies lowE < E and
+        // E + 1 < highE: one bit of slack each way for the double products,
+        // and highE one more for the carry rounding to prec can add. The
+        // checks before the exact one below are protowire-go's, in its order;
+        // they decide only where the bound settles the answer, so a value
+        // within a few bits of a boundary falls through to the next check.
         long top = exp10 + d.toString().length();
+        double lowE = Math.floor((top - 1) * LOG2_10) - 1;
+        double highE = Math.floor(top * LOG2_10) + 3;
+        if (lowE > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("big float literal " + clip(number) + " is above big.Float's range");
+        }
+        if (highE < Integer.MIN_VALUE) {
+            throw new IllegalArgumentException("big float literal " + clip(number) + " is below big.Float's range");
+        }
+        if (bits > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("big float literal " + clip(number) + ": precision p" + bits
+                    + " exceeds the widest mantissa big.Float can hold, " + Integer.MAX_VALUE + " bits");
+        }
+        // The wire carries exp - prec as an int32 (pxf/bignum.proto).
+        if (highE - bits < Integer.MIN_VALUE) throw belowWireRange(number);
+
+        // A bound of log10(2) × maxExponent + 2 decades cannot reject a value
+        // within MaxBigFloatExponent, and it keeps 10^exp10 from being
+        // computed for the exponent of a thirteen-byte literal. The exact
+        // check follows the rounding, because a literal can lie just past the
+        // bound and still read back (protowire#410).
         long decades = (long) (maxExponent * 0.30103) + 2;
         if (top - 1 > decades || top < -decades) {
             throw new IllegalArgumentException("big float literal " + clip(number) + " is past MaxBigFloatExponent=" + maxExponent);
         }
+        // Reachable only with MaxBigFloatExponent raised near 2^31.
+        long powBits = (long) Math.ceil(Math.abs(exp10) * LOG2_10) + d.bitLength() + 1;
+        if (powBits > Integer.MAX_VALUE) throw tooWide("big float literal " + clip(number), powBits);
 
         BigInteger num = exp10 >= 0 ? d.multiply(BigInteger.TEN.pow((int) exp10)) : d;
         BigInteger den = exp10 >= 0 ? BigInteger.ONE : BigInteger.TEN.pow((int) -exp10);
-        return roundToPrec(num, den, prec, negative, number, maxExponent);
+        return roundToPrec(num, den, (int) bits, negative, number, maxExponent);
+    }
+
+    /** log2(10), for the binary exponent's bounds from a decimal one. */
+    private static final double LOG2_10 = 3.321928094887362;
+
+    private static IllegalArgumentException belowWireRange(String number) {
+        return new IllegalArgumentException("big float literal " + clip(number) + " is below the wire's exponent range");
+    }
+
+    /**
+     * A value whose computation needs an integer wider than a BigInteger's
+     * Integer.MAX_VALUE bits. protowire-go holds a mantissa up to 2^31-1 bits
+     * and computes some of these; Java refuses them rather than overflow.
+     * Reachable only with MaxNumericLiteralDigits raised past 646 million or
+     * MaxBigFloatExponent raised near 2^31.
+     */
+    private static IllegalArgumentException tooWide(String what, long bits) {
+        return new IllegalArgumentException(what + " needs a " + bits + "-bit integer, wider than a Java BigInteger holds ("
+                + Integer.MAX_VALUE + " bits)");
     }
 
     /** A decimal exponent's value, saturated well past any bound: the literal's digits are the attacker's. */
@@ -178,27 +222,39 @@ public final class BigFloats {
 
     /** num/den at exactly {@code prec} significant bits, round half even. */
     private static Value roundToPrec(BigInteger num, BigInteger den, int prec, boolean negative, String literal, int maxExponent) {
-        int e = num.bitLength() - den.bitLength() - prec;
-        BigInteger[] qr;
-        BigInteger d;
-        while (true) { // 2^(prec-1) <= num/den / 2^e < 2^prec, in at most two steps
-            d = e >= 0 ? den.shiftLeft(e) : den;
-            qr = (e >= 0 ? num : num.shiftLeft(-e)).divideAndRemainder(d);
-            int bits = qr[0].bitLength();
-            if (bits == prec) break;
-            e += bits > prec ? 1 : -1;
+        // The exact binary exponent E, 2^(E-1) <= num/den < 2^E. num and den
+        // are bounded by MaxBigFloatExponent here, so the comparison is cheap.
+        long e0 = (long) num.bitLength() - den.bitLength();
+        boolean atLeast = e0 >= 0
+                ? num.compareTo(den.shiftLeft((int) e0)) >= 0
+                : num.shiftLeft((int) -e0).compareTo(den) >= 0;
+        long binaryE = atLeast ? e0 + 1 : e0;
+        // Rounding can raise E by one, and only by carrying the value to the
+        // next power of two, which needs it within 2^(E-prec-1) of that power.
+        // At exp - prec = -2^31 - 1 that takes a literal of about 646 million
+        // digits, so the check on E alone decides for every literal a
+        // BigInteger can compute.
+        if (binaryE - prec < Integer.MIN_VALUE) throw belowWireRange(literal);
+        long e = binaryE - prec; // so that 2^(prec-1) <= num/den / 2^e < 2^prec
+        // The widest integer below: num shifted to prec bits, and one more bit
+        // for a carry. den shifted up is narrower, bounded by maxExponent.
+        long widest = e >= 0 ? (long) den.bitLength() + e + 1 : (long) num.bitLength() - e + 1;
+        if (widest > Integer.MAX_VALUE) {
+            throw tooWide("big float literal " + clip(literal) + ": precision p" + prec, widest);
         }
+        BigInteger d = e >= 0 ? den.shiftLeft((int) e) : den;
+        BigInteger[] qr = (e >= 0 ? num : num.shiftLeft((int) -e)).divideAndRemainder(d);
         BigInteger m = roundHalfEven(qr[0], qr[1], d);
         if (m.bitLength() > prec) { // rounded up past the significand, to a power of two
             m = m.shiftRight(1);
             e++;
         }
-        long binary = (long) e + prec;
+        long binary = e + prec;
         if (binary > maxExponent || binary < -maxExponent) {
             throw new IllegalArgumentException("big float literal " + clip(literal) + " has binary exponent " + binary
                     + ", and MaxBigFloatExponent=" + maxExponent + " bounds its magnitude");
         }
-        return new Value(m, e, prec, negative);
+        return new Value(m, (int) e, prec, negative);
     }
 
     private static BigInteger roundHalfEven(BigInteger q, BigInteger rem, BigInteger den) {
@@ -234,36 +290,41 @@ public final class BigFloats {
         // A precision of zero is zero whatever the other fields say.
         if (prec == 0) return sign + "0";
         long p = Integer.toUnsignedLong(prec);
-        if (mantissa.signum() == 0) return sign + "0p" + p;
-
-        long binary = (long) exponent + mantissa.bitLength();
-        if (binary > maxExponent || binary < -maxExponent) {
-            throw new IllegalArgumentException("pxf.BigFloat binary exponent " + binary + " exceeds MaxBigFloatExponent=" + maxExponent);
+        // protowire-go's order: the binary exponent and the bound after
+        // rounding, which a zero has neither of, then the digits, which a
+        // zero's literal needs as any other's does: 0p13604 is refused by
+        // every reader (#201).
+        BigInteger m = mantissa;
+        long e = exponent;
+        if (m.signum() != 0) {
+            long binary = e + m.bitLength();
+            if (binary > maxExponent || binary < -maxExponent) {
+                throw new IllegalArgumentException("pxf.BigFloat binary exponent " + binary + " exceeds MaxBigFloatExponent=" + maxExponent);
+            }
+            // A mantissa wider than prec is the value rounded to prec (#410).
+            long excess = m.bitLength() - p;
+            if (excess > 0) {
+                m = roundOff(m, (int) excess);
+                e += excess;
+            }
+            // The bound applies to the value after rounding (protowire#410), and
+            // rounding can carry the mantissa to the next power of two: 2^54-1
+            // at prec 3 is 2^54. Such a value reads off the wire at the bound,
+            // and its literal is past it, which every reader refuses, so the
+            // producer fails (draft -01 § Mandatory Limits, protowire-go#261).
+            long rounded = e + m.bitLength();
+            if (roundedBound && (rounded > maxExponent || rounded < -maxExponent)) {
+                throw new IllegalArgumentException("pxf.BigFloat binary exponent " + rounded + " after rounding to prec " + p
+                        + " exceeds MaxBigFloatExponent=" + maxExponent);
+            }
         }
         long n = digitsFor(p);
         if (n > maxDigits) {
             throw new IllegalArgumentException("pxf.BigFloat prec " + p + " bits renders to " + n
                     + " digits; MaxNumericLiteralDigits=" + maxDigits);
         }
+        if (m.signum() == 0) return sign + "0p" + p;
 
-        // A mantissa wider than prec is the value rounded to prec (#410).
-        BigInteger m = mantissa;
-        long e = exponent;
-        int excess = m.bitLength() - (int) p;
-        if (excess > 0) {
-            m = roundOff(m, excess);
-            e += excess;
-        }
-        // The bound applies to the value after rounding (protowire#410), and
-        // rounding can carry the mantissa to the next power of two: 2^54-1
-        // at prec 3 is 2^54. Such a value reads off the wire at the bound,
-        // and its literal is past it, which every reader refuses, so the
-        // producer fails (draft -01 § Mandatory Limits, protowire-go#261).
-        long rounded = e + m.bitLength();
-        if (roundedBound && (rounded > maxExponent || rounded < -maxExponent)) {
-            throw new IllegalArgumentException("pxf.BigFloat binary exponent " + rounded + " after rounding to prec " + p
-                    + " exceeds MaxBigFloatExponent=" + maxExponent);
-        }
         BigInteger num = e >= 0 ? m.shiftLeft((int) e) : m;
         BigInteger den = e >= 0 ? BigInteger.ONE : BigInteger.ONE.shiftLeft((int) -e);
 
@@ -272,9 +333,17 @@ public final class BigFloats {
         while (compareToPow10(num, den, k + 1) >= 0) k++;
         while (compareToPow10(num, den, k) < 0) k--;
 
-        int shift = (int) n - 1 - k; // value × 10^shift has n integer digits
-        BigInteger sn = shift >= 0 ? num.multiply(BigInteger.TEN.pow(shift)) : num;
-        BigInteger sd = shift >= 0 ? den : den.multiply(BigInteger.TEN.pow(-shift));
+        long shift = n - 1 - k; // value × 10^shift has n integer digits
+        // Reachable only with MaxNumericLiteralDigits raised past 646 million:
+        // protowire-go renders these, and their digits need a wider integer
+        // than a Java BigInteger holds, so Java refuses them rather than overflow.
+        long widest = (long) Math.ceil(Math.abs(shift) * LOG2_10) + Math.max(num.bitLength(), den.bitLength()) + 1;
+        if (widest > Integer.MAX_VALUE) {
+            throw new IllegalArgumentException("pxf.BigFloat prec " + p + " bits renders to " + n
+                    + " digits, and computing them needs a wider integer than a Java BigInteger holds (" + Integer.MAX_VALUE + " bits)");
+        }
+        BigInteger sn = shift >= 0 ? num.multiply(BigInteger.TEN.pow((int) shift)) : num;
+        BigInteger sd = shift >= 0 ? den : den.multiply(BigInteger.TEN.pow((int) -shift));
         BigInteger[] qr = sn.divideAndRemainder(sd);
         BigInteger q = roundHalfEven(qr[0], qr[1], sd);
         String digits = q.toString();
@@ -342,16 +411,20 @@ public final class BigFloats {
 
         BigInteger m = mantissa;
         long e = exponent;
-        int excess = m.bitLength() - (int) p;
+        long excess = m.bitLength() - p;
         if (excess > 0) {
-            m = roundOff(m, excess);
+            m = roundOff(m, (int) excess);
             e += excess;
             if (m.bitLength() > p) { // rounded up past the significand, to a power of two
                 m = m.shiftRight(1);
                 e++;
             }
         } else if (excess < 0) {
-            m = m.shiftLeft(-excess);
+            // The mantissa widened to prec bits. Reachable past
+            // Integer.MAX_VALUE only with MaxNumericLiteralDigits raised past
+            // 646 million: protowire-go holds such a value, and Java refuses it.
+            if (p > Integer.MAX_VALUE) throw tooWide("pxf.BigFloat prec " + p, p);
+            m = m.shiftLeft((int) -excess);
             e += excess;
         }
         long binary = e + p;

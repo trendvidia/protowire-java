@@ -798,7 +798,8 @@ final class FastDecoder {
             return;
         }
         if (current.kind() != TokenKind.LBRACE) {
-            throw new PxfException(current.pos(), "expected " + bodyForms(md) + " for message field \"" + fd.getName() + "\"");
+            throw new PxfException(current.pos(), "expected " + bodyForms(md) + " for message field \"" + fd.getName()
+                    + "\", got " + current.errMsg());
         }
         advance();
         Message.Builder sub = b.newBuilderForField(fd);
@@ -823,8 +824,14 @@ final class FastDecoder {
         sub.setField(inner, consumeScalar(inner));
     }
 
+    /** The values a message field takes, as protowire-go's {@code msgValueForms} names them. */
     private static String bodyForms(Descriptor md) {
-        return WellKnown.isSecret(md) ? "a string literal or '{'" : "'{'";
+        if (WellKnown.isTimestamp(md)) return "a timestamp literal or '{'";
+        if (WellKnown.isDuration(md)) return "a duration literal or '{'";
+        if (WellKnown.isBigInt(md)) return "an integer literal or '{'";
+        if (WellKnown.isDecimal(md) || WellKnown.isBigFloat(md)) return "a numeric literal or '{'";
+        if (WellKnown.isSecret(md)) return "a string literal or '{'";
+        return "'{'";
     }
 
     /**

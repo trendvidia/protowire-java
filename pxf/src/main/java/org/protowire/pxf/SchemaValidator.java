@@ -128,7 +128,16 @@ public final class SchemaValidator {
          * numbers would otherwise silently see none of its annotations. The
          * violation's name is the retired number.
          */
-        RETIRED_NUMBER("retired option number");
+        RETIRED_NUMBER("retired option number"),
+        /**
+         * A message that has the full name of a well-known type a codec
+         * handles by name, without the fields that handling reads (draft -01
+         * §wkt-shapes, protowire-go#218): {@code pxf.Secret} with no
+         * {@code value}, or a {@code google.protobuf.StringValue} whose
+         * {@code value} is an {@code int32}. The detail says which. Where
+         * validation does not run, such a message is an ordinary one.
+         */
+        WELL_KNOWN_SHAPE("well-known type shape");
 
         private final String label;
 
@@ -174,6 +183,8 @@ public final class SchemaValidator {
                 case REQUIRED_OPTION -> file + ": field \"" + element + "\": invalid (pxf.required): "
                         + detail + " (draft -01 §annotation-extensions)";
                 case RETIRED_NUMBER -> file + ": \"" + element + "\": " + detail + " (STABILITY.md promise 3)";
+                case WELL_KNOWN_SHAPE -> file + ": message \"" + element + "\" redefines a well-known type: " + detail
+                        + " (draft -01 §wkt-shapes)";
                 default -> file + ": " + kind + " \"" + element + "\" uses PXF-reserved name \""
                         + name + "\" (draft §3.13)";
             };
@@ -279,6 +290,8 @@ public final class SchemaValidator {
     }
 
     private static void walkMessage(String file, Descriptor m, List<Violation> out) {
+        String shape = WellKnown.shapeProblem(m);
+        if (!shape.isEmpty()) out.add(new Violation(file, m.getFullName(), "", Kind.WELL_KNOWN_SHAPE, shape));
         // Members of this message's oneofs that carry (pxf.default),
         // collected during the field pass and capped once the fields are
         // known.

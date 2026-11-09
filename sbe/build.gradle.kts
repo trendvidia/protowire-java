@@ -11,6 +11,8 @@ dependencies {
     api(project(":sbe-runtime"))
     api("com.google.protobuf:protobuf-java:3.25.5")
     api(project(":proto-annotations"))
+    // The Validator seam the decoders share (#205).
+    api(project(":check"))
 }
 
 protobuf {

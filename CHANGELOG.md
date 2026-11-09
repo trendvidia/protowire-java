@@ -20,6 +20,12 @@ format changes.
 
 ### Added
 
+- **A `Validator` hook on decode, as protowire-go's `check` package** (#205).
+  - **New module:** `check` (artifact `protowire-check`, package `org.protowire.check`) holds the seam: `Validator`, `Violation`, `Report`, `CheckException` (Go's `check.Error`, with the same message) and `Check.validate`. It has no dependencies, so validation engines plug in without the codecs depending on them.
+  - **Where it runs:** pxf's `UnmarshalOptions.withValidator`, pb's `UnmarshalOptions.withValidator` and sbe's `Codec.withValidator` run it after a successful decode, as Go's decoders do. Dataset rows run it too.
+  - **Outcome:** a report with violations fails the decode with a `CheckException` carrying the report, and an engine's exception propagates. On a clean pass, `Result.report()` returns the report.
+  - **Record change:** the two option records gain a `validator` component, with the shorter constructors kept.
+
 - **`UnmarshalOptions.withOnSecretField`: a hook that receives each `pxf.Secret` value in place of the message, as protowire-go's `OnSecretField`** (#206). A caller can route secrets to protected memory and keep them out of the decoded message.
   - **Where it's called:** in every form a Secret takes: the literal, a list element, a map value, and the block, which goes through Go's Secret block decoder with Go's errors. A dataset row's cells call it too.
   - **What it's given:** each value's dotted path in Go's spelling, as `servers[0].password` or `tenant_keys["acme"]`.

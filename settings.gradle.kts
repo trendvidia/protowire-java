@@ -11,6 +11,7 @@ rootProject.name = "protowire-java"
 
 include(
     ":proto-annotations",
+    ":check",
     ":pb",
     ":pxf-runtime",
     ":pxf",

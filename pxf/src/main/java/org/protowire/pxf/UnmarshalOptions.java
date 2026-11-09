@@ -5,6 +5,9 @@ package org.protowire.pxf;
 import com.google.protobuf.Descriptors.Descriptor;
 import com.google.protobuf.DynamicMessage;
 import com.google.protobuf.Message;
+import org.protowire.check.Check;
+import org.protowire.check.CheckException;
+import org.protowire.check.Validator;
 
 /**
  * Configurable PXF decoding options.
@@ -30,9 +33,22 @@ import com.google.protobuf.Message;
  *                       Mirrors protowire-go's {@code SkipPostDecode}
  * @param onSecretField  called with each {@code pxf.Secret} value in place of
  *                       storing it; nullable. See {@link OnSecretField}
+ * @param validator      run on the decoded message after a successful decode,
+ *                       as protowire-go's {@code Validator} (#205): a report
+ *                       with violations fails the decode with a
+ *                       {@link CheckException}, which carries it, and a clean
+ *                       one is {@link Result#report()}; nullable. On a
+ *                       violation the decoded message stays in the caller's
+ *                       builder, as Go returns it beside the error
  */
 public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown, boolean skipValidate, DecodeLimits limits,
-                               boolean skipPostDecode, OnSecretField onSecretField) {
+                               boolean skipPostDecode, OnSecretField onSecretField, Validator validator) {
+
+    /** As the seven-argument form, with no {@link Validator}. */
+    public UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown, boolean skipValidate, DecodeLimits limits,
+                            boolean skipPostDecode, OnSecretField onSecretField) {
+        this(typeResolver, discardUnknown, skipValidate, limits, skipPostDecode, onSecretField, null);
+    }
 
     /**
      * Receives each {@code pxf.Secret} value the decoder reads, in place of
@@ -92,12 +108,13 @@ public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown
 
     public static UnmarshalOptions defaults() { return new UnmarshalOptions(null, false, false); }
 
-    public UnmarshalOptions withTypeResolver(TypeResolver r) { return new UnmarshalOptions(r, discardUnknown, skipValidate, limits, skipPostDecode, onSecretField); }
-    public UnmarshalOptions withDiscardUnknown(boolean v)    { return new UnmarshalOptions(typeResolver, v, skipValidate, limits, skipPostDecode, onSecretField); }
-    public UnmarshalOptions withSkipValidate(boolean v)      { return new UnmarshalOptions(typeResolver, discardUnknown, v, limits, skipPostDecode, onSecretField); }
-    public UnmarshalOptions withLimits(DecodeLimits l)       { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, l, skipPostDecode, onSecretField); }
-    public UnmarshalOptions withSkipPostDecode(boolean v)    { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, limits, v, onSecretField); }
-    public UnmarshalOptions withOnSecretField(OnSecretField h) { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, limits, skipPostDecode, h); }
+    public UnmarshalOptions withTypeResolver(TypeResolver r) { return new UnmarshalOptions(r, discardUnknown, skipValidate, limits, skipPostDecode, onSecretField, validator); }
+    public UnmarshalOptions withDiscardUnknown(boolean v)    { return new UnmarshalOptions(typeResolver, v, skipValidate, limits, skipPostDecode, onSecretField, validator); }
+    public UnmarshalOptions withSkipValidate(boolean v)      { return new UnmarshalOptions(typeResolver, discardUnknown, v, limits, skipPostDecode, onSecretField, validator); }
+    public UnmarshalOptions withLimits(DecodeLimits l)       { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, l, skipPostDecode, onSecretField, validator); }
+    public UnmarshalOptions withSkipPostDecode(boolean v)    { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, limits, v, onSecretField, validator); }
+    public UnmarshalOptions withOnSecretField(OnSecretField h) { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, limits, skipPostDecode, h, validator); }
+    public UnmarshalOptions withValidator(Validator v)       { return new UnmarshalOptions(typeResolver, discardUnknown, skipValidate, limits, skipPostDecode, onSecretField, v); }
 
     /** See {@link #unmarshal(byte[], Message.Builder)}. */
     public DynamicMessage unmarshal(byte[] data, Descriptor desc) {
@@ -114,6 +131,7 @@ public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown
      */
     public void unmarshal(byte[] data, Message.Builder b) {
         new FastDecoder(data, this, /* trackPresence= */ false).decode(b);
+        Check.validate(validator, b.buildPartial());
     }
 
     /**
@@ -124,6 +142,8 @@ public record UnmarshalOptions(TypeResolver typeResolver, boolean discardUnknown
     public Result unmarshalFull(byte[] data, Message.Builder b) {
         FastDecoder d = new FastDecoder(data, this, /* trackPresence= */ true);
         d.decode(b);
-        return d.result();
+        Result r = d.result();
+        r.setReport(Check.validate(validator, b.buildPartial()));
+        return r;
     }
 }

@@ -46,3 +46,8 @@ message Required {
   int32 n = 1 [(pxf.required) = true];
   string s = 2;
 }
+
+message RequiredOptional {
+  optional int32 n = 1 [(pxf.required) = true];
+  string s = 2;
+}

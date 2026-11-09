@@ -682,7 +682,7 @@ final class FastDecoder {
      * protowire-go#268). {@link Annotations#isRequired} reads the options,
      * so it is asked last.
      */
-    private static boolean nullable(FieldDescriptor fd) {
+    static boolean nullable(FieldDescriptor fd) {
         return fd.hasPresence() && !fd.isRepeated() && !fd.isRequired() && !Annotations.isRequired(fd);
     }
 

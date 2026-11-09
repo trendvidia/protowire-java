@@ -24,7 +24,6 @@ import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -242,12 +241,14 @@ public final class LiteWireReader {
             writeUnsetAnnotated(meta, singles, repeatedAcc, mapAcc, registry, depth, limits);
         }
 
-        // Emit in field-number order. Stable + matches protobuf's tag ordering.
+        // Emit in declaration order, as protowire-go and the full tier write
+        // a message (#224); a companion without FIELD_ORDER gives number order.
         List<Integer> nums = new ArrayList<>();
-        nums.addAll(singles.keySet());
-        nums.addAll(repeatedAcc.keySet());
-        nums.addAll(mapAcc.keySet());
-        nums.sort(Comparator.naturalOrder());
+        for (int num : meta.fieldOrder()) {
+            if (singles.containsKey(num) || repeatedAcc.containsKey(num) || mapAcc.containsKey(num)) {
+                nums.add(num);
+            }
+        }
 
         List<Ast.Entry> out = new ArrayList<>(nums.size());
         for (int num : nums) {

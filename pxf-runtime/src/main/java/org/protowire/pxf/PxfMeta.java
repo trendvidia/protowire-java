@@ -3,6 +3,7 @@
 package org.protowire.pxf;
 
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -181,6 +182,21 @@ public interface PxfMeta {
      */
     default Set<Integer> implicitPresenceFields() {
         return Set.of();
+    }
+
+    /**
+     * Every field number, in the order the message declares the fields: the
+     * order protowire-go writes them in, which is not the number order when a
+     * oneof numbered above later fields is declared before them (#224).
+     * {@link #fieldNumbers()} cannot say it, since its map keeps no order.
+     * The default is the numbers in ascending order, so a companion that
+     * predates the table, or a hand-built {@code PxfMeta}, writes its fields
+     * in number order, as before.
+     */
+    default List<Integer> fieldOrder() {
+        List<Integer> nums = new java.util.ArrayList<>(fieldNumbers().values());
+        java.util.Collections.sort(nums);
+        return nums;
     }
 
     // --- Well-known type kind constants ----------------------------------------

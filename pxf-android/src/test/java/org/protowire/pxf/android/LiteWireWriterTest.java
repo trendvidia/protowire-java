@@ -224,9 +224,8 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("nope = 1");
         PxfMeta m = meta(Map.of(), Map.of(), Set.of(), Set.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals("unknown field name: nope", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: unknown field \"nope\" in test.Sample", e.getMessage());
     }
 
     @Test
@@ -373,9 +372,8 @@ final class LiteWireWriterTest {
 
         PxfRegistry registry = new SimplePxfRegistry().register(statusEnum);
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, sampleMeta, registry));
-        assertEquals("unknown enum value 'STATUS_DELETED' for test.Status", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, sampleMeta, registry));
+        assertEquals("1:10: unknown enum value \"STATUS_DELETED\" for test.Status", e.getMessage());
     }
 
     @Test
@@ -586,9 +584,8 @@ final class LiteWireWriterTest {
                 Map.of(),
                 Map.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals("required field(s) missing in test.Sample: name", e.getMessage());
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: required field \"name\" is absent", e.getMessage());
     }
 
     @Test
@@ -857,9 +854,8 @@ final class LiteWireWriterTest {
         PxfMeta m = mapHostMeta("test.Sample",
                 Map.of(), Map.of(), Set.of(), Map.of(), Map.of(), Set.of());
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("outside a map field block"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:1: unexpected ':' in message context, use '=' for field assignments", e.getMessage());
     }
 
     // --- well-known types: Timestamp + Duration ---------------------------
@@ -984,10 +980,9 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("created = 2024-01-15T10:30:00Z");
         PxfMeta m = wellKnownHostMeta("test.Sample", "created", 1, "com.example.SomeOtherType");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_TIMESTAMP));
-        assertEquals(true, e.getMessage().contains("<unset>"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:11: expected '{' for message field \"created\", got timestamp (\"2024-01-15T10:30:00Z\")",
+            e.getMessage());
     }
 
     @Test
@@ -995,9 +990,8 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("ttl = 1h");
         PxfMeta m = wellKnownHostMeta("test.Sample", "ttl", 1, "com.example.SomeOtherType");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("requires WKT kind " + PxfMeta.WKT_DURATION));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:7: expected '{' for message field \"ttl\", got duration (\"1h\")", e.getMessage());
     }
 
     // --- well-known *Value wrappers + null sentinel -----------------------
@@ -1250,10 +1244,9 @@ final class LiteWireWriterTest {
         Ast.Document doc = Parser.parse("n = 3.14");
         PxfMeta m = wellKnownHostMeta("test.Sample", "n", 1, "org.protowire.proto.pxf.BigInt");
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(true, e.getMessage().contains("pxf.BigInt"));
-        assertEquals(true, e.getMessage().contains("integer literal"));
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("1:5: expected an integer literal or '{' for message field \"n\", got float (\"3.14\")",
+            e.getMessage());
     }
 
     // -- bool map keys: the grammar's spellings, not Boolean.parseBoolean (#76)

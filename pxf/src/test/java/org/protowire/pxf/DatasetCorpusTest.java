@@ -4,6 +4,7 @@ package org.protowire.pxf;
 
 import com.google.protobuf.Message;
 import dataset.v1.Paths.Event;
+import dataset.v1.Paths.RowReq;
 import org.junit.jupiter.api.Test;
 import org.protowire.pxf.testproto.AllTypes;
 
@@ -27,8 +28,8 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Drives the spec repo's {@code testdata/dataset/} corpus (#99, #101, #102),
- * vendored under {@code src/test/resources/corpus/dataset/} from
- * trendvidia/protowire 234cf29, on every dataset path: {@code Pxf.parse} plus
+ * vendored under {@code testdata/dataset/} and kept equal to the spec's by
+ * the conformance job, on every dataset path: {@code Pxf.parse} plus
  * {@code BindRow}, {@code DatasetReader}, and the materializing decoder. Each
  * fixture's leading comment and the corpus README state its verdict; this
  * table is that statement, and {@link #everyFixtureHasAVerdict} fails if a
@@ -47,7 +48,7 @@ class DatasetCorpusTest {
             "block-on-scalar", "null-on-scalar-cell", "dotted-oneof-two-members", "dotted-through-repeated",
             "dotted-through-map", "dotted-through-scalar", "dotted-into-timestamp", "dotted-into-wrapper",
             "dotted-into-duration", "dotted-into-bignum", "dotted-unknown-segment", "dotted-required-missing",
-            "dotted-bad-header-empty-row");
+            "dotted-bad-header-empty-row", "null-on-required-cell");
 
     private static final Set<String> ACCEPTS = Set.of(
             "empty-rows", "rows-end-at-directive", "list-cell", "block-cell", "nested-cells", "cell-framing",
@@ -60,8 +61,10 @@ class DatasetCorpusTest {
     }
 
     private static Supplier<Message.Builder> rowType(byte[] doc) {
-        return new String(doc, StandardCharsets.UTF_8).contains("@dataset dataset.v1.Event")
-                ? Event::newBuilder : AllTypes::newBuilder;
+        String text = new String(doc, StandardCharsets.UTF_8);
+        if (text.contains("@dataset dataset.v1.Event")) return Event::newBuilder;
+        if (text.contains("@dataset dataset.v1.RowReq")) return RowReq::newBuilder;
+        return AllTypes::newBuilder;
     }
 
     private static List<Message> viaParse(byte[] doc) {
@@ -110,26 +113,30 @@ class DatasetCorpusTest {
         known.addAll(BIND_REJECTS);
         known.addAll(ACCEPTS);
         assertEquals(known, all);
-        assertEquals(42, all.size());
+        assertEquals(43, all.size());
     }
 
     @Test
-    void everyPathMeetsEveryVerdict() throws IOException {
+    void everyPathMeetsEveryVerdict() throws Throwable {
         for (CorpusFixtures.Fixture f : CorpusFixtures.load("dataset")) {
-            String name = stem(f);
-            if (PARSE_REJECTS.contains(name)) {
-                assertThrows(PxfException.class, () -> Pxf.parse(f.data()), name + " (parse)");
-                assertThrows(RuntimeException.class, () -> viaReader(f.data()), name + " (reader)");
-                assertThrows(PxfException.class,
-                        () -> Pxf.unmarshalFull(f.data(), rowType(f.data()).get()), name + " (decoder)");
-            } else if (BIND_REJECTS.contains(name)) {
-                Pxf.parse(f.data());
-                assertThrows(PxfException.class, () -> viaParse(f.data()), name + " (parse + bindRow)");
-                assertThrows(PxfException.class, () -> viaReader(f.data()), name + " (reader)");
-            } else {
-                assertEquals(viaParse(f.data()), viaReader(f.data()), name);
-                Pxf.unmarshalFull(f.data(), rowType(f.data()).get());
-            }
+            CorpusFixtures.meet("dataset", f.name(), () -> meetsItsVerdict(f));
+        }
+    }
+
+    private static void meetsItsVerdict(CorpusFixtures.Fixture f) throws IOException {
+        String name = stem(f);
+        if (PARSE_REJECTS.contains(name)) {
+            assertThrows(PxfException.class, () -> Pxf.parse(f.data()), name + " (parse)");
+            assertThrows(RuntimeException.class, () -> viaReader(f.data()), name + " (reader)");
+            assertThrows(PxfException.class,
+                    () -> Pxf.unmarshalFull(f.data(), rowType(f.data()).get()), name + " (decoder)");
+        } else if (BIND_REJECTS.contains(name)) {
+            Pxf.parse(f.data());
+            assertThrows(PxfException.class, () -> viaParse(f.data()), name + " (parse + bindRow)");
+            assertThrows(PxfException.class, () -> viaReader(f.data()), name + " (reader)");
+        } else {
+            assertEquals(viaParse(f.data()), viaReader(f.data()), name);
+            Pxf.unmarshalFull(f.data(), rowType(f.data()).get());
         }
     }
 

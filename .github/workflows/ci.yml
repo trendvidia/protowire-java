@@ -110,13 +110,12 @@ jobs:
         run: "$PROTOWIRE_DIR/scripts/cross_write_check.sh"
 
       # pb-go-golden.txt is a byte copy of the spec's struct-binding table
-      # (protowire#518). Until that merges the spec's main has no table, and
-      # this says so rather than fails; drop the guard once it has.
+      # (protowire#518).
       - name: Struct-binding table matches the spec's
-        run: |
-          table="$PROTOWIRE_DIR/testdata/values/values.tsv"
-          if [[ ! -f "$table" ]]; then
-            echo "::warning::protowire main has no testdata/values/values.tsv yet (protowire#518)"
-            exit 0
-          fi
-          cmp "$table" pb/src/test/resources/golden/pb-go-golden.txt
+        run: cmp "$PROTOWIRE_DIR/testdata/values/values.tsv" pb/src/test/resources/golden/pb-go-golden.txt
+
+      # testdata/ is the spec corpus both tiers run (#211). A fixture the spec
+      # adds or changes fails here until it is copied, and the copy fails a
+      # tier's test until that tier meets it or lists it as a known gap.
+      - name: Spec corpus copy matches the spec's
+        run: scripts/check-spec-corpus.sh "$PROTOWIRE_DIR"

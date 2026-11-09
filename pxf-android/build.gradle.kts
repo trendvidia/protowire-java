@@ -14,13 +14,14 @@ plugins {
 // descriptor-typed import sneaks into a source file, the test task fails to
 // compile. That's the contract enforcement.
 
-// The keyed conformance fixtures are shared with :pxf, which vendors them from
-// the spec repo's testdata/keyed/, so both tiers read the same files.
+// The keyed conformance fixtures are the repository's testdata/keyed/, the
+// spec's testdata/keyed/ byte for byte, which both tiers read.
 sourceSets {
     test {
         resources {
-            srcDir("../pxf/src/test/resources")
+            srcDir(rootDir.resolve("testdata"))
             include("keyed/**")
+            exclude("**/*.proto")
         }
     }
 }

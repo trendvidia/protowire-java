@@ -7,12 +7,13 @@ plugins {
     id("com.google.protobuf") version "0.10.0"
 }
 
-// The lite tier's copies of protowire's cross-port fixtures, generated lite
-// with their protoc-gen-pxf-java-meta companions, plus the --pb/--sbe modes
-// both lite dumpers expose to scripts/cross_envelope_check.sh:
+// The spec corpus schemas (../testdata, protowire's testdata byte for byte),
+// generated lite with their protoc-gen-pxf-java-meta companions, for the lite
+// corpus test and for the --pb/--sbe modes both lite dumpers expose to
+// scripts/cross_envelope_check.sh:
 //
 //   testdata/annotations/settings.proto  (pxf.required) = 1314, (pxf.default) = 1315
-//   testdata/sbe-bench.proto             (sbe.*) 1319-1323, bench.v1.Order
+//   testdata/sbe-bench.proto             (sbe.*) 1319-1323, bench.v1.Order (src/main/proto)
 //
 // A codegen port cannot bind a message from a descriptor set at runtime, so
 // the dumpers name a type generated here and ignore the FDS argument; what
@@ -23,6 +24,9 @@ dependencies {
     api("com.google.protobuf:protobuf-javalite:4.36.2")
     api(project(":pxf-android"))
     api(project(":sbe-runtime"))
+    // pxf.BigFloat and pxf.Secret, which the corpus schemas import, generated
+    // lite with their companions.
+    api(project(":pxf-android-codegen-it"))
     compileOnly(project(":proto-annotations"))
     // compile-only, like sbe-android-codegen-it: the well-known protos on the
     // proto include path come from this jar; it is not on the runtime classpath.
@@ -69,6 +73,38 @@ val buildPxfJavaMetaPlugin by tasks.registering(Exec::class) {
             go build -o "$3" ./cmd/protoc-gen-pxf-java-meta
         """.trimIndent(), "sh", src.absolutePath, pxfJavaMetaRef, out.absolutePath)
     }
+}
+
+// protoc-gen-pxf-java-meta requires a java_package, and the spec's schemas
+// carry none, so the build adds one (the proto package, as protoc's default
+// would be) and java_multiple_files. Nothing else in a file changes.
+// settings_annotated.proto needs a v1.2 compiler: src/main/proto spells it for
+// stock protoc.
+val corpusProto = layout.buildDirectory.dir("corpus-proto")
+val prepareCorpusProto by tasks.registering(Sync::class) {
+    from(rootDir.resolve("testdata")) {
+        include("**/*.proto")
+        exclude("annotations/settings_annotated.proto")
+    }
+    into(corpusProto)
+    filter { line: String ->
+        val m = Regex("""^package\s+([\w.]+)\s*;""").find(line)
+        if (m == null) line
+        else "$line\noption java_package = \"${m.groupValues[1]}\";\noption java_multiple_files = true;"
+    }
+}
+
+sourceSets {
+    main {
+        proto {
+            srcDir(prepareCorpusProto)
+        }
+    }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    systemProperty("protowire.testdata", rootDir.resolve("testdata").absolutePath)
 }
 
 protobuf {

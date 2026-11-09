@@ -1,0 +1,147 @@
+annotations/missing-required.pxf	settings.v1.Settings	1:1: required field "name" is absent	ok
+annotations/ok.pxf	settings.v1.Settings	ok	ok
+any/assignment.pxf	any.v1.Holder	ok	ok
+any/block.pxf	any.v1.Holder	ok	ok
+any/err-not-any.pxf	any.v1.Holder	5:3: @type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 "Any Blocks")	ok
+any/err-not-first.pxf	any.v1.Holder	5:3: unknown field "tag" in google.protobuf.Any	6:3: @type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 "Any Blocks")
+any/err-twice.pxf	any.v1.Holder	6:3: @type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 "Any Blocks")	6:3: @type is allowed only as the first entry of a block bound to google.protobuf.Any (draft -01 "Any Blocks")
+any/err-unquoted-url.pxf	any.v1.Holder	5:11: expected a string type URL after @type =, got identifier ("any.v1.Leaf")	5:11: expected a string type URL after @type =, got identifier ("any.v1.Leaf")
+any/err-unresolved.pxf	any.v1.Holder	5:11: cannot resolve Any type "any.v1.Nope": not found	ok
+any/list-element.pxf	any.v1.Holder	ok	ok
+any/map-value.pxf	any.v1.Holder	ok	ok
+any/plain-fields.pxf	any.v1.Holder	ok	ok
+any/url-verbatim.pxf	any.v1.Holder	ok	ok
+bigfloat/dec-1e4932.pxf	bf.v1.H	ok	ok
+bigfloat/dec-2pow1024-p64.pxf	bf.v1.H	ok	ok
+bigfloat/dec-exponent-bound-prec256.pxf	bf.v1.H	ok	ok
+bigfloat/dec-exponent-only-p24.pxf	bf.v1.H	ok	ok
+bigfloat/dec-hundred-digits-p333.pxf	bf.v1.H	ok	ok
+bigfloat/dec-hundred-digits-unsuffixed.pxf	bf.v1.H	ok	ok
+bigfloat/dec-integer-p64.pxf	bf.v1.H	ok	ok
+bigfloat/dec-max-precision-with-exponent.pxf	bf.v1.H	ok	ok
+bigfloat/dec-minus-two-and-a-half.pxf	bf.v1.H	ok	ok
+bigfloat/dec-negative-zero-p64.pxf	bf.v1.H	ok	ok
+bigfloat/dec-negative-zero.pxf	bf.v1.H	ok	ok
+bigfloat/dec-one-at-max-precision.pxf	bf.v1.H	ok	ok
+bigfloat/dec-rounds-up-to-power-p8.pxf	bf.v1.H	ok	ok
+bigfloat/dec-small-positional.pxf	bf.v1.H	ok	ok
+bigfloat/dec-tenth-p53.pxf	bf.v1.H	ok	ok
+bigfloat/dec-tenth-unsuffixed.pxf	bf.v1.H	ok	ok
+bigfloat/dec-zero-p64.pxf	bf.v1.H	ok	ok
+bigfloat/dec-zero.pxf	bf.v1.H	ok	ok
+bigfloat/enc-2pow1024-prec64.pxf	bf.v1.H	ok	ok
+bigfloat/enc-exponent-bound-prec256.pxf	bf.v1.H	ok	ok
+bigfloat/enc-integer.pxf	bf.v1.H	ok	ok
+bigfloat/enc-long-mantissa.pxf	bf.v1.H	ok	ok
+bigfloat/enc-max-precision-with-exponent.pxf	bf.v1.H	ok	ok
+bigfloat/enc-one-and-a-half.pxf	bf.v1.H	ok	ok
+bigfloat/enc-prec-zero.pxf	bf.v1.H	ok	ok
+bigfloat/enc-tenth-as-double.pxf	bf.v1.H	ok	ok
+bigfloat/enc-three-quarters-negative.pxf	bf.v1.H	ok	ok
+bigfloat/enc-tiny-negative-exponent.pxf	bf.v1.H	ok	ok
+bigfloat/enc-wide-mantissa-prec53.pxf	bf.v1.H	ok	ok
+bigfloat/enc-zero-prec64-negative.pxf	bf.v1.H	ok	ok
+bigfloat/enc-zero-prec64.pxf	bf.v1.H	ok	ok
+bigfloat/err-precision-overflow.pxf	bf.v1.H	3:6: big float literal 1p99999999999999999999999: precision suffix p99999999999999999999999 is not a positive bit count	ok
+bigfloat/err-precision-past-limit.pxf	bf.v1.H	3:6: big float literal 1p13604: precision p13604 renders to 4097 digits; MaxNumericLiteralDigits=4096	ok
+bigfloat/err-precision-zero.pxf	bf.v1.H	3:6: big float literal 1.5p0: precision suffix p0 is not a positive bit count	ok
+bigfloat/err-suffix-on-int32.pxf	bf.v1.H	3:9: precision suffix p64 is allowed only on a pxf.BigFloat, not on field "count"	ok
+blocks/comma-between-elements.pxf	blocks.v1.Doc	ok	ok
+blocks/err-comma-in-block.pxf	blocks.v1.Doc	6:28: expected identifier, string, integer, or bool, got , (",")	6:28: expected identifier, string, integer, or bool, got , (",")
+blocks/err-comma-in-list-element.pxf	blocks.v1.Doc	7:31: expected identifier, string, integer, or bool, got , (",")	7:31: expected identifier, string, integer, or bool, got , (",")
+blocks/err-comma-in-map.pxf	blocks.v1.Doc	6:21: expected map key, got , (",")	6:21: expected identifier, string, integer, or bool, got , (",")
+blocks/err-semicolon-in-block.pxf	blocks.v1.Doc	6:28: expected identifier, string, integer, or bool, got unexpected character ';'	6:28: expected identifier, string, integer, or bool, got unexpected character ';'
+blocks/newline-in-block.pxf	blocks.v1.Doc	ok	ok
+blocks/space-in-block.pxf	blocks.v1.Doc	ok	ok
+duplicates/err-map-key-twice-across-bindings.pxf	dup.v1.Holder	5:12: map field "labels": key "a" is already set	ok
+duplicates/err-map-key-twice-in-literal.pxf	dup.v1.Holder	6:3: map field "labels": key "a" is already set	ok
+duplicates/err-map-key-twice-int-spellings.pxf	dup.v1.Holder	6:3: map field "nums": key 1 is already set	ok
+duplicates/err-map-key-twice-message-values.pxf	dup.v1.Holder	6:3: map field "inners": key "k" is already set	ok
+duplicates/err-map-key-twice-same-value.pxf	dup.v1.Holder	6:3: map field "labels": key "a" is already set	ok
+duplicates/err-message-assign-then-block.pxf	dup.v1.Holder	5:1: field "m" is already set	ok
+duplicates/err-message-twice.pxf	dup.v1.Holder	5:1: field "m" is already set	ok
+duplicates/err-nested-scalar-twice.pxf	dup.v1.Holder	6:3: field "a" is already set	ok
+duplicates/err-null-then-value.pxf	dup.v1.Holder	5:1: field "w" is already set	ok
+duplicates/err-oneof-member-twice.pxf	dup.v1.Holder	5:1: oneof "k": field "km" conflicts with already-set field "km"	ok
+duplicates/err-oneof-scalar-twice.pxf	dup.v1.Holder	5:1: oneof "k": field "ks" conflicts with already-set field "ks"	ok
+duplicates/err-optional-twice.pxf	dup.v1.Holder	5:1: field "o" is already set	ok
+duplicates/err-scalar-same-value.pxf	dup.v1.Holder	5:1: field "s" is already set	ok
+duplicates/err-scalar-twice.pxf	dup.v1.Holder	5:1: field "s" is already set	ok
+duplicates/err-wrapper-twice.pxf	dup.v1.Holder	5:1: field "w" is already set	ok
+duplicates/map-key-once-per-body.pxf	dup.v1.Holder	ok	ok
+duplicates/map-twice-distinct-keys.pxf	dup.v1.Holder	ok	ok
+duplicates/once-per-body.pxf	dup.v1.Holder	ok	ok
+duplicates/repeated-twice.pxf	dup.v1.Holder	ok	ok
+duration/err-digit-led-identifier.pxf	duration.v1.Holder	7:5: invalid duration: 5seconds	7:5: invalid duration: 5seconds
+duration/err-sign-per-segment.pxf	duration.v1.Holder	6:7: expected identifier, string, integer, or bool, got duration ("-30m")	6:7: expected identifier, string, integer, or bool, got duration ("-30m")
+duration/err-unit-then-alpha.pxf	duration.v1.Holder	6:5: invalid duration: 5sx	6:5: invalid duration: 5sx
+duration/negative-fractional.pxf	duration.v1.Holder	ok	ok
+duration/negative-multi-segment.pxf	duration.v1.Holder	ok	ok
+duration/negative-seconds.pxf	duration.v1.Holder	ok	ok
+duration/negative-zero.pxf	duration.v1.Holder	ok	ok
+duration/roundtrip-negative.pxf	duration.v1.Holder	ok	ok
+keyed/anonymous-duplicate-ok.pxf	keyed.v1.Node	ok	ok
+keyed/anonymous-equivalence.pxf	keyed.v1.Node	ok	ok
+keyed/err-duplicate-key-spelling.pxf	keyed.v1.Node	12:3: duplicate key "greeting" in keyed field "children"	ok
+keyed/err-duplicate-key.pxf	keyed.v1.Node	11:3: duplicate key "greeting" in keyed field "children"	ok
+keyed/err-empty-key-anonymous.pxf	keyed.v1.Node	10:10: explicit empty-string assignment to key field "id" of keyed field "children": the empty string is not a valid key	ok
+keyed/err-empty-key.pxf	keyed.v1.Node	8:3: empty entry name in keyed field "children": the empty string is not a valid key	ok
+keyed/err-key-conflict.pxf	keyed.v1.Node	9:10: key field "id" = "farewell" conflicts with entry name "greeting" in keyed field "children"	ok
+keyed/err-key-null.pxf	keyed.v1.Catalog	8:5: null on key field "name" conflicts with entry name "alpha" in keyed field "tags"	ok
+keyed/err-key-oneof-sibling-null.pxf	keyed.v1.Catalog	8:5: field "other" shares oneof "pick" with key field "name", which entry name "alpha" already set in keyed field "choices"	ok
+keyed/err-key-oneof-sibling.pxf	keyed.v1.Catalog	8:5: field "other" shares oneof "pick" with key field "name", which entry name "alpha" already set in keyed field "choices"	ok
+keyed/err-quoted-name-unkeyed.pxf	keyed.v1.Doc	9:3: quoted entry name "a" is only valid inside a keyed repeated field's block (draft -01 §3.13)	ok
+keyed/fmt-anonymous-to-keyed.pxf	keyed.v1.Deployment	ok	ok
+keyed/fmt-unquote.pxf	keyed.v1.Node	ok	ok
+keyed/key-null-anonymous-ok.pxf	keyed.v1.Catalog	ok	ok
+keyed/key-oneof-ok.pxf	keyed.v1.Catalog	ok	ok
+keyed/redundant-key-ok.pxf	keyed.v1.Node	ok	ok
+keyed/roundtrip-keyed.pxf	keyed.v1.Node	ok	ok
+keyed/roundtrip-quoted.pxf	keyed.v1.Deployment	ok	ok
+map-keys/bool-keys-integer.pxf	mapkeys.v1.Flags	ok	ok
+map-keys/bool-keys-keyword.pxf	mapkeys.v1.Flags	ok	ok
+map-keys/bool-keys.pxf	mapkeys.v1.Flags	ok	ok
+map-keys/fmt-bare-keys.pxf	mapkeys.v1.Flags	ok	ok
+map-keys/fmt-dotted-keys.pxf	mapkeys.v1.Labels	ok	ok
+map-keys/fmt-keyword-keys.pxf	mapkeys.v1.Labels	ok	ok
+map-keys/invalid/identifier-lower-f.pxf	mapkeys.v1.Flags	7:13: invalid bool map key f for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-lower-t.pxf	mapkeys.v1.Flags	7:13: invalid bool map key t for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-title-False.pxf	mapkeys.v1.Flags	7:13: invalid bool map key False for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-title-True.pxf	mapkeys.v1.Flags	7:13: invalid bool map key True for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-upper-F.pxf	mapkeys.v1.Flags	7:13: invalid bool map key F for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-upper-FALSE.pxf	mapkeys.v1.Flags	7:13: invalid bool map key FALSE for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-upper-T.pxf	mapkeys.v1.Flags	7:13: invalid bool map key T for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-upper-TRUE.pxf	mapkeys.v1.Flags	7:13: invalid bool map key TRUE for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/identifier-word-yes.pxf	mapkeys.v1.Flags	7:13: invalid bool map key yes for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/string-lower-t.pxf	mapkeys.v1.Flags	6:13: invalid bool map key "t" for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/string-one-1.pxf	mapkeys.v1.Flags	6:13: invalid bool map key "1" for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/string-upper-TRUE.pxf	mapkeys.v1.Flags	6:13: invalid bool map key "TRUE" for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+map-keys/invalid/string-zero-0.pxf	mapkeys.v1.Flags	6:13: invalid bool map key "0" for field "by_flag": a bool key is true, false, 0, 1, "true" or "false"	ok
+nulls/default-optional.pxf	nulls.v1.Defaulted	ok	ok
+nulls/editions-explicit.pxf	nulls.ed.v1.Ed	ok	ok
+nulls/err-editions-implicit.pxf	nulls.ed.v1.Ed	5:19: null is not allowed on scalar field "implicit_scalar": declare it optional, or as a wrapper type (google.protobuf.Int32Value or similar), to make it nullable	ok
+nulls/err-list-element.pxf	nulls.v1.Holder	5:9: null is not allowed in repeated field "l"	ok
+nulls/err-map-message-value.pxf	nulls.v1.Holder	8:8: null is not allowed as map value in field "mm"	ok
+nulls/err-map-value.pxf	nulls.v1.Holder	8:8: null is not allowed as map value in field "m"	ok
+nulls/err-map.pxf	nulls.v1.Holder	6:5: null is not allowed on map field "m"	ok
+nulls/err-nested-scalar.pxf	nulls.v1.Holder	6:11: null is not allowed on scalar field "x": declare it optional, or as a wrapper type (google.protobuf.Int32Value or similar), to make it nullable	ok
+nulls/err-oneof-sibling.pxf	nulls.v1.Holder	7:1: oneof "k": field "ks" conflicts with already-set field "km"	ok
+nulls/err-proto2-required.pxf	nulls.v1.Strict	7:5: null is not allowed on scalar field "r": the field is required, so it must be set	ok
+nulls/err-repeated.pxf	nulls.v1.Holder	6:5: null is not allowed on repeated field "l"	ok
+nulls/err-required-optional.pxf	nulls.v1.Required	7:5: null is not allowed on required field "r": a required field holds a value	ok
+nulls/err-required-wrapper.pxf	nulls.v1.RequiredWrapper	6:5: null is not allowed on required field "w": a required field holds a value	ok
+nulls/err-scalar.pxf	nulls.v1.Holder	7:5: null is not allowed on scalar field "n": declare it optional, or as a wrapper type (google.protobuf.Int32Value or similar), to make it nullable	ok
+nulls/message.pxf	nulls.v1.Holder	ok	ok
+nulls/oneof-message.pxf	nulls.v1.Holder	ok	ok
+nulls/oneof-scalar.pxf	nulls.v1.Holder	ok	ok
+nulls/optional-scalar.pxf	nulls.v1.Holder	ok	ok
+nulls/proto2-scalar.pxf	nulls.v1.Legacy	ok	ok
+nulls/wrapper.pxf	nulls.v1.Holder	ok	ok
+repeated/concat-lists.pxf	test.v1.AllTypes	ok	ok
+repeated/err-assigned-block.pxf	test.v1.AllTypes	7:19: expected '[' for repeated field "repeated_nested"	ok
+repeated/err-block-entries.pxf	test.v1.AllTypes	8:1: repeated field "repeated_nested" must use list syntax: repeated_nested = [...]	ok
+repeated/err-scalar-entries.pxf	test.v1.AllTypes	6:19: expected '[' for repeated field "repeated_string"	ok
+strings/err-raw-newline.pxf	strings.v1.Holder	6:5: newline in string literal: write it as \n, or use a """triple-quoted""" string	6:5: newline in string literal: write it as \n, or use a """triple-quoted""" string
+strings/escaped-newline.pxf	strings.v1.Holder	ok	ok
+strings/newline-after-string.pxf	strings.v1.Holder	ok	ok
+strings/triple-quoted.pxf	strings.v1.Holder	ok	ok

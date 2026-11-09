@@ -104,7 +104,7 @@ final class WktBlockTest {
 
     @Test
     void blockFieldsAreCheckedAgainstTheShape() {
-        assertThrows(IllegalArgumentException.class, () -> BlocksPxfCodec.unmarshal("i32_w { nope = 1 }"));
+        assertThrows(PxfException.class, () -> BlocksPxfCodec.unmarshal("i32_w { nope = 1 }"));
         assertThrows(PxfException.class, () -> BlocksPxfCodec.unmarshal("i32_w { value = 5000000000 }"));
         assertThrows(PxfException.class, () -> BlocksPxfCodec.unmarshal("big_int { negative = null }"));
     }
@@ -112,6 +112,6 @@ final class WktBlockTest {
     @Test
     void aLiteralStillBinds() {
         assertBinds("big_int = 5", Blocks.newBuilder().setBigInt(BigInt.newBuilder().setAbs(FIVE)).build());
-        assertThrows(IllegalArgumentException.class, () -> BlocksPxfCodec.unmarshal("big_int = \"x\""));
+        assertThrows(PxfException.class, () -> BlocksPxfCodec.unmarshal("big_int = \"x\""));
     }
 }

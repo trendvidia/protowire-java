@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.Test;
+import org.protowire.pxf.PxfException;
 
 /**
  * {@code testdata/annotations/} in the annotation form, which only the plugin
@@ -23,8 +24,8 @@ class LiteTablesTest {
 
     @Test
     void annotationForm_enforcesRequired() {
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
+        PxfException e = assertThrows(PxfException.class,
             () -> settings.annotated.v1.SettingsPxfCodec.unmarshal(FixtureModesTest.MISSING_REQUIRED_PXF));
-        assertTrue(e.getMessage().contains("name"), e.getMessage());
+        assertEquals("1:1: required field \"name\" is absent", e.getMessage());
     }
 }

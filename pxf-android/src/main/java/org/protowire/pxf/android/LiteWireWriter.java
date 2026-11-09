@@ -164,7 +164,32 @@ public final class LiteWireWriter {
      * nesting limits are the {@link Parser}'s.
      */
     public static byte[] encode(Ast.Document doc, PxfMeta meta, PxfRegistry registry, DecodeLimits limits) {
-        return encode(doc.entries(), meta, registry, limits, false);
+        try {
+            return encode(doc.entries(), meta, registry, limits, false);
+        } catch (RequiredAbsent e) {
+            // protowire-go checks required fields after the document, so it
+            // reports them at its start, by the path to the field.
+            throw new PxfException(Position.UNKNOWN, "required field " + Token.quote(e.path) + " is absent");
+        }
+    }
+
+    /**
+     * A {@code (pxf.required)} field a body left unset, on its way out of the
+     * nested bodies: each one it leaves puts its own path segment in front,
+     * as {@code in.} or {@code items[0].}, so the message names the field as
+     * protowire-go does. It never leaves {@link #encode}.
+     */
+    private static final class RequiredAbsent extends RuntimeException {
+        final String path;
+
+        RequiredAbsent(String path) {
+            super(path, null, false, false);
+            this.path = path;
+        }
+
+        RequiredAbsent under(String segment) {
+            return new RequiredAbsent(segment + "." + path);
+        }
     }
 
     /**
@@ -264,6 +289,7 @@ public final class LiteWireWriter {
             return enumNumber(num, v, meta, registry) == 0;
         }
         rejectPrecision(v, fieldNameFor(meta, num));
+        checkScalar(kind, v, fieldNameFor(meta, num));
         return isDefaultScalar(kind, v);
     }
 
@@ -298,7 +324,7 @@ public final class LiteWireWriter {
                     }
                     Integer num = fieldNumbers.get(a.key());
                     if (num == null) {
-                        throw new IllegalArgumentException("unknown field name: " + a.key());
+                        throw new PxfException(a.pos(), "unknown field " + Token.quote(a.key()) + " in " + meta.fullName());
                     }
                     checkOneofCollision(num, a.key(), a.pos(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, a.key(), a.pos(), meta, setFields);
@@ -341,7 +367,12 @@ public final class LiteWireWriter {
                         throw new PxfException(a.value().pos(),
                             "expected '[' for repeated field \"" + a.key() + "\"");
                     } else if (mapEntry || !writesNothing(num, kind, a.value(), meta, registry)) {
-                        writeField(out, num, kind, a.value(), meta, registry, limits);
+                        try {
+                            writeField(out, num, kind, a.value(), meta, registry, limits);
+                        } catch (RequiredAbsent e) {
+                            // A map entry's value is named by the map, as name["k"].
+                            throw mapEntry ? e : e.under(a.key());
+                        }
                     }
                     recordSet(num, oneofOf, setFields, oneofSet);
                     body.mark(num);
@@ -353,7 +384,7 @@ public final class LiteWireWriter {
                     }
                     Integer num = fieldNumbers.get(b.name());
                     if (num == null) {
-                        throw new IllegalArgumentException("unknown field name: " + b.name());
+                        throw new PxfException(b.pos(), "unknown field " + Token.quote(b.name()) + " in " + meta.fullName());
                     }
                     checkOneofCollision(num, b.name(), b.pos(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, b.name(), b.pos(), meta, setFields);
@@ -369,18 +400,20 @@ public final class LiteWireWriter {
                     } else if (repeated.contains(num)) {
                         throw repeatedBlock(b);
                     } else if (kind == K_MESSAGE) {
-                        writeNestedMessage(out, num, b.entries(), meta, registry, limits);
+                        try {
+                            writeNestedMessage(out, num, b.entries(), meta, registry, limits);
+                        } catch (RequiredAbsent e) {
+                            throw mapEntry ? e : e.under(b.name());
+                        }
                     } else {
-                        throw new IllegalArgumentException(
-                            "block syntax requires a message-typed field; '" + b.name() +
-                            "' has kind " + kind);
+                        throw new PxfException(b.pos(), "field " + Token.quote(b.name())
+                            + " is not a message type, cannot use block syntax");
                     }
                     recordSet(num, oneofOf, setFields, oneofSet);
                     body.mark(num);
                 }
-                case Ast.MapEntry m -> throw new IllegalArgumentException(
-                    "map entry '" + m.key() + "' appears outside a map field block in " +
-                    meta.fullName());
+                case Ast.MapEntry m -> throw new PxfException(m.pos(),
+                    "unexpected ':' in message context, use '=' for field assignments");
                 // Packing the block's body needs the named type's schema,
                 // and this tier has no type resolver. An Any block here is
                 // written with its own fields, type_url and value.
@@ -444,6 +477,7 @@ public final class LiteWireWriter {
             DecodeLimits limits) {
         String field = fieldNameFor(meta, num);
         Set<String> seen = new HashSet<>();
+        int index = 0;
         for (Ast.Entry entry : entries) {
             Position pos;
             String name;
@@ -489,7 +523,12 @@ public final class LiteWireWriter {
                 element.add(new Ast.Assignment(pos, keyName, new Ast.StringVal(pos, name), List.of(), ""));
                 element.addAll(body);
             }
-            writeNestedMessage(out, num, element, meta, registry, limits);
+            try {
+                writeNestedMessage(out, num, element, meta, registry, limits);
+            } catch (RequiredAbsent e) {
+                throw e.under(field + "[" + index + "]");
+            }
+            index++;
         }
     }
 
@@ -764,17 +803,16 @@ public final class LiteWireWriter {
         if (required.isEmpty()) {
             return;
         }
-        List<String> missing = new ArrayList<>();
+        // protowire-go names the first one in declaration order; the
+        // companion keeps no declaration order, so the lowest number.
+        int first = Integer.MAX_VALUE;
         for (Integer req : required) {
-            if (!setFields.contains(req)) {
-                missing.add(fieldNameFor(meta, req));
+            if (!setFields.contains(req) && req < first) {
+                first = req;
             }
         }
-        if (!missing.isEmpty()) {
-            Collections.sort(missing);
-            throw new IllegalArgumentException(
-                "required field(s) missing in " + meta.fullName() + ": " +
-                String.join(", ", missing));
+        if (first != Integer.MAX_VALUE) {
+            throw new RequiredAbsent(fieldNameFor(meta, first));
         }
     }
 
@@ -802,12 +840,12 @@ public final class LiteWireWriter {
             int wkt = meta.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE);
 
             if (v instanceof Ast.TimestampVal tv) {
-                requireWellKnownKind(num, wkt, PxfMeta.WKT_TIMESTAMP, meta, "timestamp");
+                requireWellKnownKind(num, wkt, PxfMeta.WKT_TIMESTAMP, meta, v);
                 writeWellKnownSecondsNanos(out, num, tv.value().getEpochSecond(), tv.value().getNano());
                 return;
             }
             if (v instanceof Ast.DurationVal dv) {
-                requireWellKnownKind(num, wkt, PxfMeta.WKT_DURATION, meta, "duration");
+                requireWellKnownKind(num, wkt, PxfMeta.WKT_DURATION, meta, v);
                 // java.time keeps nanos positive; the wire form needs seconds
                 // and nanos of the same sign (draft -01 § Timestamps and Durations).
                 long seconds = dv.value().getSeconds();
@@ -834,6 +872,7 @@ public final class LiteWireWriter {
                 }
                 int wrapperKind = wrapperInnerKind(wkt);
                 if (wrapperKind != -1) {
+                    checkScalar(wrapperKind, v, fieldNameFor(meta, num));
                     writeWellKnownValueWrapper(out, num, wrapperKind, v);
                     return;
                 }
@@ -843,10 +882,10 @@ public final class LiteWireWriter {
                 writeNestedMessage(out, num, bv.entries(), meta, registry, limits);
                 return;
             }
-            throw new IllegalArgumentException(
-                "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
+            throw notAMessageValue(v, wkt, meta, num);
         }
         rejectPrecision(v, fieldNameFor(meta, num));
+        checkScalar(kind, v, fieldNameFor(meta, num));
         writeScalar(out, num, kind, v);
     }
 
@@ -945,14 +984,45 @@ public final class LiteWireWriter {
      * — without this check the encoder would silently produce
      * Timestamp-shaped bytes into a slot that expects something else entirely.
      */
-    private static void requireWellKnownKind(
-            int num, int actualWkt, int expectedWkt, PxfMeta meta, String literalKind) {
+    private static void requireWellKnownKind(int num, int actualWkt, int expectedWkt, PxfMeta meta, Ast.Value v) {
         if (actualWkt != expectedWkt) {
-            throw new IllegalArgumentException(
-                literalKind + " literal at field " + num + " of " + meta.fullName() +
-                " requires WKT kind " + expectedWkt + "; wellKnownKinds() reports " +
-                (actualWkt == PxfMeta.WKT_NONE ? "<unset>" : actualWkt));
+            throw notAMessageValue(v, actualWkt, meta, num);
         }
+    }
+
+    /**
+     * protowire-go's error for a message field given a value it does not
+     * take: the forms the type does take ({@code msgValueForms}), and the
+     * token the value starts with.
+     */
+    private static PxfException notAMessageValue(Ast.Value v, int wkt, PxfMeta meta, int num) {
+        String forms = switch (wkt) {
+            case PxfMeta.WKT_TIMESTAMP -> "a timestamp literal or '{'";
+            case PxfMeta.WKT_DURATION -> "a duration literal or '{'";
+            case PxfMeta.WKT_BIG_INT -> "an integer literal or '{'";
+            case PxfMeta.WKT_DECIMAL, PxfMeta.WKT_BIG_FLOAT -> "a numeric literal or '{'";
+            case PxfMeta.WKT_SECRET -> "a string literal or '{'";
+            default -> "'{'";
+        };
+        return new PxfException(v.pos(), "expected " + forms + " for message field "
+            + Token.quote(fieldNameFor(meta, num)) + ", got " + describe(v));
+    }
+
+    /** The token {@code v} starts with, as {@link Token#errMsg()} describes one. */
+    private static String describe(Ast.Value v) {
+        return switch (v) {
+            case Ast.StringVal x -> "string (" + Token.quote(x.value()) + ")";
+            case Ast.IntVal x -> "integer (" + Token.quote(x.raw()) + ")";
+            case Ast.FloatVal x -> "float (" + Token.quote(x.raw()) + ")";
+            case Ast.BoolVal x -> "bool (" + Token.quote(Boolean.toString(x.value())) + ")";
+            case Ast.IdentVal x -> "identifier (" + Token.quote(x.name()) + ")";
+            case Ast.TimestampVal x -> "timestamp (" + Token.quote(x.raw()) + ")";
+            case Ast.DurationVal x -> "duration (" + Token.quote(x.raw()) + ")";
+            case Ast.BytesVal x -> "bytes";
+            case Ast.NullVal x -> "null (\"null\")";
+            case Ast.ListVal x -> "[ (\"[\")";
+            case Ast.BlockVal x -> "{ (\"{\")";
+        };
     }
 
     /** The {@link PxfMeta} of message field {@code num}. */
@@ -1071,19 +1141,26 @@ public final class LiteWireWriter {
             }
         }
         int keyKind = entryMeta.fieldKinds().getOrDefault(1, K_STRING);
+        int valueKind = entryMeta.fieldKinds().getOrDefault(2, K_STRING);
 
         List<Map.Entry<Ast.Value, byte[]>> encoded = new ArrayList<>();
         for (Ast.Entry entry : entries) {
             if (!(entry instanceof Ast.MapEntry me)) {
-                throw new IllegalArgumentException(
-                    "expected `key: value` map entry, got " + entry.getClass().getSimpleName() +
-                    " in map field of " + meta.fullName());
+                // As protowire-go words it, at the entry: the AST keeps no
+                // position for the '=' or '{' Go reports at.
+                throw new PxfException(entry.pos(), switch (entry) {
+                    case Ast.Assignment a -> "unexpected '=' in map, use ':' for map entries";
+                    case Ast.Block b -> "expected ':' after map key, got {";
+                    default -> "expected map key, got @type (\"@type\")";
+                });
             }
             if (me.value() instanceof Ast.NullVal) {
                 throw new PxfException(me.value().pos(), "null is not allowed as map value in field \""
                     + fieldNameFor(meta, num) + "\"");
             }
             Ast.Value keyVal = mapKeyValue(me.key(), me.keyQuoted(), keyKind, me.pos(), fieldNameFor(meta, num));
+            // A scalar value is named by the map field, as protowire-go names it.
+            checkScalar(valueKind, me.value(), fieldNameFor(meta, num));
             // Keys compare as values of the key type, so 1 and "1" are one
             // key of an integer-keyed map (protowire#396).
             if (!seenKeys.add(canonicalMapKey(keyVal))) {
@@ -1094,7 +1171,12 @@ public final class LiteWireWriter {
             List<Ast.Entry> pair = List.of(
                 new Ast.Assignment(me.pos(), "key", keyVal, List.of(), ""),
                 new Ast.Assignment(me.pos(), "value", me.value(), List.of(), ""));
-            encoded.add(Map.entry(keyVal, encode(pair, entryMeta, registry, limits, true)));
+            try {
+                encoded.add(Map.entry(keyVal, encode(pair, entryMeta, registry, limits, true)));
+            } catch (RequiredAbsent e) {
+                String shown = keyVal instanceof Ast.StringVal ? Token.quote(me.key()) : canonicalMapKey(keyVal);
+                throw e.under(fieldNameFor(meta, num) + "[" + shown + "]");
+            }
         }
         encoded.sort((x, y) -> compareMapKeys(x.getKey(), y.getKey()));
         for (Map.Entry<Ast.Value, byte[]> e : encoded) {
@@ -1219,16 +1301,18 @@ public final class LiteWireWriter {
             }
             Integer mapped = enumMeta.values().get(id.name());
             if (mapped == null) {
-                throw new IllegalArgumentException(
-                    "unknown enum value '" + id.name() + "' for " + enumMeta.fullName());
+                throw new PxfException(v.pos(), "unknown enum value " + Token.quote(id.name()) + " for " + enumMeta.fullName());
             }
             enumValue = mapped;
         } else if (v instanceof Ast.IntVal i) {
             // PXF accepts a bare integer for an enum field — used for unknown / forward-compat values.
-            enumValue = (int) integer(i, K_INT32);
+            try {
+                enumValue = Integer.parseInt(i.raw());
+            } catch (NumberFormatException e) {
+                throw new PxfException(v.pos(), "invalid enum number: " + i.raw());
+            }
         } else {
-            throw new IllegalArgumentException(
-                "expected enum identifier or integer literal, got " + v.getClass().getSimpleName());
+            throw new PxfException(v.pos(), "expected enum name or number for field " + Token.quote(fieldNameFor(meta, num)));
         }
         return enumValue;
     }
@@ -1269,9 +1353,21 @@ public final class LiteWireWriter {
             PxfMeta meta,
             PxfRegistry registry,
             DecodeLimits limits) {
+        String field = fieldNameFor(meta, num);
+        for (Ast.Value v : list.elements()) {
+            if (v instanceof Ast.NullVal) {
+                throw new PxfException(v.pos(), "null is not allowed in repeated field " + Token.quote(field));
+            }
+        }
         if (!packed) {
+            int index = 0;
             for (Ast.Value v : list.elements()) {
-                writeField(out, num, kind, v, meta, registry, limits);
+                try {
+                    writeField(out, num, kind, v, meta, registry, limits);
+                } catch (RequiredAbsent e) {
+                    throw e.under(field + "[" + index + "]");
+                }
+                index++;
             }
             return;
         }
@@ -1281,6 +1377,7 @@ public final class LiteWireWriter {
         }
         for (Ast.Value v : list.elements()) {
             rejectPrecision(v, fieldNameFor(meta, num));
+            checkScalar(kind, v, fieldNameFor(meta, num));
         }
         // Packed encoding: tag(num, LEN) + total length + concatenated value bytes (no tags).
         int payloadSize = computePackedPayloadSize(kind, list.elements());
@@ -1366,6 +1463,28 @@ public final class LiteWireWriter {
     // can land in float/double slots, etc. Mismatches throw with a message
     // that names the offending field and value kind.
 
+    /**
+     * Refuses a value of the wrong kind for a scalar field, as protowire-go's
+     * consumeScalarAs does: {@code expected integer for field "n"}. A bytes
+     * field takes a {@code b"..."} literal only, as in Go and the full tier.
+     * Enum and message kinds are checked where they are written.
+     */
+    private static void checkScalar(int kind, Ast.Value v, String field) {
+        String expected = switch (kind) {
+            case K_STRING -> v instanceof Ast.StringVal ? null : "string";
+            case K_BOOL -> v instanceof Ast.BoolVal ? null : "bool";
+            case K_BYTES -> v instanceof Ast.BytesVal ? null : "bytes";
+            case K_FLOAT, K_DOUBLE -> v instanceof Ast.FloatVal || v instanceof Ast.IntVal
+                || (v instanceof Ast.IdentVal id && Format.isNonFinite(id.name())) ? null : "number";
+            case K_INT32, K_INT64, K_UINT32, K_UINT64, K_SINT32, K_SINT64,
+                 K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> v instanceof Ast.IntVal ? null : "integer";
+            default -> null;
+        };
+        if (expected != null) {
+            throw new PxfException(v.pos(), "expected " + expected + " for field " + Token.quote(field));
+        }
+    }
+
     private static String asString(Ast.Value v) {
         if (v instanceof Ast.StringVal s) return s.value();
         throw new IllegalArgumentException("expected string, got " + v.getClass().getSimpleName());
@@ -1373,7 +1492,6 @@ public final class LiteWireWriter {
 
     private static byte[] asBytes(Ast.Value v) {
         if (v instanceof Ast.BytesVal b) return b.value();
-        if (v instanceof Ast.StringVal s) return s.value().getBytes(StandardCharsets.UTF_8);
         throw new IllegalArgumentException("expected bytes, got " + v.getClass().getSimpleName());
     }
 
@@ -1399,7 +1517,13 @@ public final class LiteWireWriter {
                 default -> Long.parseLong(i.raw());
             };
         } catch (NumberFormatException e) {
-            throw new PxfException(i.pos(), "integer " + i.raw() + " is out of range for its field");
+            String type = switch (kind) {
+                case K_INT32, K_SINT32, K_SFIXED32 -> "int32";
+                case K_UINT32, K_FIXED32 -> "uint32";
+                case K_UINT64, K_FIXED64 -> "uint64";
+                default -> "int64";
+            };
+            throw new PxfException(i.pos(), "invalid " + type + ": " + i.raw());
         }
     }
 
@@ -1461,9 +1585,7 @@ public final class LiteWireWriter {
         if (v instanceof Ast.FloatVal f) { raw = f.raw(); prec = f.prec(); }
         else if (v instanceof Ast.IntVal i) { raw = i.raw(); prec = i.prec(); }
         else {
-            throw new IllegalArgumentException(
-                "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
-                " requires a numeric literal; got " + v.getClass().getSimpleName());
+            throw notAMessageValue(v, PxfMeta.WKT_BIG_FLOAT, meta, num);
         }
         try {
             return BigFloats.parse(raw, prec, limits.maxNumericLiteralDigits(), limits.maxBigFloatExponent());
@@ -1487,9 +1609,7 @@ public final class LiteWireWriter {
             checkDigits(v, i.raw(), limits);
             return new BigInteger(i.raw());
         }
-        throw new IllegalArgumentException(
-            "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
-            " is pxf.BigInt; expected integer literal, got " + v.getClass().getSimpleName());
+        throw notAMessageValue(v, PxfMeta.WKT_BIG_INT, meta, num);
     }
 
     /** A {@code pxf.Decimal} as its wire fields: the unscaled magnitude, the scale and the sign. */
@@ -1499,9 +1619,7 @@ public final class LiteWireWriter {
         rejectPrecision(v);
         if (v instanceof Ast.FloatVal f) return boundedDecimal(v, f.raw(), limits);
         if (v instanceof Ast.IntVal   i) return boundedDecimal(v, i.raw(), limits);
-        throw new IllegalArgumentException(
-            "field " + fieldNameFor(meta, num) + " in " + meta.fullName() +
-            " requires a numeric literal; got " + v.getClass().getSimpleName());
+        throw notAMessageValue(v, PxfMeta.WKT_DECIMAL, meta, num);
     }
 
     /**

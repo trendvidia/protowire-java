@@ -39,6 +39,8 @@ public final class Parser {
     private int depth;
     private final DecodeLimits limits;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
+    /** Just past the token {@link #advance} consumed last: where the value it ended ends. */
+    private Position prevEnd = Position.UNKNOWN;
 
     private Parser(byte[] input) {
         this(input, DecodeLimits.defaults());
@@ -107,7 +109,26 @@ public final class Parser {
         return p.parseDatasetRow(expected);
     }
 
+    /**
+     * Takes the pending comment that trails a value on its own line, as
+     * {@code b = 1 # tc}, for the entry that value ends (#193). {@code end} is
+     * where the value ends. A newline ends every line, so at most one comment
+     * trails a value, and it is the first pending one. A comment on a later
+     * line is the next entry's leading comment, and stays pending. Without
+     * this, the comment surfaced as the next entry's leading comment, or was
+     * lost before a block's '}' or the document's end. protowire-go's
+     * takeTrailingComment.
+     */
+    private String takeTrailingComment(Position end) {
+        if (pendingComments.isEmpty()) return "";
+        Ast.Comment c = pendingComments.get(0);
+        if (c.pos().line() != end.line() || c.pos().offset() < end.offset()) return "";
+        pendingComments.remove(0);
+        return c.text();
+    }
+
     private void advance() {
+        prevEnd = lex.position();
         while (true) {
             current = lex.next();
             if (current.kind() == TokenKind.NEWLINE) continue;
@@ -427,12 +448,14 @@ public final class Parser {
     private TokenKind peekKind() {
         Lexer.Mark mark = lex.mark();
         Token saved = current;
+        Position savedEnd = prevEnd;
         int savedComments = pendingComments.size();
         advance();
         TokenKind k = current.kind();
         // Restore.
         lex.restore(mark);
         current = saved;
+        prevEnd = savedEnd;
         while (pendingComments.size() > savedComments) {
             pendingComments.remove(pendingComments.size() - 1);
         }
@@ -475,7 +498,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.Assignment(pp, key, v, leading, "", keyKind == TokenKind.STRING);
+                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
             }
             case COLON -> {
                 // Map entry. Only allowed inside a `{ ... }` block, never at
@@ -487,7 +510,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.MapEntry(pp, key, v, leading, "", keyKind == TokenKind.STRING);
+                yield new Ast.MapEntry(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
             }
             case LBRACE -> {
                 // `{ ... }` denotes a submessage field, or a named entry of
@@ -618,7 +641,7 @@ public final class Parser {
         }
         String url = current.value();
         advance();
-        return new Ast.TypeEntry(pp, url, leading, "");
+        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd));
     }
 
     private List<Ast.Entry> parseBodyInner() {

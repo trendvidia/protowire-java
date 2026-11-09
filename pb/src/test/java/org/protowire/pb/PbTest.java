@@ -476,6 +476,15 @@ class PbTest {
                 UnmarshalOptions.defaults().withMaxNumericLiteralDigits(20)));
     }
 
+    /** A zero has no digits to bound, but its literal, 0p13604, does, so it is refused as Go's struct binding refuses it (#201). */
+    @Test
+    void aZeroPastThePrecBoundIsRefused() {
+        IOException e = assertThrows(IOException.class,
+                () -> Pb.unmarshal(bigFloatWire(new byte[0], 0, 13604), BigFloatHolder.class));
+        assertTrue(e.getMessage().contains("pxf.BigFloat prec 13604 implies 4097 digits; MaxNumericLiteralDigits=4096"),
+                e.getMessage());
+    }
+
     @Test
     void aPrecZeroBigFloatIsZeroAtAnyExponent() throws IOException {
         BigFloatHolder h = Pb.unmarshal(bigFloatWire(new byte[] {1}, Integer.MIN_VALUE, 0), BigFloatHolder.class);

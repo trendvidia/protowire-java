@@ -61,7 +61,7 @@ class DefaultAnnotationTest {
     void invalidPlacementsAreRejectedAtBindTime() {
         for (Message.Builder b : java.util.List.<Message.Builder>of(RepeatedDefault.newBuilder(), MapDefault.newBuilder(), RequiredMember.newBuilder())) {
             PxfException e = assertThrows(PxfException.class, () -> decodeFull("", b), b.getDescriptorForType().getFullName());
-            assertTrue(e.getMessage().contains("PXF schema bind-time violations:"), e.getMessage());
+            assertTrue(e.getMessage().contains("PXF schema violations:"), e.getMessage());
         }
         // The runtime rule still protects written input when validation is skipped (#53).
         RequiredMember.Builder rm = RequiredMember.newBuilder();

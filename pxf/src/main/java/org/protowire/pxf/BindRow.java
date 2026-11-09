@@ -81,11 +81,20 @@ public final class BindRow {
 
     /** {@link #bindRow} for a caller that has checked the column paths. */
     static void bind(UnmarshalOptions opts, Message.Builder builder, List<String> columns, Ast.DatasetRow row) {
+        // Every option the caller set applies to the row, as protowire-go's
+        // BindRow and DatasetReader.Scan bind it (protowire-go#280, #194),
+        // except MaxMessageSize: the row's body repeats the column names, so
+        // it is wider than the row, and is bound at the default. The schema
+        // is checked here, outside the try, so a violation comes back as it
+        // is: only a decode error is the row's, and carries its position.
+        // The check is cached per descriptor.
+        if (!opts.skipValidate()) {
+            String violations = SchemaValidator.asMessage(SchemaValidator.validateDescriptor(builder.getDescriptorForType()));
+            if (violations != null) throw new PxfException(Position.UNKNOWN, violations);
+        }
         Body body = rowToPxfBody(columns, row);
-        // SkipValidate avoids re-running the reserved-name check per row
-        // (the caller's DatasetReader / unmarshalFull already validated the
-        // descriptor once at bind time).
-        UnmarshalOptions o = opts.withSkipValidate(true);
+        UnmarshalOptions o = opts.withSkipValidate(true)
+                .withLimits(opts.limits().withMaxMessageSize(DecodeLimits.defaults().maxMessageSize()));
         try {
             // The full pipeline's post-decode pass gives an empty cell its
             // (pxf.default), rejects it for (pxf.required), and records a

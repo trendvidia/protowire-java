@@ -53,13 +53,7 @@ class LiteCorpusTest {
      * {@code <dir>/<file>} to the open issue that fixes it. A key ending in
      * {@code #text} is the error-text check of that fixture, not its verdict.
      */
-    private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
-        // an Any block's @type entry is refused
-        Map.entry("any/assignment.pxf", "#213"),
-        Map.entry("any/block.pxf", "#213"),
-        Map.entry("any/list-element.pxf", "#213"),
-        Map.entry("any/map-value.pxf", "#213"),
-        Map.entry("any/url-verbatim.pxf", "#213"));
+    private static final Map<String, String> KNOWN_GAPS = Map.ofEntries();
 
     /** Every corpus directory, and the test here that drives it. */
     private static final Set<String> DRIVEN = Set.of(
@@ -344,6 +338,55 @@ class LiteCorpusTest {
                 () -> decode("repeated", fixture("repeated", name), "test.v1.AllTypes"), name);
             assertEquals(want, e.getMessage(), name);
         });
+    }
+
+    /** As pxf's AnyCorpusTest.acceptedBlocksPackTheirBody: the body is packed into value, the URL kept as written. */
+    @Test
+    void acceptedAnyBlocksPackTheirBody() throws Exception {
+        any.v1.Holder h = any.v1.Holder.parseFrom(decode("any", fixture("any", "block.pxf"), "any.v1.Holder"));
+        assertEquals("any.v1.Leaf", h.getPayload().getTypeUrl());
+        assertEquals(any.v1.Leaf.newBuilder().setTag("t").setN(7).build(), any.v1.Leaf.parseFrom(h.getPayload().getValue()));
+
+        h = any.v1.Holder.parseFrom(decode("any", fixture("any", "assignment.pxf"), "any.v1.Holder"));
+        assertEquals("t", any.v1.Leaf.parseFrom(h.getPayload().getValue()).getTag());
+
+        h = any.v1.Holder.parseFrom(decode("any", fixture("any", "url-verbatim.pxf"), "any.v1.Holder"));
+        assertEquals("type.googleapis.com/any.v1.Leaf", h.getPayload().getTypeUrl());
+
+        h = any.v1.Holder.parseFrom(decode("any", fixture("any", "list-element.pxf"), "any.v1.Holder"));
+        assertEquals(2, h.getAnysCount());
+        assertEquals("a", any.v1.Leaf.parseFrom(h.getAnys(0).getValue()).getTag());
+        assertEquals(2, any.v1.Leaf.parseFrom(h.getAnys(1).getValue()).getN());
+
+        h = any.v1.Holder.parseFrom(decode("any", fixture("any", "map-value.pxf"), "any.v1.Holder"));
+        assertEquals("t", any.v1.Leaf.parseFrom(h.getByKeyOrThrow("k").getValue()).getTag());
+
+        h = any.v1.Holder.parseFrom(decode("any", fixture("any", "plain-fields.pxf"), "any.v1.Holder"));
+        assertEquals("any.v1.Leaf", h.getPayload().getTypeUrl());
+        assertEquals("t", any.v1.Leaf.parseFrom(h.getPayload().getValue()).getTag());
+    }
+
+    /** protowire-go v1.17.0's bytes for each accepted Any document (deterministic marshal of UnmarshalFull). */
+    @Test
+    void anyBlocksWriteGosBytes() {
+        Map<String, String> go = Map.of(
+            "assignment", "0a120a0b616e792e76312e4c65616612030a0174",
+            "block", "0a140a0b616e792e76312e4c65616612050a01741007",
+            "list-element", "12120a0b616e792e76312e4c65616612030a016112110a0b616e792e76312e4c65616612021002",
+            "map-value", "1a170a016b12120a0b616e792e76312e4c65616612030a0174",
+            "plain-fields", "0a120a0b616e792e76312e4c65616612030a0174",
+            "url-verbatim", "0a260a1f747970652e676f6f676c65617069732e636f6d2f616e792e76312e4c65616612030a0174");
+        go.forEach((name, hex) -> assertEquals(hex,
+            HexFormat.of().formatHex(decode("any", fixture("any", name + ".pxf"), "any.v1.Holder")), name));
+    }
+
+    /** Without a registry an Any's type entry cannot be resolved, as the full tier says without a TypeResolver. */
+    @Test
+    void aTypeEntryWithoutARegistryIsRejected() {
+        PxfException e = assertThrows(PxfException.class,
+            () -> LiteWireWriter.encode(Parser.parse(fixture("any", "block.pxf")), meta("any.v1.Holder")));
+        assertEquals("5:3: cannot resolve Any type \"any.v1.Leaf\": no PxfRegistry (LiteWireWriter.encode(doc, meta, registry))",
+            e.getMessage());
     }
 
     @Test

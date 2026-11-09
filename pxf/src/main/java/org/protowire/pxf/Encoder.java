@@ -73,6 +73,40 @@ final class Encoder {
 
     private void writeIndent(int level) { for (int i = 0; i < level; i++) buf.append(opts.indent()); }
 
+    /** How an unset field is written. */
+    private enum Unset { SKIP, ZERO, NULL }
+
+    /**
+     * How an unset field is written, so that a reader that applies
+     * (pxf.default) and checks (pxf.required) reads the message back
+     * (draft -01 § Common Schema Layer; protowire-go#259, #263, #267, #268).
+     * A field with neither annotation is left out. One without presence, a
+     * plain scalar, list or map, is written as its zero value, {@code []} or
+     * {@code {}}, which the default does not replace and which counts as
+     * supplied. A required field with presence cannot be written, since a
+     * reader refuses it absent and refuses it null, so that is an error. A
+     * oneof member whose sibling is set is left out. A message-typed field is
+     * written {@code null}, which keeps the default off. An {@code optional}
+     * or oneof scalar is left out and reads back as its default. As
+     * protowire-go's unsetField, word for word in its error.
+     */
+    private Unset unsetField(Message msg, FieldDescriptor fd) {
+        boolean required = Annotations.isRequired(fd);
+        boolean hasDefault = Annotations.getDefault(fd) != null;
+        if (!required && !hasDefault) return Unset.SKIP;
+        if (!fd.hasPresence()) return Unset.ZERO;
+        if (required) {
+            // With emitDefaults the field is written as every unset one is:
+            // a scalar as its zero, which a reader accepts.
+            if (opts.emitDefaults()) return Unset.SKIP;
+            throw new PxfException(Position.UNKNOWN,
+                    "pxf: " + fd.getFullName() + " is unset, and the field is (pxf.required)");
+        }
+        var oneof = fd.getContainingOneof();
+        if (oneof != null && !oneof.isSynthetic() && msg.getOneofFieldDescriptor(oneof) != null) return Unset.SKIP;
+        return fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE ? Unset.NULL : Unset.SKIP;
+    }
+
     /**
      * The key field to omit from the NEXT encodeMessage call: the entry name
      * of a keyed-block entry already carries its value (draft -01 §3.13).
@@ -89,10 +123,36 @@ final class Encoder {
             if (nullMaskFd != null && pathPrefix.isEmpty() && fd.getNumber() == nullMaskFd.getNumber()) continue;
             String path = pathPrefix + fd.getName();
 
-            if (!nullSet.isEmpty() && nullSet.contains(path)) {
+            // A field that cannot hold null is written as if the mask did
+            // not name it: null on it is a decode error (protowire-go #151).
+            if (!nullSet.isEmpty() && nullSet.contains(path) && FastDecoder.nullable(fd)) {
                 writeIndent(level);
                 buf.append(fd.getName()).append(" = null\n");
                 continue;
+            }
+
+            boolean unset = fd.isRepeated() ? msg.getRepeatedFieldCount(fd) == 0 : !msg.hasField(fd);
+            if (unset) {
+                Unset how = unsetField(msg, fd);
+                if (how == Unset.NULL) {
+                    writeIndent(level);
+                    buf.append(fd.getName()).append(" = null\n");
+                    continue;
+                }
+                if (how == Unset.ZERO && fd.isRepeated()) {
+                    checkDepth(level + 1);
+                    writeIndent(level);
+                    buf.append(fd.getName()).append(fd.isMapField() ? " = {}\n" : " = []\n");
+                    continue;
+                }
+                if (how == Unset.ZERO) {
+                    writeIndent(level);
+                    buf.append(fd.getName()).append(" = ");
+                    writeScalar(fd, msg.getField(fd));
+                    buf.append('\n');
+                    continue;
+                }
+                // SKIP: left out, as before; with emitDefaults the zero below.
             }
 
             if (fd.isMapField()) {

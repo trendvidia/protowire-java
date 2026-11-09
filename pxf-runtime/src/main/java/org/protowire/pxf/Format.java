@@ -30,6 +30,30 @@ public final class Format {
      * {@code FormatDocument}.
      */
     public static String formatDocument(Ast.Document doc) {
+        return format(doc, false);
+    }
+
+    /**
+     * {@code doc} laid out as protowire-go's {@code Marshal} writes a message:
+     * as {@link #formatDocument}, except that a list or map field bound to
+     * an empty value is written {@code []} or {@code {}} on its line. A
+     * message carries no empty collection on the wire, so one in a document
+     * read from wire bytes is an unset annotated field written so that it
+     * reads back (protowire-go#263), which Marshal spells that way. And, as
+     * Marshal does, it refuses a document a reader would refuse for its
+     * depth: a body or list past {@code MaxNestingDepth}, counted as the
+     * parser counts each {@code {} and {@code [} (HARDENING.md § Recursion,
+     * #203), and a {@code pxf.BigFloat} literal whose value is past
+     * MaxBigFloatExponent once rounded to its precision (#186). The lite tier
+     * writes its text with this.
+     *
+     * @throws PxfException {@code pxf: nesting depth exceeds MaxNestingDepth=100}
+     */
+    public static String marshalDocument(Ast.Document doc) {
+        return format(doc, true);
+    }
+
+    private static String format(Ast.Document doc, boolean compact) {
         StringBuilder sb = new StringBuilder();
         List<Object> others = topDirectives(doc);
         if (others.isEmpty()) {
@@ -37,7 +61,7 @@ public final class Format {
                 sb.append("@type ").append(doc.typeUrl()).append("\n\n");
             }
             writeComments(sb, doc.leadingComments(), 0);
-            formatEntries(sb, doc.entries(), 0);
+            formatEntries(sb, doc.entries(), 0, compact);
             return sb.toString();
         }
 
@@ -65,7 +89,7 @@ public final class Format {
         }
         if (!doc.entries().isEmpty()) {
             sb.append('\n');
-            formatEntries(sb, doc.entries(), 0);
+            formatEntries(sb, doc.entries(), 0, compact);
         }
         return sb.toString();
     }
@@ -114,7 +138,7 @@ public final class Format {
             for (int i = 0; i < row.cells().size(); i++) {
                 if (i > 0) sb.append(", ");
                 Ast.Value cell = row.cells().get(i);
-                if (cell != null) formatValue(sb, cell, 0);
+                if (cell != null) formatValue(sb, cell, 0, false);
             }
             sb.append(")\n");
         }
@@ -144,7 +168,28 @@ public final class Format {
         }
     }
 
-    private static void formatEntries(StringBuilder sb, List<Ast.Entry> entries, int level) {
+    /**
+     * Refuses a BigFloat literal no reader takes. Only a pxf.BigFloat carries
+     * a precision suffix, and the value it reads back as is bounded by
+     * MaxBigFloatExponent after rounding (protowire-go#261).
+     */
+    private static void checkBigFloat(Ast.FloatVal f) {
+        try {
+            BigFloats.parse(f.raw(), f.prec(), Limits.MAX_NUMERIC_LITERAL_DIGITS, Limits.MAX_BIG_FLOAT_EXPONENT);
+        } catch (IllegalArgumentException e) {
+            throw new PxfException(Position.UNKNOWN, "pxf: " + e.getMessage());
+        }
+    }
+
+    /** Marshal's depth check, at a body or list whose contents sit at {@code level}. */
+    private static void checkDepth(int level, boolean compact) {
+        if (compact && level > Limits.MAX_NESTING_DEPTH) {
+            throw new PxfException(Position.UNKNOWN, "pxf: nesting depth exceeds MaxNestingDepth=" + Limits.MAX_NESTING_DEPTH);
+        }
+    }
+
+    private static void formatEntries(StringBuilder sb, List<Ast.Entry> entries, int level, boolean compact) {
+        checkDepth(level, compact);
         for (Ast.Entry e : entries) {
             switch (e) {
                 case Ast.Assignment a -> {
@@ -153,7 +198,16 @@ public final class Format {
                     if (a.keyQuoted()) sb.append('"').append(escape(a.key())).append('"');
                     else sb.append(a.key());
                     sb.append(" = ");
-                    formatValue(sb, a.value(), level);
+                    // A list or map field's own value, never an element's
+                    // or a map value's: those Marshal writes as blocks.
+                    if (compact && a.value() instanceof Ast.ListVal l && l.elements().isEmpty()) {
+                        checkDepth(level + 1, compact);
+                        sb.append("[]");
+                    } else if (compact && a.value() instanceof Ast.BlockVal bv && bv.entries().isEmpty()) {
+                        checkDepth(level + 1, compact);
+                        sb.append("{}");
+                    }
+                    else formatValue(sb, a.value(), level, compact);
                     if (!a.trailingComment().isEmpty()) sb.append(' ').append(a.trailingComment());
                     sb.append('\n');
                 }
@@ -163,7 +217,7 @@ public final class Format {
                     if (mapKeyQuoted(m)) sb.append('"').append(escape(m.key())).append('"');
                     else sb.append(m.key());
                     sb.append(": ");
-                    formatValue(sb, m.value(), level);
+                    formatValue(sb, m.value(), level, compact);
                     if (!m.trailingComment().isEmpty()) sb.append(' ').append(m.trailingComment());
                     sb.append('\n');
                 }
@@ -180,7 +234,7 @@ public final class Format {
                     if (b.nameQuoted()) sb.append('"').append(escape(b.name())).append('"');
                     else sb.append(b.name());
                     sb.append(" {\n");
-                    formatEntries(sb, b.entries(), level + 1);
+                    formatEntries(sb, b.entries(), level + 1, compact);
                     writeIndent(sb, level);
                     sb.append("}\n");
                 }
@@ -189,6 +243,10 @@ public final class Format {
     }
 
     static void formatValue(StringBuilder sb, Ast.Value v, int level) {
+        formatValue(sb, v, level, false);
+    }
+
+    private static void formatValue(StringBuilder sb, Ast.Value v, int level, boolean compact) {
         // NullVal has no payload to format — the bound variable would be
         // unused, which CodeQL flags. Java 21 standard pattern matching
         // requires a binding on every `case` label (unnamed `_` is a
@@ -201,17 +259,21 @@ public final class Format {
         switch (v) {
             case Ast.StringVal s   -> sb.append('"').append(escape(s.value())).append('"');
             case Ast.IntVal i      -> sb.append(i.literal());
-            case Ast.FloatVal f    -> sb.append(f.literal());
+            case Ast.FloatVal f    -> {
+                if (compact && !f.prec().isEmpty()) checkBigFloat(f);
+                sb.append(f.literal());
+            }
             case Ast.BoolVal b     -> sb.append(b.value() ? "true" : "false");
             case Ast.BytesVal by   -> sb.append("b\"").append(Base64.getEncoder().encodeToString(by.value())).append('"');
             case Ast.IdentVal id   -> sb.append(id.name());
             case Ast.TimestampVal t -> sb.append(t.raw());
             case Ast.DurationVal d  -> sb.append(d.raw());
             case Ast.ListVal l     -> {
+                checkDepth(level + 1, compact);
                 sb.append("[\n");
                 for (int i = 0; i < l.elements().size(); i++) {
                     writeIndent(sb, level + 1);
-                    formatValue(sb, l.elements().get(i), level + 1);
+                    formatValue(sb, l.elements().get(i), level + 1, compact);
                     if (i < l.elements().size() - 1) sb.append(',');
                     sb.append('\n');
                 }
@@ -220,7 +282,7 @@ public final class Format {
             }
             case Ast.BlockVal bv -> {
                 sb.append("{\n");
-                formatEntries(sb, bv.entries(), level + 1);
+                formatEntries(sb, bv.entries(), level + 1, compact);
                 writeIndent(sb, level);
                 sb.append('}');
             }

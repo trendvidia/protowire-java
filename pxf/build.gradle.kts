@@ -46,4 +46,6 @@ sourceSets {
 
 tasks.test {
     systemProperty("protowire.testdata", rootDir.resolve("testdata").absolutePath)
+    systemProperty("protowire.goVerdicts", rootDir.resolve("scripts/go-verdicts/corpus.tsv").absolutePath)
+    inputs.file(rootDir.resolve("scripts/go-verdicts/corpus.tsv")).withPathSensitivity(PathSensitivity.RELATIVE)
 }

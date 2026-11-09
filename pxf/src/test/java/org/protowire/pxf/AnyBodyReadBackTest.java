@@ -12,6 +12,7 @@ import org.protowire.pxf.testproto.anyback.Defaulted;
 import org.protowire.pxf.testproto.anyback.Holder;
 import org.protowire.pxf.testproto.anyback.Leaf;
 import org.protowire.pxf.testproto.anyback.Required;
+import org.protowire.pxf.testproto.anyback.RequiredOptional;
 import org.protowire.pxf.testproto.anyback.Rich;
 
 import java.io.ByteArrayOutputStream;
@@ -34,7 +35,8 @@ final class AnyBodyReadBackTest {
         "anyback.v1.Leaf", Leaf.getDescriptor(),
         "anyback.v1.Rich", Rich.getDescriptor(),
         "anyback.v1.Defaulted", Defaulted.getDescriptor(),
-        "anyback.v1.Required", Required.getDescriptor());
+        "anyback.v1.Required", Required.getDescriptor(),
+        "anyback.v1.RequiredOptional", RequiredOptional.getDescriptor());
     private static final TypeResolver RESOLVER = TYPES::get;
     private static final UnmarshalOptions READ = UnmarshalOptions.defaults().withTypeResolver(RESOLVER);
 
@@ -106,9 +108,13 @@ final class AnyBodyReadBackTest {
             new Case("repeated singular field", leaf, cat(vf(2, 1), vf(2, 2)), false),
             // A literal can't hold it.
             new Case("timestamp past year 9999", rich, lf(1, vf(1, 1L << 40)), false),
-            // A reader's annotation rules would change or refuse the body.
-            new Case("default unset", "anyback.v1.Defaulted", vf(2, 1), false),
-            new Case("required unset", "anyback.v1.Required", lf(2, str("s")), false),
+            // An unset annotated field is written so that it reads back
+            // (protowire-go#259): as its zero, so the body is written.
+            new Case("default unset", "anyback.v1.Defaulted", vf(2, 1), true),
+            new Case("required unset", "anyback.v1.Required", lf(2, str("s")), true),
+            // A reader's annotation rules would refuse the body: no text says
+            // an optional field is unset, and marshal refuses to leave it out.
+            new Case("required optional unset", "anyback.v1.RequiredOptional", lf(2, str("s")), false),
             // Never unpacked at all.
             new Case("unresolved", "anyback.v1.Nope", tagT, false),
             new Case("unparsable", leaf, new byte[] {(byte) 0xff}, false),

@@ -40,7 +40,9 @@ public final class CheckDecodeAndroid {
         Map.entry("adversarial.v1.SbeText", adversarial.v1.SbeTextPxfMeta.INSTANCE),
         Map.entry("text.v1.Scalars", text.v1.ScalarsPxfMeta.INSTANCE),
         Map.entry("text.v1.Shapes", text.v1.ShapesPxfMeta.INSTANCE),
-        Map.entry("text.v1.WellKnown", text.v1.WellKnownPxfMeta.INSTANCE));
+        Map.entry("text.v1.WellKnown", text.v1.WellKnownPxfMeta.INSTANCE),
+        Map.entry("text.v1.Annotated", text.v1.AnnotatedPxfMeta.INSTANCE),
+        Map.entry("text.v1.Ordered", text.v1.OrderedPxfMeta.INSTANCE));
 
     public static void main(String[] args) {
         String format = null, schema = null, input = null;
@@ -92,9 +94,13 @@ public final class CheckDecodeAndroid {
                 System.out.write(LiteWireWriter.encode(Parser.parse(data, limits), meta, limits));
                 System.out.flush();
             }
-            case "pb", "pb-render" -> LiteWireReader.toAst(data, meta, limits);
+            case "pb" -> LiteWireReader.toAst(data, meta, limits);
+            // Rendered, so a value whose text a reader would refuse is
+            // refused here too: past MaxNestingDepth counting lists, or a
+            // BigFloat past its bound (#203, #186).
+            case "pb-render" -> Format.marshalDocument(LiteWireReader.toAst(data, meta, limits));
             case "pb-text" -> {
-                byte[] text = Format.formatDocument(LiteWireReader.toAst(data, meta, limits))
+                byte[] text = Format.marshalDocument(LiteWireReader.toAst(data, meta, limits))
                     .getBytes(StandardCharsets.UTF_8);
                 System.out.write(text);
                 System.out.flush();

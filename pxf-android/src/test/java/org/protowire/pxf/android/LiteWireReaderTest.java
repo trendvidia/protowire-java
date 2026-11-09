@@ -85,6 +85,38 @@ final class LiteWireReaderTest {
         };
     }
 
+    /** A oneof numbered 13 declared before field 9, as text.v1.Annotated declares it (#224). */
+    private static PxfMeta orderedMeta(List<Integer> order) {
+        return new PxfMeta() {
+            @Override public String                fullName()           { return "test.Ordered"; }
+            @Override public Map<String, Integer>  fieldNumbers()       { return Map.of("a", 13, "plain", 9); }
+            @Override public Map<Integer, Integer> fieldKinds()         { return Map.of(13, 5, 9, 5); }
+            @Override public Map<Integer, Integer> wireTypes()          { return Map.of(); }
+            @Override public Set<Integer>          repeatedFields()     { return Set.of(); }
+            @Override public Set<Integer>          packedFields()       { return Set.of(); }
+            @Override public Map<Integer, String>  messageTypes()       { return Map.of(); }
+            @Override public Map<Integer, String>  enumTypes()          { return Map.of(); }
+            @Override public Set<Integer>          requiredFields()     { return Set.of(); }
+            @Override public Map<Integer, String>  defaults()           { return Map.of(); }
+            @Override public int                   sbeTemplateId()      { return -1; }
+            @Override public Map<Integer, Integer> sbeFieldLengths()    { return Map.of(); }
+            @Override public Map<Integer, String>  sbeFieldEncodings()  { return Map.of(); }
+            @Override public Map<Integer, String>  oneofOf()            { return Map.of(13, "o"); }
+            @Override public List<Integer>         fieldOrder()         { return order != null ? order : PxfMeta.super.fieldOrder(); }
+        };
+    }
+
+    @Test
+    void fieldsAreWrittenInDeclarationOrder() {
+        PxfMeta declared = orderedMeta(List.of(13, 9));
+        byte[] wire = LiteWireWriter.encode(Parser.parse("plain = 1\na = 2"), declared);
+        assertEquals("a = 2\nplain = 1\n", Format.marshalDocument(LiteWireReader.toAst(wire, declared)));
+        // A companion without FIELD_ORDER: number order, as before.
+        PxfMeta numbered = orderedMeta(null);
+        assertEquals(List.of(9, 13), numbered.fieldOrder());
+        assertEquals("plain = 1\na = 2\n", Format.marshalDocument(LiteWireReader.toAst(wire, numbered)));
+    }
+
     @Test
     void scalarString_roundTrip() {
         assertRoundTrip("name = \"Alice\"", scalarMeta("name", 1, 9));

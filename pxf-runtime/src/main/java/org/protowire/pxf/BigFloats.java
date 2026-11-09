@@ -216,6 +216,20 @@ public final class BigFloats {
      *     it is never written out as a literal nobody can read
      */
     public static String format(BigInteger mantissa, int exponent, int prec, boolean negative, int maxDigits, int maxExponent) {
+        return format(mantissa, exponent, prec, negative, maxDigits, maxExponent, true);
+    }
+
+    /**
+     * {@link #format}, with the bound on the value after rounding to prec
+     * checked or not ({@code roundedBound}). A decoder accepts a value whose
+     * binary exponent is at the bound as it arrives, though rounding takes it
+     * past (draft -01 § Mandatory Limits): only its text is refused, by
+     * whoever writes it. The lite tier reads wire bytes into a document
+     * without the check, and {@link Format#marshalDocument} refuses the
+     * literal when it writes it.
+     */
+    public static String format(BigInteger mantissa, int exponent, int prec, boolean negative, int maxDigits, int maxExponent,
+            boolean roundedBound) {
         String sign = negative ? "-" : "";
         // A precision of zero is zero whatever the other fields say.
         if (prec == 0) return sign + "0";
@@ -239,6 +253,16 @@ public final class BigFloats {
         if (excess > 0) {
             m = roundOff(m, excess);
             e += excess;
+        }
+        // The bound applies to the value after rounding (protowire#410), and
+        // rounding can carry the mantissa to the next power of two: 2^54-1
+        // at prec 3 is 2^54. Such a value reads off the wire at the bound,
+        // and its literal is past it, which every reader refuses, so the
+        // producer fails (draft -01 § Mandatory Limits, protowire-go#261).
+        long rounded = e + m.bitLength();
+        if (roundedBound && (rounded > maxExponent || rounded < -maxExponent)) {
+            throw new IllegalArgumentException("pxf.BigFloat binary exponent " + rounded + " after rounding to prec " + p
+                    + " exceeds MaxBigFloatExponent=" + maxExponent);
         }
         BigInteger num = e >= 0 ? m.shiftLeft((int) e) : m;
         BigInteger den = e >= 0 ? BigInteger.ONE : BigInteger.ONE.shiftLeft((int) -e);

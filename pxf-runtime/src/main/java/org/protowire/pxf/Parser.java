@@ -39,6 +39,8 @@ public final class Parser {
     private int depth;
     private final DecodeLimits limits;
     private final List<Ast.Comment> pendingComments = new ArrayList<>();
+    /** Just past the token {@link #advance} consumed last: where the value it ended ends. */
+    private Position prevEnd = Position.UNKNOWN;
 
     private Parser(byte[] input) {
         this(input, DecodeLimits.defaults());
@@ -107,7 +109,26 @@ public final class Parser {
         return p.parseDatasetRow(expected);
     }
 
+    /**
+     * Takes the pending comment that trails a value on its own line, as
+     * {@code b = 1 # tc}, for the entry that value ends (#193). {@code end} is
+     * where the value ends. A newline ends every line, so at most one comment
+     * trails a value, and it is the first pending one. A comment on a later
+     * line is the next entry's leading comment, and stays pending. Without
+     * this, the comment surfaced as the next entry's leading comment, or was
+     * lost before a block's '}' or the document's end. protowire-go's
+     * takeTrailingComment.
+     */
+    private String takeTrailingComment(Position end) {
+        if (pendingComments.isEmpty()) return "";
+        Ast.Comment c = pendingComments.get(0);
+        if (c.pos().line() != end.line() || c.pos().offset() < end.offset()) return "";
+        pendingComments.remove(0);
+        return c.text();
+    }
+
     private void advance() {
+        prevEnd = lex.position();
         while (true) {
             current = lex.next();
             if (current.kind() == TokenKind.NEWLINE) continue;
@@ -427,12 +448,14 @@ public final class Parser {
     private TokenKind peekKind() {
         Lexer.Mark mark = lex.mark();
         Token saved = current;
+        Position savedEnd = prevEnd;
         int savedComments = pendingComments.size();
         advance();
         TokenKind k = current.kind();
         // Restore.
         lex.restore(mark);
         current = saved;
+        prevEnd = savedEnd;
         while (pendingComments.size() > savedComments) {
             pendingComments.remove(pendingComments.size() - 1);
         }
@@ -446,14 +469,15 @@ public final class Parser {
     private Ast.Entry parseEntry(boolean allowMapEntry) {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
-        rejectIllegal();
         // map-key = identifier / string / integer / bool (draft -01
         // §abnf-grammar; the keyword spelling landed in protowire#284): a
         // bare true / false is a key, and like an integer it takes only
         // the ':' tail — the '=' and '{' arms below insist on an identifier.
         if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING
                 && current.kind() != TokenKind.INT && current.kind() != TokenKind.BOOL) {
-            throw new PxfException(pp, "expected identifier, string, integer, or bool, got " + current.kind() + " (\"" + current.value() + "\")");
+            // An ILLEGAL token reads as the lexer's diagnostic inside this
+            // expectation, as protowire-go's parseEntry words it.
+            throw new PxfException(pp, "expected identifier, string, integer, or bool, got " + current.errMsg());
         }
         TokenKind keyKind = current.kind();
         String key = current.value();
@@ -475,7 +499,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.Assignment(pp, key, v, leading, "", keyKind == TokenKind.STRING);
+                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
             }
             case COLON -> {
                 // Map entry. Only allowed inside a `{ ... }` block, never at
@@ -487,7 +511,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.MapEntry(pp, key, v, leading, "", keyKind == TokenKind.STRING);
+                yield new Ast.MapEntry(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
             }
             case LBRACE -> {
                 // `{ ... }` denotes a submessage field, or a named entry of
@@ -609,16 +633,15 @@ public final class Parser {
         }
         advance(); // consume @type
         if (current.kind() != TokenKind.EQUALS) {
-            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.kind());
+            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.errMsg());
         }
         advance();
-        rejectIllegal();
         if (current.kind() != TokenKind.STRING) {
-            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.kind());
+            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.errMsg());
         }
         String url = current.value();
         advance();
-        return new Ast.TypeEntry(pp, url, leading, "");
+        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd));
     }
 
     private List<Ast.Entry> parseBodyInner() {

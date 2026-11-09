@@ -29,7 +29,7 @@ public final class LitePxf {
      * (deterministic, matches protobuf's tag-ordered serialization).
      */
     public static String marshal(MessageLite msg, PxfMeta meta) {
-        return Format.formatDocument(LiteWireReader.toAst(msg.toByteArray(), meta));
+        return Format.marshalDocument(LiteWireReader.toAst(msg.toByteArray(), meta));
     }
 
     /**
@@ -40,6 +40,6 @@ public final class LitePxf {
      * so the registry is only needed for hand-built metas or test fixtures.
      */
     public static String marshal(MessageLite msg, PxfMeta meta, PxfRegistry registry) {
-        return Format.formatDocument(LiteWireReader.toAst(msg.toByteArray(), meta, registry));
+        return Format.marshalDocument(LiteWireReader.toAst(msg.toByteArray(), meta, registry));
     }
 }

@@ -1,0 +1,52 @@
+# protowire-go v1.17.0 on test/v1/secrets.proto's Vault, for OnSecretFieldTest (#206).
+# mode TAB document TAB hook calls (path=value, |-joined) TAB message (PB hex) TAB present paths (sorted, |-joined) TAB error
+# mode: none = UnmarshalFull with no hook; plain = Unmarshal with the hook; full = UnmarshalFull with the hook.
+# The hook records each call, and refuses the value "deny" with the error "denied".
+none	pw = "x"			pw|pw.value	
+plain	pw = "x"	pw=x	0a00		
+full	pw = "x"	pw=x	0a00	pw|pw.value	
+none	pw { value = "x"  hint = "h"  fingerprint = "f" }			pw|pw.fingerprint|pw.hint|pw.value	
+plain	pw { value = "x"  hint = "h"  fingerprint = "f" }	pw=x	0a061201681a0166		
+full	pw { value = "x"  hint = "h"  fingerprint = "f" }	pw=x	0a061201681a0166	pw|pw.fingerprint|pw.hint|pw.value	
+none	pw = { value = "x" }			pw|pw.value	
+plain	pw = { value = "x" }	pw=x	0a00		
+full	pw = { value = "x" }	pw=x	0a00	pw|pw.value	
+none	pw { hint = "h" }			pw|pw.hint	
+plain	pw { hint = "h" }		0a03120168		
+full	pw { hint = "h" }		0a03120168	pw|pw.hint	
+none	list = ["a", "b"]			list	
+plain	list = ["a", "b"]	list[0]=a|list[1]=b	12001200		
+full	list = ["a", "b"]	list[0]=a|list[1]=b	12001200	list	
+none	list = [{ value = "a"  hint = "h" }, "b"]			list|list[0].hint|list[0].value	
+plain	list = [{ value = "a"  hint = "h" }, "b"]	list[0]=a|list[1]=b	12031201681200		
+full	list = [{ value = "a"  hint = "h" }, "b"]	list[0]=a|list[1]=b	12031201681200	list|list[0].hint|list[0].value	
+none	by_name = { "acme": "k"  "z": { value = "v" } }			by_name|by_name["z"].value	
+plain	by_name = { "acme": "k"  "z": { value = "v" } }	by_name["acme"]=k|by_name["z"]=v	1a080a0461636d6512001a050a017a1200		
+full	by_name = { "acme": "k"  "z": { value = "v" } }	by_name["acme"]=k|by_name["z"]=v	1a080a0461636d6512001a050a017a1200	by_name|by_name["z"].value	
+none	nested { pw = "x" }			nested|nested.pw|nested.pw.value	
+plain	nested { pw = "x" }	nested.pw=x	22020a00		
+full	nested { pw = "x" }	nested.pw=x	22020a00	nested|nested.pw|nested.pw.value	
+none	nested = { pw { value = "y" } }			nested|nested.pw|nested.pw.value	
+plain	nested = { pw { value = "y" } }	nested.pw=y	22020a00		
+full	nested = { pw { value = "y" } }	nested.pw=y	22020a00	nested|nested.pw|nested.pw.value	
+none	pw { other = "x" }				1:6: unknown field "other" in pxf.Secret
+plain	pw { other = "x" }		0a00		1:6: unknown pxf.Secret field "other" (expected value/hint/fingerprint)
+full	pw { other = "x" }		0a00		1:6: unknown pxf.Secret field "other" (expected value/hint/fingerprint)
+none	pw { value = 1 }				1:14: expected string for field "value"
+plain	pw { value = 1 }		0a00		1:14: expected string value for pxf.Secret value, got integer
+full	pw { value = 1 }		0a00		1:14: expected string value for pxf.Secret value, got integer
+none	pw { value = "a"  value = "b" }				1:19: field "value" is already set
+plain	pw { value = "a"  value = "b" }	pw=a	0a00		1:19: field "value" is already set
+full	pw { value = "a"  value = "b" }	pw=a	0a00		1:19: field "value" is already set
+none	pw { value = "a"				1:17: expected '}', got EOF
+plain	pw { value = "a"	pw=a	0a00		1:17: expected '}' to close pxf.Secret block, got EOF
+full	pw { value = "a"	pw=a	0a00		1:17: expected '}' to close pxf.Secret block, got EOF
+none	pw { = "x" }				1:6: expected identifier, string, integer, or bool, got = ("=")
+plain	pw { = "x" }		0a00		1:6: expected pxf.Secret field name (value/hint/fingerprint), got = ("=")
+full	pw { = "x" }		0a00		1:6: expected pxf.Secret field name (value/hint/fingerprint), got = ("=")
+none	nested { pw = "deny" }			nested|nested.pw|nested.pw.value	
+plain	nested { pw = "deny" }	nested.pw=deny	2200		1:15: pxf.Secret hook for "nested.pw": denied
+full	nested { pw = "deny" }	nested.pw=deny	2200		1:15: pxf.Secret hook for "nested.pw": denied
+none	pw { value = "deny" }			pw|pw.value	
+plain	pw { value = "deny" }	pw=deny	0a00		1:14: pxf.Secret hook for "pw": denied
+full	pw { value = "deny" }	pw=deny	0a00		1:14: pxf.Secret hook for "pw": denied

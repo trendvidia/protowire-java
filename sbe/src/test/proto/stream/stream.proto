@@ -1,0 +1,20 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// The schema of protowire-go's scripts/dump_stream_sbe (v1.17.0), whose
+// SOFH-framed stream of three Simple messages SbeStreamTest holds the Java
+// stream codec to (#207).
+syntax = "proto3";
+
+package stream.v1;
+
+import "sbe/annotations.proto";
+
+option (sbe.schema_id) = 1;
+option (sbe.version) = 0;
+
+message Simple {
+  option (sbe.template_id) = 2;
+  uint32 id = 1;
+  int32 value = 2;
+}

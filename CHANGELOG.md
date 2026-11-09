@@ -20,6 +20,13 @@ format changes.
 
 ### Added
 
+- **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
+  - **pb:** `org.protowire.pb.Encoder` and `Decoder` frame each message with a varint length.
+  - **SBE:** `Codec.newEncoder` and `Codec.newDecoder` frame each message with a Simple Open Framing Header (SOFH), encoding type 0xEB50.
+  - **Envelope:** `org.protowire.envelope.Encoder` and `Decoder` reuse pb's framing.
+  - **Errors:** a frame past the decoder's maximum (16 MiB by default), a varint that overflows, or a bad SOFH header throws a `FramingCorruptException` with Go's text. A stream that ends inside a frame throws `unexpected EOF`. Both are thrown again on every later call. A message that fails to decode fails alone, and the next frame still reads.
+  - **Scope:** full tier only (decided on #205).
+
 - **`Pxf.appendDatasetHeader` and `Pxf.appendDatasetRow` write `@dataset` tables, as protowire-go's `AppendDatasetHeader` and `AppendDatasetRow` do** (#204). Java could read a table but not write one.
   - **Header:** the columns are checked as the reader checks them, dotted paths included, and so is the schema. A `(pxf.required)` field missing from the columns is refused.
   - **Rows:** a set field is written as `Pxf.marshal` writes its value, and a list, map or block on one line. An unset field is an empty cell, except where reading one would not give the field back, in which case it follows Go's rules: a zero value, `[]` or `{}`, or `null`. An unset required field with presence is refused, and so is a row the reader would reject for a required sub-message.

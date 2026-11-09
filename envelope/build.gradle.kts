@@ -9,6 +9,8 @@ plugins {
 
 dependencies {
     api("com.google.protobuf:protobuf-java:3.25.5")
+    // Stream framing (#207): the envelope reuses pb's, so it has one implementation.
+    api(project(":pb"))
 }
 
 protobuf {

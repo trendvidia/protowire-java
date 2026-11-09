@@ -432,11 +432,12 @@ public final class SchemaValidator {
     /**
      * Join a list of violations into a single human-readable error message.
      * Returns {@code null} when the list is empty. Used by the decoder to
-     * surface validation failures via {@link PxfException}.
+     * surface validation failures via {@link PxfException}. Worded as
+     * protowire-go's asValidationError.
      */
     static String asMessage(List<Violation> violations) {
         if (violations.isEmpty()) return null;
-        StringBuilder sb = new StringBuilder("PXF schema bind-time violations:");
+        StringBuilder sb = new StringBuilder("PXF schema violations:");
         for (Violation v : violations) {
             sb.append("\n  ").append(v);
         }

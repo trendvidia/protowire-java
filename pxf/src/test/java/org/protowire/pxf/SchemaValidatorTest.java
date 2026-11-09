@@ -327,7 +327,7 @@ class SchemaValidatorTest {
     void decoderRejectsTheInvalidFileBeforeReadingADocument() {
         PxfException e = assertThrows(PxfException.class,
                 () -> Pxf.unmarshal("tags = [\"a\"]".getBytes(java.nio.charset.StandardCharsets.UTF_8), RepeatedDefault.newBuilder()));
-        assertTrue(e.getMessage().contains("PXF schema bind-time violations:"), e.getMessage());
+        assertTrue(e.getMessage().contains("PXF schema violations:"), e.getMessage());
         assertTrue(e.getMessage().contains("test.v1.KeyedBad.single"), "the whole file's violations are reported: " + e.getMessage());
         // skipValidate bypasses the bind-time check; the document then decodes.
         RepeatedDefault.Builder b = RepeatedDefault.newBuilder();

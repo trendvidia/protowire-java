@@ -93,6 +93,8 @@ format changes.
 
 ### Fixed
 
+- **`DatasetReader` read a `//` or `/*` comment between rows as a stray `/` when a read ended between its two characters** (#200). It refused the table with `expected '(' to start a @dataset row or a directive, got '/'`. A one-byte stream always hit this, and a 4096-byte read could too. It now waits for the next read.
+
 - **The lite tier reports three errors where protowire-go does** (#222). The texts already matched; the line:column was one token off.
   - `counts = { a = 1 }` is refused at the `=` (`1:14: unexpected '=' in map, use ':' for map entries`). It used to be refused at the entry, `1:12`.
   - `counts = { a { } }` is refused at the `{` (`1:14: expected ':' after map key, got {`), not at the entry.

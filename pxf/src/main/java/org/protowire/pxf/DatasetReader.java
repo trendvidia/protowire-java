@@ -143,7 +143,10 @@ public final class DatasetReader {
         for (;;) {
             try {
                 int start = skipTrivia(pending);
-                if (start >= 0 && start < pending.length) {
+                // A '/' that ends the buffer may open a comment whose second
+                // byte the next read brings, so it waits for that read.
+                boolean cutComment = start >= 0 && start == pending.length - 1 && pending[start] == '/' && !srcEof;
+                if (start >= 0 && start < pending.length && !cutComment) {
                     byte ch = pending[start];
                     if (ch == '(') {
                         int end = findMatchingParen(pending, start);

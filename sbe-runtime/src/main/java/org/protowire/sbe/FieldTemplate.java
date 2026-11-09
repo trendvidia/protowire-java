@@ -28,6 +28,12 @@ import java.util.List;
 public final class FieldTemplate {
     public final int fieldNumber;
     public final String name;
+    /**
+     * The field's full protobuf name ({@code pkg.Message.field}), which
+     * errors name it by, as protowire-go's do; {@link #name} when the
+     * template was built without one.
+     */
+    public final String fullName;
     public final int kind;
     public final int offset;
     public final int size;
@@ -35,6 +41,7 @@ public final class FieldTemplate {
     public final List<FieldTemplate> composite;
     public ViewSchema compositeView;
 
+    /** As the full constructor, with {@link #fullName} the short {@code name}. */
     public FieldTemplate(
             int fieldNumber,
             String name,
@@ -43,8 +50,21 @@ public final class FieldTemplate {
             int size,
             String encoding,
             List<FieldTemplate> composite) {
+        this(fieldNumber, name, name, kind, offset, size, encoding, composite);
+    }
+
+    public FieldTemplate(
+            int fieldNumber,
+            String name,
+            String fullName,
+            int kind,
+            int offset,
+            int size,
+            String encoding,
+            List<FieldTemplate> composite) {
         this.fieldNumber = fieldNumber;
         this.name = name;
+        this.fullName = fullName;
         this.kind = kind;
         this.offset = offset;
         this.size = size;

@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 import org.protowire.sbe.runtime.SbeConstants;
+import org.protowire.sbe.runtime.SbeKinds;
 import org.protowire.sbe.runtime.SbeWireCodec;
 
 /**
@@ -28,7 +29,12 @@ import org.protowire.sbe.runtime.SbeWireCodec;
  */
 public final class Codec {
     final Map<String, MessageTemplate> byName = new HashMap<>();
-    final Map<Integer, MessageTemplate> byId = new HashMap<>();
+    // Keyed by schema id and template id together: a template id is unique
+    // only within a schema (draft -01 § SBE Annotations, protowire-go#253).
+    final Map<SchemaTemplate, MessageTemplate> byId = new HashMap<>();
+
+    /** A template's identity on the wire: the header's schemaId and templateId. */
+    record SchemaTemplate(int schemaId, int templateId) {}
     // The draft's per-call limits (HARDENING.md § Mandatory limits, #79),
     // fixed on the instance so the Codec stays safe for concurrent use;
     // withLimits returns a Codec sharing the templates.
@@ -49,6 +55,7 @@ public final class Codec {
         Codec c = new Codec();
         c.byName.putAll(byName);
         c.byId.putAll(byId);
+        c.names.putAll(names);
         c.maxMessageSize = maxMessageSize;
         c.maxRepeatedCount = maxRepeatedCount;
         return c;
@@ -64,6 +71,16 @@ public final class Codec {
             if (schema == null) throw new IllegalArgumentException("sbe: file " + fd.getName() + " missing (sbe.schema_id)");
             Integer version = SbeAnnotations.fileUint32(fd, SbeAnnotations.EXT_VERSION);
             int v = version == null ? 0 : version;
+            // Every header field is 16 bits; a larger id would be written as
+            // its low bits, naming another schema (protowire-go#250).
+            if (Integer.toUnsignedLong(schema) > SbeKinds.MAX_UINT16) {
+                throw new IllegalArgumentException("sbe: file " + fd.getName() + ": (sbe.schema_id) = " + Integer.toUnsignedString(schema)
+                        + " is past " + SbeKinds.MAX_UINT16 + ", the largest schemaId SBE can state");
+            }
+            if (Integer.toUnsignedLong(v) > SbeKinds.MAX_UINT16) {
+                throw new IllegalArgumentException("sbe: file " + fd.getName() + ": (sbe.version) = " + Integer.toUnsignedString(v)
+                        + " is past " + SbeKinds.MAX_UINT16 + ", the largest version SBE can state");
+            }
             for (Descriptor md : fd.getMessageTypes()) {
                 c.register(md, schema, v);
             }
@@ -71,12 +88,25 @@ public final class Codec {
         return c;
     }
 
+    /** The message each template was registered for, to tell a duplicate id from a file passed twice. */
+    private final Map<SchemaTemplate, String> names = new HashMap<>();
+
     private void register(Descriptor md, int schemaId, int version) {
         Integer tid = SbeAnnotations.messageUint32(md, SbeAnnotations.EXT_TEMPLATE_ID);
         if (tid != null) {
             MessageTemplate tmpl = TemplateBuilder.build(md, schemaId, version);
+            // A second message with the same id would replace the first, and
+            // view would read one as the other. The same message seen again,
+            // as when a file is passed twice, is not a duplicate.
+            SchemaTemplate key = new SchemaTemplate(schemaId, tmpl.templateId);
+            String prev = names.get(key);
+            if (prev != null && !prev.equals(md.getFullName())) {
+                throw new IllegalArgumentException("sbe: messages " + prev + " and " + md.getFullName() + " share (sbe.template_id) = "
+                        + tmpl.templateId + " in schema " + schemaId + "; it must be unique within a schema");
+            }
+            names.put(key, md.getFullName());
             byName.put(md.getFullName(), tmpl);
-            byId.put(tmpl.templateId, tmpl);
+            byId.put(key, tmpl);
         }
         for (Descriptor nested : md.getNestedTypes()) register(nested, schemaId, version);
     }
@@ -101,13 +131,27 @@ public final class Codec {
         return b.build();
     }
 
+    /**
+     * A reader over {@code data} without decoding it, for the template the
+     * header's schemaId and templateId name. As protowire-go's
+     * {@code View}, it checks MaxMessageSize first, and a wire blockLength
+     * below the template's, whose fields would be read from past the block.
+     */
     public View view(byte[] data) {
+        if (data.length > maxMessageSize) {
+            throw new IllegalArgumentException("sbe: input of " + data.length + " bytes exceeds MaxMessageSize=" + maxMessageSize);
+        }
         if (data.length < SbeConstants.HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
         ByteBuffer bb = ByteBuffer.wrap(data).order(SbeConstants.ORDER);
         int blockLength = Short.toUnsignedInt(bb.getShort(0));
         int templateId = Short.toUnsignedInt(bb.getShort(2));
-        MessageTemplate t = byId.get(templateId);
-        if (t == null) throw new IllegalArgumentException("sbe: unknown template id " + templateId);
+        int schemaId = Short.toUnsignedInt(bb.getShort(4));
+        MessageTemplate t = byId.get(new SchemaTemplate(schemaId, templateId));
+        if (t == null) throw new IllegalArgumentException("sbe: unknown template ID " + templateId + " in schema " + schemaId);
+        if (blockLength < t.blockLength) {
+            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength
+                    + " for template " + templateId);
+        }
         if (data.length < SbeConstants.HEADER_SIZE + blockLength) throw new IllegalArgumentException("sbe: data too short for root block");
         return new View(data, SbeConstants.HEADER_SIZE, blockLength, t.viewSchema);
     }

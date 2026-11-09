@@ -43,6 +43,15 @@ public final class Result {
     Set<String> presentFieldsView()       { return presentFields; }
 
     /**
+     * The paths of every field the document set, to a value or to null: the
+     * union of {@link #isSet} and {@link #isNull}, as protowire-go's
+     * {@code PresentFields}. For a layered-config caller that unions each
+     * layer's presence and then applies defaults and the required check to
+     * the union itself. A copy, in no particular order.
+     */
+    public Set<String> presentFields()    { return Set.copyOf(presentFields); }
+
+    /**
      * Returns the {@code @<name> *(prefix) [{ ... }]} directives the decoder
      * saw at the document root, in source order. Excludes the {@code @type}
      * and {@code @dataset} directives (which have their own accessors).

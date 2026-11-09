@@ -446,14 +446,15 @@ public final class Parser {
     private Ast.Entry parseEntry(boolean allowMapEntry) {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
-        rejectIllegal();
         // map-key = identifier / string / integer / bool (draft -01
         // §abnf-grammar; the keyword spelling landed in protowire#284): a
         // bare true / false is a key, and like an integer it takes only
         // the ':' tail — the '=' and '{' arms below insist on an identifier.
         if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING
                 && current.kind() != TokenKind.INT && current.kind() != TokenKind.BOOL) {
-            throw new PxfException(pp, "expected identifier, string, integer, or bool, got " + current.kind() + " (\"" + current.value() + "\")");
+            // An ILLEGAL token reads as the lexer's diagnostic inside this
+            // expectation, as protowire-go's parseEntry words it.
+            throw new PxfException(pp, "expected identifier, string, integer, or bool, got " + current.errMsg());
         }
         TokenKind keyKind = current.kind();
         String key = current.value();
@@ -609,12 +610,11 @@ public final class Parser {
         }
         advance(); // consume @type
         if (current.kind() != TokenKind.EQUALS) {
-            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.kind());
+            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.errMsg());
         }
         advance();
-        rejectIllegal();
         if (current.kind() != TokenKind.STRING) {
-            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.kind());
+            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.errMsg());
         }
         String url = current.value();
         advance();

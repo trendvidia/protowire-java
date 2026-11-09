@@ -695,10 +695,8 @@ final class LiteWireWriterTest {
                 Map.of(),
                 Map.of(2, "figure", 3, "figure"));
 
-        IllegalArgumentException e = assertThrows(IllegalArgumentException.class,
-                () -> LiteWireWriter.encode(doc, m));
-        assertEquals(
-            "oneof 'figure' in test.Shape already has 'radius' set; cannot also set 'sides'",
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(doc, m));
+        assertEquals("2:1: oneof \"figure\": field \"sides\" conflicts with already-set field \"radius\"",
             e.getMessage());
     }
 
@@ -1387,7 +1385,8 @@ final class LiteWireWriterTest {
     void mapKeyBoundTwiceIsRejected() {
         rulesReject("m = { a: \"1\" a: \"2\" }", "map field \"m\": key \"a\" is already set");
         rulesReject("m = { a: \"1\" }\nm = { a: \"2\" }", "map field \"m\": key \"a\" is already set");
-        rulesReject("nums = { 1: \"x\" \"1\": \"y\" }", "map field \"nums\": key \"1\" is already set");
+        // An integer key is shown as the number, as protowire-go shows it.
+        rulesReject("nums = { 1: \"x\" \"1\": \"y\" }", "map field \"nums\": key 1 is already set");
     }
 
     @Test
@@ -1400,7 +1399,7 @@ final class LiteWireWriterTest {
     void nullOnAListOrAMapIsRejected() {
         rulesReject("l = null", "null is not allowed on repeated field \"l\"");
         rulesReject("m = null", "null is not allowed on map field \"m\"");
-        rulesReject("m = { a: null }", "null is not allowed as a map value in field \"m\"");
+        rulesReject("m = { a: null }", "null is not allowed as map value in field \"m\"");
     }
 
     @Test
@@ -1411,13 +1410,31 @@ final class LiteWireWriterTest {
 
     @Test
     void nullOutsideNullableFieldsIsRejected() {
-        // Every call but nullableFields() goes to rulesMeta().
+        // A plain scalar, listed with no presence: protowire-go's hint.
+        PxfException e = assertThrows(PxfException.class,
+            () -> LiteWireWriter.encode(Parser.parse("s = null"), statingPresence(true)));
+        assertEquals("1:5: null is not allowed on scalar field \"s\": declare it optional, or as a wrapper type "
+            + "(google.protobuf.StringValue or similar), to make it nullable", e.getMessage());
+        // A companion from before IMPLICIT_PRESENCE_FIELDS lists no field
+        // there, so the null reads as one on a proto2 required field. The
+        // verdict is the same.
+        e = assertThrows(PxfException.class,
+            () -> LiteWireWriter.encode(Parser.parse("s = null"), statingPresence(false)));
+        assertEquals("1:5: null is not allowed on scalar field \"s\": the field is required, so it must be set",
+            e.getMessage());
+    }
+
+    /** rulesMeta() with no nullable field, and every singular field without presence when {@code implicit}. */
+    private static PxfMeta statingPresence(boolean implicit) {
         PxfMeta rules = rulesMeta();
-        PxfMeta meta = (PxfMeta) java.lang.reflect.Proxy.newProxyInstance(
+        Set<Integer> singular = new java.util.HashSet<>(rules.fieldNumbers().values());
+        singular.removeAll(rules.repeatedFields());
+        return (PxfMeta) java.lang.reflect.Proxy.newProxyInstance(
             PxfMeta.class.getClassLoader(), new Class<?>[] {PxfMeta.class},
-            (proxy, method, args) -> method.getName().equals("nullableFields")
-                ? Set.of() : method.invoke(rules, args));
-        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(Parser.parse("s = null"), meta));
-        assertEquals(true, e.getMessage().contains("null is not allowed on field \"s\""), e.getMessage());
+            (proxy, method, args) -> switch (method.getName()) {
+                case "nullableFields" -> Set.of();
+                case "implicitPresenceFields" -> implicit ? singular : Set.of();
+                default -> method.invoke(rules, args);
+            });
     }
 }

@@ -533,15 +533,24 @@ final class FastDecoder {
             }
             Position pos = current.pos();
             if (current.kind() == TokenKind.AT_TYPE) throw new PxfException(pos, TYPE_ENTRY_MISPLACED);
-            if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING && current.kind() != TokenKind.INT) {
-                throw new PxfException(pos, "expected identifier, string, or integer, got " + current.kind() + " (\"" + current.value() + "\")");
+            // The grammar's key set (Parser.parseEntry), so a bool or integer
+            // key before '=' or '{' gets the parser's error below, not this
+            // one. As protowire-go's decodeFieldsInner.
+            if (current.kind() != TokenKind.IDENT && current.kind() != TokenKind.STRING
+                    && current.kind() != TokenKind.INT && current.kind() != TokenKind.BOOL) {
+                throw new PxfException(pos, "expected identifier, string, integer, or bool, got " + current.errMsg());
             }
-            boolean keyQuoted = current.kind() == TokenKind.STRING;
+            TokenKind keyKind = current.kind();
+            boolean keyQuoted = keyKind == TokenKind.STRING;
             String key = current.value();
             advance();
 
             switch (current.kind()) {
                 case EQUALS -> {
+                    if (keyKind == TokenKind.INT || keyKind == TokenKind.BOOL) {
+                        throw new PxfException(pos, "field assignment with '=' requires an identifier or string key, got "
+                                + keyKind + " (" + Token.quote(key) + "); use ':' for map entries");
+                    }
                     advance();
                     if (keyQuoted) {
                         // The grammar accepts a string at entry-name position
@@ -585,6 +594,10 @@ final class FastDecoder {
                     }
                 }
                 case LBRACE -> {
+                    if (keyKind == TokenKind.INT || keyKind == TokenKind.BOOL) {
+                        throw new PxfException(pos, "submessage block requires an identifier or string key, got "
+                                + keyKind + " (" + Token.quote(key) + ")");
+                    }
                     advance();
                     if (keyQuoted) throw quotedNameUnkeyed(pos, key);
                     FieldDescriptor fd = desc.findFieldByName(key);
@@ -673,16 +686,42 @@ final class FastDecoder {
         return fd.hasPresence() && !fd.isRepeated() && !fd.isRequired() && !Annotations.isRequired(fd);
     }
 
+    /**
+     * The error for a null bound to a field {@link #nullable} refuses, saying
+     * how the schema can admit one where it can. protowire-go's
+     * nullNotAllowed, word for word.
+     */
     private static PxfException nullNotAllowed(Position pos, FieldDescriptor fd) {
-        if (!fd.isRepeated() && !fd.isRequired() && Annotations.isRequired(fd)) {
-            return new PxfException(pos, "null is not allowed on required field \"" + fd.getName()
-                    + "\": a required field holds a value");
-        }
-        String kind = fd.isMapField() ? "map" : fd.isRepeated() ? "repeated" : fd.isRequired() ? "required" : "scalar";
-        return new PxfException(pos, "null is not allowed on " + kind + " field \"" + fd.getName() + "\"");
+        String name = "\"" + fd.getName() + "\"";
+        boolean isMsg = fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE;
+        String msg;
+        if (fd.isMapField()) msg = "null is not allowed on map field " + name;
+        else if (fd.isRepeated()) msg = "null is not allowed on repeated field " + name;
+        else if (fd.isRequired() && isMsg) msg = "null is not allowed on required field " + name + ": it must be set";
+        else if (fd.isRequired()) msg = "null is not allowed on scalar field " + name + ": the field is required, so it must be set";
+        else if (Annotations.isRequired(fd)) msg = "null is not allowed on required field " + name + ": a required field holds a value";
+        else msg = "null is not allowed on scalar field " + name + ": declare it optional, or as a wrapper type (google.protobuf."
+                + wrapperName(fd.getType()) + "Value or similar), to make it nullable";
+        return new PxfException(pos, msg);
+    }
+
+    /** The google.protobuf wrapper stem for a scalar type, for the hint in {@link #nullNotAllowed}. */
+    static String wrapperName(FieldDescriptor.Type t) {
+        return switch (t) {
+            case BOOL -> "Bool";
+            case STRING -> "String";
+            case BYTES -> "Bytes";
+            case FLOAT -> "Float";
+            case DOUBLE -> "Double";
+            case INT64, SINT64, SFIXED64 -> "Int64";
+            case UINT32, FIXED32 -> "UInt32";
+            case UINT64, FIXED64 -> "UInt64";
+            default -> "Int32";
+        };
     }
 
     private void decodeFieldValue(Message.Builder b, FieldDescriptor fd) {
+        rejectIllegal();
         if (fd.isRepeated()) {
             // Keyed repeated field written `name = { ... }`: a block-tail is
             // an abbreviation of `= { ... }` (draft -01 §3.13), so the
@@ -831,12 +870,11 @@ final class FastDecoder {
     private void decodeAnyBody(Message.Builder anyB) {
         advance();
         if (current.kind() != TokenKind.EQUALS) {
-            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.kind());
+            throw new PxfException(current.pos(), "expected '=' after @type, got " + current.errMsg());
         }
         advance();
-        if (current.kind() == TokenKind.ILLEGAL) throw new PxfException(current.pos(), current.value());
         if (current.kind() != TokenKind.STRING) {
-            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.kind());
+            throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.errMsg());
         }
         Position urlPos = current.pos();
         String typeUrl = current.value();
@@ -845,7 +883,9 @@ final class FastDecoder {
             throw new PxfException(urlPos, "cannot resolve Any type \"" + typeUrl + "\": no TypeResolver (UnmarshalOptions.typeResolver)");
         }
         Descriptor innerDesc = resolver.findMessageByUrl(typeUrl);
-        if (innerDesc == null) throw new PxfException(urlPos, "cannot resolve Any type \"" + typeUrl + "\"");
+        // A resolver answers null for a URL it does not know, where a Go
+        // resolver returns an error, which protowire-go appends.
+        if (innerDesc == null) throw new PxfException(urlPos, "cannot resolve Any type " + Token.quote(typeUrl) + ": not found");
         advance();
 
         DynamicMessage.Builder inner = DynamicMessage.newBuilder(innerDesc);
@@ -891,6 +931,7 @@ final class FastDecoder {
             if (current.kind() == TokenKind.NULL) {
                 throw new PxfException(current.pos(), "null is not allowed in repeated field \"" + fd.getName() + "\"");
             }
+            rejectIllegal();
             checkRepeated(b, fd, "repeated");
             if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 Object elem = consumeListMsg(b, fd);
@@ -998,7 +1039,7 @@ final class FastDecoder {
             // §abnf-grammar; the keyword spelling landed in protowire#284).
             TokenKind keyKind = current.kind();
             if (keyKind != TokenKind.IDENT && keyKind != TokenKind.STRING && keyKind != TokenKind.INT && keyKind != TokenKind.BOOL) {
-                throw new PxfException(pos, "expected map key, got " + current.kind());
+                throw new PxfException(pos, "expected map key, got " + current.errMsg());
             }
             rejectPrecision(fd);
             String keyStr = current.value();
@@ -1013,6 +1054,7 @@ final class FastDecoder {
             if (current.kind() == TokenKind.NULL) {
                 throw new PxfException(current.pos(), "null is not allowed as map value in field \"" + fd.getName() + "\"");
             }
+            rejectIllegal();
 
             Message.Builder entry = b.newBuilderForField(fd);
             // Keys compare as values of the key type, so 1 and "1" are one
@@ -1118,6 +1160,17 @@ final class FastDecoder {
                 }
             }
         }
+    }
+
+    /**
+     * An ILLEGAL token is admitted nowhere in the grammar, so at a value
+     * position the lexer's own diagnostic is the error: "invalid duration:
+     * 5seconds", not "expected '{' for message field". protowire-go's
+     * illegalErr, placed as it places it: at the entry of each value
+     * context (a field value, a list element, a map value).
+     */
+    private void rejectIllegal() {
+        if (current.kind() == TokenKind.ILLEGAL) throw new PxfException(current.pos(), current.value());
     }
 
     private Object consumeScalar(FieldDescriptor fd) {

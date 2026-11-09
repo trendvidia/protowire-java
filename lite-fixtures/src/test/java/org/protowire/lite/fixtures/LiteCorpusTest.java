@@ -56,18 +56,13 @@ class LiteCorpusTest {
     private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
         // rejected, but with IllegalArgumentException rather than PxfException
         Map.entry("nulls/err-list-element.pxf", "#191"),
-        Map.entry("nulls/err-oneof-sibling.pxf", "#191"),
         Map.entry("annotations/missing-required.pxf", "#191"),
         // an Any block's @type entry is refused
         Map.entry("any/assignment.pxf", "#213"),
         Map.entry("any/block.pxf", "#213"),
         Map.entry("any/list-element.pxf", "#213"),
         Map.entry("any/map-value.pxf", "#213"),
-        Map.entry("any/url-verbatim.pxf", "#213"),
-        // the error text is not Go's
-        Map.entry("map-keys/invalid#text", "#215"),
-        Map.entry("duplicates/err-oneof-member-twice.pxf#text", "#215"),
-        Map.entry("duplicates/err-map-key-twice-int-spellings.pxf#text", "#215"));
+        Map.entry("any/url-verbatim.pxf", "#213"));
 
     /** Every corpus directory, and the test here that drives it. */
     private static final Set<String> DRIVEN = Set.of(
@@ -270,7 +265,7 @@ class LiteCorpusTest {
     void aRawNewlineIsRejectedByTheParser() {
         PxfException e = assertThrows(PxfException.class,
             () -> Parser.parse(fixture("strings", "err-raw-newline.pxf")));
-        assertTrue(e.getMessage().contains("raw newline"), e.getMessage());
+        assertTrue(e.getMessage().contains("newline in string literal"), e.getMessage());
     }
 
     // -- bytes and text the corpus gives ------------------------------------------

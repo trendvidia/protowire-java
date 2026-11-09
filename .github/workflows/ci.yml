@@ -119,3 +119,14 @@ jobs:
       # tier's test until that tier meets it or lists it as a known gap.
       - name: Spec corpus copy matches the spec's
         run: scripts/check-spec-corpus.sh "$PROTOWIRE_DIR"
+
+      # scripts/go-verdicts/corpus.tsv is protowire-go's verdict on each
+      # corpus document, which GoVerdictsTest and GoVerdictsLiteTest hold the
+      # two tiers to. Rerun against protowire-go main, so a change in Go's
+      # verdicts or wording fails here until the table, and the tiers, follow.
+      - name: Go verdict table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-verdicts/main.go" "$JAVA_DIR/testdata" "$PROTOWIRE_DIR/proto"
+          | diff -u "$JAVA_DIR/scripts/go-verdicts/corpus.tsv" -
+          && echo "scripts/go-verdicts/corpus.tsv: $(wc -l < "$JAVA_DIR/scripts/go-verdicts/corpus.tsv") documents match protowire-go"

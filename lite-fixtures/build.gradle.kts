@@ -104,7 +104,12 @@ sourceSets {
 
 tasks.test {
     useJUnitPlatform()
+    // Read through system properties, so declared as inputs: a changed
+    // fixture or Go verdict reruns the tests rather than reusing a result.
     systemProperty("protowire.testdata", rootDir.resolve("testdata").absolutePath)
+    systemProperty("protowire.goVerdicts", rootDir.resolve("scripts/go-verdicts/corpus.tsv").absolutePath)
+    inputs.dir(rootDir.resolve("testdata")).withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs.file(rootDir.resolve("scripts/go-verdicts/corpus.tsv")).withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 protobuf {

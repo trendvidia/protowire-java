@@ -13,12 +13,20 @@ import java.util.List;
 public final class GroupTemplate {
     public final int fieldNumber;
     public final String name;
+    /** The repeated field's full protobuf name, which errors name it by; {@link #name} when built without one. */
+    public final String fullName;
     public final int blockLength;
     public final List<FieldTemplate> fields;
 
+    /** As the full constructor, with {@link #fullName} the short {@code name}. */
     public GroupTemplate(int fieldNumber, String name, int blockLength, List<FieldTemplate> fields) {
+        this(fieldNumber, name, name, blockLength, fields);
+    }
+
+    public GroupTemplate(int fieldNumber, String name, String fullName, int blockLength, List<FieldTemplate> fields) {
         this.fieldNumber = fieldNumber;
         this.name = name;
+        this.fullName = fullName;
         this.blockLength = blockLength;
         this.fields = fields;
     }

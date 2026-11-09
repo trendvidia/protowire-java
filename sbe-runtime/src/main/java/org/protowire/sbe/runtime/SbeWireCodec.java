@@ -57,6 +57,13 @@ public final class SbeWireCodec {
         int total = HEADER_SIZE + t.blockLength;
         for (GroupTemplate gt : t.groups) {
             int n = reader.getRepeatedCount(gt.fieldNumber);
+            // numInGroup is a uint16: a larger count would be written as its
+            // low 16 bits, and a reader would take the entries past them for
+            // trailing bytes (protowire-go#250).
+            if (n > SbeKinds.MAX_UINT16) {
+                throw new IllegalArgumentException("sbe: field " + gt.fullName + " has " + n + " entries, past " + SbeKinds.MAX_UINT16
+                        + ", the largest numInGroup SBE can state");
+            }
             total += GROUP_HEADER_SIZE + n * gt.blockLength;
         }
         ByteBuffer buf = ByteBuffer.allocate(total).order(ORDER);
@@ -84,15 +91,34 @@ public final class SbeWireCodec {
         Object val = reader.getField(ft.fieldNumber);
         int off = blockStart + ft.offset;
         switch (ft.encoding) {
-            case ENC_INT8 -> buf.put(off, (byte) ((Number) val).intValue());
-            case ENC_INT16 -> buf.putShort(off, (short) ((Number) val).intValue());
-            case ENC_INT32 -> buf.putInt(off, ((Number) val).intValue());
-            case ENC_INT64 -> buf.putLong(off, ((Number) val).longValue());
-            case ENC_UINT8 -> buf.put(off, (byte) uintVal(ft.kind, val));
-            case ENC_UINT16 -> buf.putShort(off, (short) uintVal(ft.kind, val));
-            case ENC_UINT32 -> buf.putInt(off, (int) uintVal(ft.kind, val));
-            case ENC_UINT64 -> buf.putLong(off, uintVal(ft.kind, val));
-            case ENC_FLOAT -> buf.putFloat(off, ((Number) val).floatValue());
+            case ENC_INT8, ENC_INT16, ENC_INT32, ENC_INT64, ENC_UINT8, ENC_UINT16, ENC_UINT32, ENC_UINT64 -> {
+                // The value is read by the field's kind, and written as the
+                // low bytes of its two's complement once it is known to fit
+                // the primitive (protowire-go#252).
+                boolean unsigned = SbeKinds.unsignedKind(ft.kind);
+                long v = intValue(ft.kind, val);
+                long[] enc = SbeKinds.encRange(ft.encoding, ft.size);
+                long[] field = SbeKinds.kindRange(ft.kind);
+                boolean check = field[0] < enc[0] || Long.compareUnsigned(field[1], enc[1]) > 0;
+                if (check && !SbeKinds.inRange(v, unsigned, enc[0], enc[1])) {
+                    throw new IllegalArgumentException("sbe: field " + ft.fullName + ": value " + SbeKinds.intString(v, unsigned)
+                            + " is outside the range of " + ft.encoding + ", [" + enc[0] + ", " + Long.toUnsignedString(enc[1]) + "]");
+                }
+                switch (ft.size) {
+                    case 1 -> buf.put(off, (byte) v);
+                    case 2 -> buf.putShort(off, (short) v);
+                    case 4 -> buf.putInt(off, (int) v);
+                    default -> buf.putLong(off, v);
+                }
+            }
+            case ENC_FLOAT -> {
+                double f = ((Number) val).doubleValue();
+                if (ft.kind == SbeKinds.K_DOUBLE && !SbeKinds.floatFits(f)) {
+                    throw new IllegalArgumentException("sbe: field " + ft.fullName + ": value " + SbeKinds.goG(f)
+                            + " is outside the range of float, ±" + SbeKinds.goG(Float.MAX_VALUE));
+                }
+                buf.putFloat(off, (float) f);
+            }
             case ENC_DOUBLE -> buf.putDouble(off, ((Number) val).doubleValue());
             case ENC_CHAR -> {
                 // An overlong value is cut: bytes at the limit, a string at
@@ -141,21 +167,35 @@ public final class SbeWireCodec {
         if (data.length > maxMessageSize) {
             throw new IllegalArgumentException("sbe: input of " + data.length + " bytes exceeds MaxMessageSize=" + maxMessageSize);
         }
-        if (data.length < HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
+        if (data.length < HEADER_SIZE) {
+            throw new IllegalArgumentException("sbe: data too short for header: " + data.length + " bytes");
+        }
         ByteBuffer buf = ByteBuffer.wrap(data).order(ORDER);
         int blockLength = Short.toUnsignedInt(buf.getShort(0));
         int templateId = Short.toUnsignedInt(buf.getShort(2));
+        int schemaId = Short.toUnsignedInt(buf.getShort(4));
         if (templateId != t.templateId) {
-            throw new IllegalArgumentException("sbe: template id mismatch: got " + templateId + ", want " + t.templateId);
+            throw new IllegalArgumentException("sbe: template ID mismatch: got " + templateId + ", want " + t.templateId);
+        }
+        // A template id is unique only within a schema, so it alone does not
+        // say the bytes are this message's: they may be another schema's
+        // message with the same id (protowire-go#257; draft -01 § Header and
+        // Block Length, protowire#571).
+        if (schemaId != t.schemaId) {
+            throw new IllegalArgumentException("sbe: schema ID mismatch: got " + schemaId + ", want " + t.schemaId
+                    + " for template " + t.templateId);
         }
         // HARDENING.md § SBE step 2: a wire blockLength below the template's
         // would have field reads slice past the block. Schema evolution may
         // push it higher, which is fine.
         if (blockLength < t.blockLength) {
-            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength);
+            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength
+                    + " for template " + t.templateId);
         }
         int blockEnd = HEADER_SIZE + blockLength;
-        if (data.length < blockEnd) throw new IllegalArgumentException("sbe: data too short for root block");
+        if (data.length < blockEnd) {
+            throw new IllegalArgumentException("sbe: data too short for root block: need " + blockEnd + ", have " + data.length);
+        }
 
         for (FieldTemplate ft : t.fields) readField(buf, HEADER_SIZE, ft, writer);
 
@@ -173,16 +213,38 @@ public final class SbeWireCodec {
         }
         int off = blockStart + ft.offset;
         switch (ft.encoding) {
-            case ENC_INT8 -> setInt(writer, ft, buf.get(off));
-            case ENC_INT16 -> setInt(writer, ft, buf.getShort(off));
-            case ENC_INT32 -> setInt(writer, ft, buf.getInt(off));
-            case ENC_INT64 -> setInt(writer, ft, buf.getLong(off));
-            case ENC_UINT8 -> setUint(writer, ft, buf.get(off) & 0xFFL);
-            case ENC_UINT16 -> setUint(writer, ft, buf.getShort(off) & 0xFFFFL);
-            case ENC_UINT32 -> setUint(writer, ft, buf.getInt(off) & 0xFFFFFFFFL);
-            case ENC_UINT64 -> setUint(writer, ft, buf.getLong(off));
+            case ENC_INT8, ENC_INT16, ENC_INT32, ENC_INT64, ENC_UINT8, ENC_UINT16, ENC_UINT32, ENC_UINT64 -> {
+                // Sign- or zero-extended per the primitive (draft -01 § SBE
+                // Annotations), then stored by the field's kind; a value the
+                // field cannot hold is refused rather than cut to its low
+                // bits (protowire-go#252).
+                boolean signed = ft.encoding.charAt(0) == 'i';
+                long v = switch (ft.size) {
+                    case 1 -> signed ? buf.get(off) : buf.get(off) & 0xFFL;
+                    case 2 -> signed ? buf.getShort(off) : buf.getShort(off) & 0xFFFFL;
+                    case 4 -> signed ? buf.getInt(off) : buf.getInt(off) & 0xFFFFFFFFL;
+                    default -> buf.getLong(off);
+                };
+                long[] enc = SbeKinds.encRange(ft.encoding, ft.size);
+                long[] field = SbeKinds.kindRange(ft.kind);
+                // A bool reads any nonzero primitive as true, as it always has.
+                boolean check = ft.kind != SbeKinds.K_BOOL && (enc[0] < field[0] || Long.compareUnsigned(enc[1], field[1]) > 0);
+                if (check && !SbeKinds.inRange(v, !signed, field[0], field[1])) {
+                    throw new IllegalArgumentException("sbe: field " + ft.fullName + ": wire value " + SbeKinds.intString(v, !signed)
+                            + " (" + ft.encoding + ") does not fit a " + SbeKinds.kindName(ft.kind) + " field, [" + field[0] + ", "
+                            + Long.toUnsignedString(field[1]) + "]");
+                }
+                setInteger(writer, ft, v);
+            }
             case ENC_FLOAT -> setFloat(writer, ft, buf.getFloat(off));
-            case ENC_DOUBLE -> setFloat(writer, ft, buf.getDouble(off));
+            case ENC_DOUBLE -> {
+                double f = buf.getDouble(off);
+                if (ft.kind == SbeKinds.K_FLOAT && !SbeKinds.floatFits(f)) {
+                    throw new IllegalArgumentException("sbe: field " + ft.fullName + ": wire value " + SbeKinds.goG(f)
+                            + " does not fit a float field, ±" + SbeKinds.goG(Float.MAX_VALUE));
+                }
+                setFloat(writer, ft, f);
+            }
             case ENC_CHAR -> {
                 byte[] raw = new byte[ft.size];
                 for (int i = 0; i < ft.size; i++) raw[i] = buf.get(off + i);
@@ -231,21 +293,13 @@ public final class SbeWireCodec {
         return total;
     }
 
-    static void setInt(SbeFieldWriter writer, FieldTemplate ft, long v) {
-        switch (ft.kind) {
-            case K_INT32, K_SINT32, K_SFIXED32 -> writer.setField(ft.fieldNumber, (int) v);
-            case K_INT64, K_SINT64, K_SFIXED64 -> writer.setField(ft.fieldNumber, v);
-            default -> throw new IllegalStateException("sbe: bad target for int kind: " + ft.kind);
-        }
-    }
-
-    static void setUint(SbeFieldWriter writer, FieldTemplate ft, long v) {
+    /** An integer already checked to fit, stored as the field's kind holds it: a bool, an int or a long. */
+    static void setInteger(SbeFieldWriter writer, FieldTemplate ft, long v) {
         switch (ft.kind) {
             case K_BOOL -> writer.setField(ft.fieldNumber, v != 0);
-            case K_ENUM -> writer.setField(ft.fieldNumber, (int) v);
-            case K_INT32, K_UINT32, K_SINT32, K_FIXED32, K_SFIXED32 -> writer.setField(ft.fieldNumber, (int) v);
+            case K_ENUM, K_INT32, K_UINT32, K_SINT32, K_FIXED32, K_SFIXED32 -> writer.setField(ft.fieldNumber, (int) v);
             case K_INT64, K_UINT64, K_SINT64, K_FIXED64, K_SFIXED64 -> writer.setField(ft.fieldNumber, v);
-            default -> throw new IllegalStateException("sbe: bad target for uint kind: " + ft.kind);
+            default -> throw new IllegalStateException("sbe: bad target for integer kind: " + ft.kind);
         }
     }
 
@@ -258,16 +312,16 @@ public final class SbeWireCodec {
     }
 
     /**
-     * Encode-side coercion of an unsigned integer wire value from whatever
-     * Java type the reader hands us (Boolean for BOOL, Integer for ENUM /
-     * INT32-family, Long for INT64-family).
+     * An integer field's value as the codec compares it: unsigned for a bool,
+     * uint32 or uint64 (see {@link SbeKinds#unsignedKind}), an int64's bits
+     * otherwise, from the Java type the reader hands over (Boolean for BOOL,
+     * Integer for ENUM and the 32-bit kinds, Long for the 64-bit ones).
      */
-    static long uintVal(int kind, Object val) {
+    static long intValue(int kind, Object val) {
         return switch (kind) {
             case K_BOOL -> ((Boolean) val) ? 1L : 0L;
-            case K_ENUM -> ((Integer) val).longValue();
-            case K_INT32, K_UINT32, K_SINT32, K_FIXED32, K_SFIXED32 -> Integer.toUnsignedLong((Integer) val);
-            case K_INT64, K_UINT64, K_SINT64, K_FIXED64, K_SFIXED64 -> (Long) val;
+            case K_UINT32, K_FIXED32 -> Integer.toUnsignedLong(((Number) val).intValue());
+            case K_ENUM, K_INT32, K_SINT32, K_SFIXED32 -> ((Number) val).intValue();
             default -> ((Number) val).longValue();
         };
     }

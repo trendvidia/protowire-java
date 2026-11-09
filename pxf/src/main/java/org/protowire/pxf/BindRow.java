@@ -118,6 +118,12 @@ public final class BindRow {
      * a path may go into one. Mirrors protowire-go's {@code checkColumnPaths}.
      */
     static void checkColumnPaths(Descriptor desc, List<String> columns, Position pos) {
+        String problem = columnSchemaProblem(desc, columns);
+        if (problem != null) throw new PxfException(pos, problem);
+    }
+
+    /** {@link #checkColumnPaths}'s rules: the first column the row type refuses, as a message, or null. */
+    static String columnSchemaProblem(Descriptor desc, List<String> columns) {
         for (String c : columns) {
             Descriptor md = desc;
             int from = 0;
@@ -126,29 +132,30 @@ public final class BindRow {
                 String seg = dot < 0 ? c.substring(from) : c.substring(from, dot);
                 FieldDescriptor fd = md.findFieldByName(seg);
                 if (fd == null) {
-                    throw new PxfException(pos, "@dataset column \"" + c + "\": " + md.getFullName() + " has no field \"" + seg + "\"");
+                    return "@dataset column \"" + c + "\": " + md.getFullName() + " has no field \"" + seg + "\"";
                 }
                 if (dot < 0) break;
                 String at = c.substring(0, dot);
                 if (fd.isMapField()) {
-                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at
-                            + "\" is a map field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)");
+                    return "@dataset column \"" + c + "\": \"" + at
+                            + "\" is a map field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)";
                 }
                 if (fd.isRepeated()) {
-                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at
-                            + "\" is a repeated field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)");
+                    return "@dataset column \"" + c + "\": \"" + at
+                            + "\" is a repeated field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)";
                 }
                 if (fd.getJavaType() != FieldDescriptor.JavaType.MESSAGE) {
-                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at + "\" is not a message field");
+                    return "@dataset column \"" + c + "\": \"" + at + "\" is not a message field";
                 }
                 if (WellKnown.isDefaultableMessage(fd.getMessageType())) {
-                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at + "\" is a "
-                            + fd.getMessageType().getFullName() + ", which is written as a literal; a column path cannot go into it (draft §3.4.4)");
+                    return "@dataset column \"" + c + "\": \"" + at + "\" is a "
+                            + fd.getMessageType().getFullName() + ", which is written as a literal; a column path cannot go into it (draft §3.4.4)";
                 }
                 md = fd.getMessageType();
                 from = dot + 1;
             }
         }
+        return null;
     }
 
     // -- presence ----------------------------------------------------------

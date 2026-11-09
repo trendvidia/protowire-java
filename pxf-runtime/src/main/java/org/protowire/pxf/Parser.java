@@ -316,18 +316,25 @@ public final class Parser {
      * token here. Mirrors protowire-go's {@code columnPathError}.
      */
     static void checkColumnPath(List<String> earlier, String col, Position pos) {
+        String problem = columnPathProblem(earlier, col);
+        if (problem != null) throw new PxfException(pos, problem);
+    }
+
+    /** {@link #checkColumnPath}'s rules: what is wrong with {@code col} after {@code earlier}, or null. */
+    static String columnPathProblem(List<String> earlier, String col) {
         if (col.startsWith(".") || col.endsWith(".") || col.contains("..")) {
-            throw new PxfException(pos, "@dataset column \"" + col + "\": a column path has an empty segment (draft §3.4.4)");
+            return "@dataset column \"" + col + "\": a column path has an empty segment (draft §3.4.4)";
         }
         for (String prev : earlier) {
             if (prev.equals(col)) {
-                throw new PxfException(pos, "@dataset column \"" + col + "\" appears twice (draft §3.4.4)");
+                return "@dataset column \"" + col + "\" appears twice (draft §3.4.4)";
             }
             if (col.startsWith(prev + ".") || prev.startsWith(col + ".")) {
-                throw new PxfException(pos, "@dataset column \"" + col + "\" overlaps column \"" + prev
-                        + "\": a field and a path inside it cannot both be columns (draft §3.4.4)");
+                return "@dataset column \"" + col + "\" overlaps column \"" + prev
+                        + "\": a field and a path inside it cannot both be columns (draft §3.4.4)";
             }
         }
+        return null;
     }
 
     private Ast.DatasetRow parseDatasetRow(int expected) {

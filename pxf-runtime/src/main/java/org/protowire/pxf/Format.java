@@ -242,6 +242,24 @@ public final class Format {
         }
     }
 
+    /**
+     * {@code v} as its PXF source literal, the text {@link #formatDocument}
+     * writes for a value inside a document: for tools that splice a rendered
+     * value into a buffer, as protowire-go's {@code FormatValue}. A list or
+     * block value spans several lines, indented two spaces, with no indent
+     * on its first line and no trailing newline, so a caller splicing it
+     * into an indented context re-indents the lines after the first.
+     */
+    public static String formatValue(Ast.Value v) {
+        return appendValue(new StringBuilder(), v).toString();
+    }
+
+    /** Appends {@link #formatValue}'s text to {@code sb} and returns it, as protowire-go's {@code AppendValue}. */
+    public static StringBuilder appendValue(StringBuilder sb, Ast.Value v) {
+        formatValue(sb, v, 0, false);
+        return sb;
+    }
+
     static void formatValue(StringBuilder sb, Ast.Value v, int level) {
         formatValue(sb, v, level, false);
     }

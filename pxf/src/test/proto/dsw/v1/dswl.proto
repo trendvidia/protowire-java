@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// protowire-go's requiredListProtoSrc
+// (encoding/pxf/dataset_write_required_list_test.go, v1.17.0), byte for byte but for
+// the java options, so the dataset writer's tests run on the schema Go's do
+// (#204).
+syntax = "proto3";
+package dswl.v1;
+
+option java_package = "org.protowire.pxf.testproto.dswl";
+option java_multiple_files = true;
+
+import "pxf/annotations.proto";
+
+enum E { E_ZERO = 0; }
+message Sub { int32 x = 1; }
+message Key { string id = 1; }
+
+message Ints { repeated int32 f = 1 [(pxf.required) = true]; }
+message Strs { repeated string f = 1 [(pxf.required) = true]; }
+message Bools { repeated bool f = 1 [(pxf.required) = true]; }
+message Bys { repeated bytes f = 1 [(pxf.required) = true]; }
+message Dbls { repeated double f = 1 [(pxf.required) = true]; }
+message Flts { repeated float f = 1 [(pxf.required) = true]; }
+message Enums { repeated E f = 1 [(pxf.required) = true]; }
+message Msgs { repeated Sub f = 1 [(pxf.required) = true]; }
+message Keyed { repeated Key f = 1 [(pxf.required) = true, (pxf.key) = "id"]; }
+message Maps { map<string, int32> f = 1 [(pxf.required) = true]; }
+message MsgMaps { map<string, Sub> f = 1 [(pxf.required) = true]; }
+
+message Outer {
+  Ints ints = 1;
+  Maps maps = 2;
+  repeated Ints list = 3;
+  map<string, Maps> by_key = 4;
+}

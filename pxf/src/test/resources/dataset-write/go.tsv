@@ -1,0 +1,48 @@
+dsw.v1.Row	s,b,i32,si32,sf32,i64,si64,sf64,u32,f32,u64,f64,fl,db,by,color,opt	0a07612c6220226322100118ffffffffffffffffff0120032dfdffffff30fcffffffffffffffff01380941faffffffffffffff4807550800000058ffffffffffffffffff01610a000000000000006d0000c03f7172b512d57beceebd7a026869800101880100	@dataset dsw.v1.Row (s, b, i32, si32, sf32, i64, si64, sf64, u32, f32, u64, f64, fl, db, by, color, opt)\n	("a,b \\"c\\"", true, -1, -2, -3, -4, -5, -6, 7, 8, 18446744073709551615, 10, 1.5, -2.25e-10, b"aGk=", COLOR_RED, 0)\n	0a07612c6220226322100118ffffffffffffffffff0120032dfdffffff30fcffffffffffffffff01380941faffffffffffffff4807550800000058ffffffffffffffffff01610a000000000000006d0000c03f7172b512d57beceebd7a026869800101880100c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	s,b,i32,u64,color,opt		@dataset dsw.v1.Row (s, b, i32, u64, color, opt)\n	(, , , , , )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	ts,dur,w_s,w_i64,w_b,w_by,bi,dec,bf,sec	a2010c08a5ebdcca061080cab5ee01aa010308982ab20100ba010b08f9ffffffffffffffff01c20100ca0100d201110a0d018ee90ff6c373e0ee4e3f0ad21001da01060a0204e21003e201170a08c00000000000000010c1ffffffffffffffff011840ea01040a027077	@dataset dsw.v1.Row (ts, dur, w_s, w_i64, w_b, w_by, bi, dec, bf, sec)\n	(2026-01-02T03:04:05.5Z, 1h30m0s, "", -7, false, b"", -123456789012345678901234567890, 1.250, 1.5p64, "pw")\n	a2010c08a5ebdcca061080cab5ee01aa010308982ab20100ba010b08f9ffffffffffffffff01c20100ca0100d201110a0d018ee90ff6c373e0ee4e3f0ad21001da01060a0204e21003e201170a08c00000000000000010c1ffffffffffffffff011840ea01040a027077c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	ts,dur,w_s,w_i64,w_b,w_by,bi,dec,bf,sec		@dataset dsw.v1.Row (ts, dur, w_s, w_i64, w_b, w_by, bi, dec, bf, sec)\n	(, , , , , , , , , )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	d_s,d_i32,d_opt,d_w,d_ts,d_color		@dataset dsw.v1.Row (d_s, d_i32, d_opt, d_w, d_ts, d_color)\n	("", 0, , null, null, COLOR_UNSPECIFIED)\n	d002089203080a067069636b6564aa03056f74686572
+dsw.v1.Row	d_s,d_i32,d_opt,d_w,d_ts,d_color	d00200da0200e20200	@dataset dsw.v1.Row (d_s, d_i32, d_opt, d_w, d_ts, d_color)\n	("", 0, 0, 0, 1970-01-01T00:00:00Z, COLOR_UNSPECIFIED)\n	d00200da0200e202009203080a067069636b6564aa03056f74686572
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i	980305	@dataset dsw.v1.Row (c_w, c_i, c_b, o_s, o_i)\n	(, 5, , , )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e80202980305aa03056f74686572
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i		@dataset dsw.v1.Row (c_w, c_i, c_b, o_s, o_i)\n	(null, , , , )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e80202aa03056f74686572
+dsw.v1.Row	c_w,o_s	a00301b00303	@dataset dsw.v1.Row (c_w, o_s)\n	(null, )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e80202aa03056f74686572
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i	9203030a0178aa030179	@dataset dsw.v1.Row (c_w, c_i, c_b, o_s, o_i)\n	("x", , , "y", )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203030a0178aa030179
+dsw.v1.Row	list,m,inner,inners,keyed,by_key	e203020102ea03050a01611001ea03050a01621002f20309080112016c1a020802fa03020801fa030208028204050a016b10018a04070a017a12020803	@dataset dsw.v1.Row (list, m, inner, inners, keyed, by_key)\n	([ 1, 2 ], { a: 1 b: 2 }, { x = 1 label = "l" deep { n = 2 } }, [ { x = 1 }, { x = 2 } ], { k { v = 1 } }, { z: { x = 3 } })\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e80202e203020102ea03050a01611001ea03050a01621002f20309080112016c1a020802fa03020801fa030208028204050a016b10018a04070a017a120208039203080a067069636b6564aa03056f74686572
+dsw.v1.Row	list,m,inner,inners,keyed,by_key		@dataset dsw.v1.Row (list, m, inner, inners, keyed, by_key)\n	(, , , , , )\n	c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	s,inner.x,inner.deep.n,inner.label	0a0178f2030608011a020802	@dataset dsw.v1.Row (s, inner.x, inner.deep.n, inner.label)\n	("x", 1, 2, )\n	0a0178c2020464666c74c80207d00208da02020809e202060880f2d6ca06e80202f2030608011a0208029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	s,inner.x,inner.deep.n	0a0178	@dataset dsw.v1.Row (s, inner.x, inner.deep.n)\n	("x", , )\n	0a0178c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row	inner.x,sec.value,sec.hint	ea01070a027077120168f20300	@dataset dsw.v1.Row (inner.x, sec.value, sec.hint)\n	(, "pw", "h")\n	ea01070a027077120168c2020464666c74c80207d00208da02020809e202060880f2d6ca06e802029203080a067069636b6564aa03056f74686572
+dsw.v1.Row		0a0178	ERR pxf: @dataset needs at least one column	ERR pxf: @dataset needs at least one column	
+dsw.v1.Row	nope	0a0178	ERR pxf: @dataset column "nope": dsw.v1.Row has no field "nope"	ERR pxf: @dataset column "nope": dsw.v1.Row has no field "nope"	
+dsw.v1.Row	inner..x	0a0178	ERR pxf: @dataset column "inner..x": a column path has an empty segment (draft §3.4.4)	ERR pxf: @dataset column "inner..x": a column path has an empty segment (draft §3.4.4)	
+dsw.v1.Row	s,s	0a0178	ERR pxf: @dataset column "s" appears twice (draft §3.4.4)	ERR pxf: @dataset column "s" appears twice (draft §3.4.4)	
+dsw.v1.Row	inner,inner.x	0a0178	ERR pxf: @dataset column "inner.x" overlaps column "inner": a field and a path inside it cannot both be columns (draft §3.4.4)	ERR pxf: @dataset column "inner.x" overlaps column "inner": a field and a path inside it cannot both be columns (draft §3.4.4)	
+dsw.v1.Row	inners.x	0a0178	ERR pxf: @dataset column "inners.x": "inners" is a repeated field, and a column path cannot go through one; use a value cell for "inners" (draft §3.4.4)	ERR pxf: @dataset column "inners.x": "inners" is a repeated field, and a column path cannot go through one; use a value cell for "inners" (draft §3.4.4)	
+dsw.v1.Row	m.a	0a0178	ERR pxf: @dataset column "m.a": "m" is a map field, and a column path cannot go through one; use a value cell for "m" (draft §3.4.4)	ERR pxf: @dataset column "m.a": "m" is a map field, and a column path cannot go through one; use a value cell for "m" (draft §3.4.4)	
+dsw.v1.Row	ts.seconds	0a0178	ERR pxf: @dataset column "ts.seconds": "ts" is a google.protobuf.Timestamp, which is written as a literal; a column path cannot go into it (draft §3.4.4)	ERR pxf: @dataset column "ts.seconds": "ts" is a google.protobuf.Timestamp, which is written as a literal; a column path cannot go into it (draft §3.4.4)	
+dsw.v1.Row	s.x	0a0178	ERR pxf: @dataset column "s.x": "s" is not a message field	ERR pxf: @dataset column "s.x": "s" is not a message field	
+dsw.v1.Req	id,name,note	080112016e	@dataset dsw.v1.Req (id, name, note)\n	(1, "n", )\n	080112016e
+dsw.v1.Req	id,name,note	12016e	@dataset dsw.v1.Req (id, name, note)\n	(0, "n", )\n	12016e
+dsw.v1.Req	id,name,note	0801	@dataset dsw.v1.Req (id, name, note)\n	ERR pxf: @dataset column "name": unset, and the field is (pxf.required)	
+dsw.v1.Req	id,note	080112016e	ERR pxf: @dataset columns omit "name", which is (pxf.required): every row would be rejected	ERR pxf: @dataset columns omit "name", which is (pxf.required): every row would be rejected	
+dsw.v1.ReqParent	id,child.n	0a016112020801	@dataset dsw.v1.ReqParent (id, child.n)\n	("a", 1)\n	0a016112020801
+dsw.v1.ReqParent	id,child.n	0a0161	@dataset dsw.v1.ReqParent (id, child.n)\n	ERR pxf: @dataset columns under "child" are all empty in this row, so it reads back unset, and it is (pxf.required)	
+dsw.v1.ReqParent	id,child.n	12021002	@dataset dsw.v1.ReqParent (id, child.n)\n	(, 0)\n	1200
+dsw.v1.ReqParent	id,child.m	120408011002	@dataset dsw.v1.ReqParent (id, child.m)\n	ERR pxf: @dataset "child" reads back present, and its (pxf.required) field "child.n" is not a column: the row would be rejected	
+dsw.v1.Pick	c_w,c_i,c_b,o_s,o_i		@dataset dsw.v1.Pick (c_w, c_i, c_b, o_s, o_i)\n	(null, , , , )\n	22056f74686572
+dsw.v1.Pick	c_w,o_s,o_i	1004	@dataset dsw.v1.Pick (c_w, o_s, o_i)\n	(null, , )\n	22056f74686572
+dsw.v1.Pick	c_w,c_i	1801	@dataset dsw.v1.Pick (c_w, c_i)\n	(null, )\n	22056f74686572
+dswnull.v1.N	w,dw,rw,n,o	1a020805	@dataset dswnull.v1.N (w, dw, rw, n, o)\n	(, null, 5, , )\n	1a0208052a040a0264773007
+dswnull.v1.N	w,dw,rw,n,o	0a030a0173	@dataset dswnull.v1.N (w, dw, rw, n, o)\n	ERR pxf: @dataset column "rw": unset, and the field is (pxf.required)	
+dswnull.v1.N	w,dw,rw,n,o	0a030a01731a02080520043001	@dataset dswnull.v1.N (w, dw, rw, n, o)\n	("s", null, 5, 4, 1)\n	0a030a01731a02080520042a040a0264773001
+dswnull.v1.N	w,dw,n,o	1a020805	ERR pxf: @dataset columns omit "rw", which is (pxf.required): every row would be rejected	ERR pxf: @dataset columns omit "rw", which is (pxf.required): every row would be rejected	
+dswnull.v1.N	w,dw,rw,n,o	1a02080520032a0a0a01770a0264770a016e	@dataset dswnull.v1.N (w, dw, rw, n, o)\n	(null, null, 5, 3, )\n	1a02080520032a070a01770a0264773007
+dswl.v1.Ints	f		@dataset dswl.v1.Ints (f)\n	([])\n	
+dswl.v1.Ints	f	0a0101	@dataset dswl.v1.Ints (f)\n	([ 1 ])\n	0a0101
+dswl.v1.Maps	f		@dataset dswl.v1.Maps (f)\n	({})\n	
+dswl.v1.Msgs	f		@dataset dswl.v1.Msgs (f)\n	([])\n	
+dswl.v1.Keyed	f		@dataset dswl.v1.Keyed (f)\n	([])\n	
+dswl.v1.MsgMaps	f		@dataset dswl.v1.MsgMaps (f)\n	({})\n	
+dswl.v1.Outer	ints,maps,list,by_key	0a0012001a0022050a016b1200	@dataset dswl.v1.Outer (ints, maps, list, by_key)\n	({ f = [] }, { f = {} }, [ { f = [] } ], { k: { f = {} } })\n	0a0012001a0022050a016b1200
+dswl.v1.Outer	ints		@dataset dswl.v1.Outer (ints)\n	()\n	

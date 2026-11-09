@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// Refused when the codec is built (#197, #198); see SbeRangesTest.
+syntax = "proto3";
+
+package ranges.schema.v1;
+
+import "sbe/annotations.proto";
+
+option (sbe.schema_id) = 65537;
+
+message S {
+  option (sbe.template_id) = 1;
+  int32 n = 1;
+}

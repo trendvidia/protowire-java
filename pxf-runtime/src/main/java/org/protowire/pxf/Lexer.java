@@ -49,6 +49,9 @@ final class Lexer {
 
     private Position currentPos() { return new Position(line, col, baseOffset + pos); }
 
+    /** Where the lexer stands: just past the token it returned last. */
+    Position position() { return currentPos(); }
+
     /** Reports positions as if the input began at {@code start} in its document. */
     void startAt(Position start) {
         this.line = start.line();

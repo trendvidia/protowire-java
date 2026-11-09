@@ -68,6 +68,22 @@ public final class View {
         };
     }
 
+    /**
+     * An enum field's number, as protowire-go's {@code View.Enum}: an enum
+     * is written as uint8 by default, or as uint16 by {@code (sbe.encoding)}.
+     *
+     * @throws IllegalStateException for any other encoding
+     */
+    public int enumValue(String name) {
+        FieldTemplate ft = field(name);
+        int off = blockStart + ft.offset;
+        return switch (ft.encoding) {
+            case ENC_UINT8 -> bb.get(off) & 0xFF;
+            case ENC_UINT16 -> bb.getShort(off) & 0xFFFF;
+            default -> throw new IllegalStateException("sbe: field " + name + " has unsupported enum encoding");
+        };
+    }
+
     public boolean boolValue(String name) {
         FieldTemplate ft = field(name);
         return bb.get(blockStart + ft.offset) != 0;

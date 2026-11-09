@@ -2,6 +2,9 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.pb;
 
+import org.protowire.check.CheckException;
+import org.protowire.check.Validator;
+
 /**
  * The per-call decoder limits of protowire's {@code docs/HARDENING.md}
  * § Mandatory limits for {@link Pb#unmarshal(byte[], Object, UnmarshalOptions)}
@@ -20,8 +23,18 @@ package org.protowire.pb;
  *     any repeated or map field
  * @param maxBigFloatExponent     {@code MaxBigFloatExponent}: the magnitude of
  *     a {@code pxf.BigFloat} value's binary exponent
+ * @param validator               run on the bound object after a successful
+ *     decode, as protowire-go's {@code UnmarshalOptions.Validator} (#205); a
+ *     report with violations fails the decode with a {@link CheckException};
+ *     nullable
  */
-public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount, int maxBigFloatExponent) {
+public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount, int maxBigFloatExponent,
+                               Validator validator) {
+
+    /** As the six-argument form with no {@link Validator}. */
+    public UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount, int maxBigFloatExponent) {
+        this(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent, null);
+    }
 
     /** As the five-argument form with the default {@code MaxBigFloatExponent}. */
     public UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxNumericLiteralDigits, int maxRepeatedCount) {
@@ -45,12 +58,15 @@ public record UnmarshalOptions(int maxMessageSize, int maxNestingDepth, int maxN
 
     public static UnmarshalOptions defaults() { return DEFAULTS; }
 
-    public UnmarshalOptions withMaxMessageSize(int v)          { return new UnmarshalOptions(v, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent); }
-    public UnmarshalOptions withMaxNestingDepth(int v)         { return new UnmarshalOptions(maxMessageSize, v, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent); }
-    public UnmarshalOptions withMaxNumericLiteralDigits(int v) { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, v, maxRepeatedCount, maxBigFloatExponent); }
-    public UnmarshalOptions withMaxRepeatedCount(int v)        { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v, maxBigFloatExponent); }
+    public UnmarshalOptions withMaxMessageSize(int v)          { return new UnmarshalOptions(v, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent, validator); }
+    public UnmarshalOptions withMaxNestingDepth(int v)         { return new UnmarshalOptions(maxMessageSize, v, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent, validator); }
+    public UnmarshalOptions withMaxNumericLiteralDigits(int v) { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, v, maxRepeatedCount, maxBigFloatExponent, validator); }
+    public UnmarshalOptions withMaxRepeatedCount(int v)        { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, v, maxBigFloatExponent, validator); }
 
-    public UnmarshalOptions withMaxBigFloatExponent(int v)     { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, v); }
+    public UnmarshalOptions withMaxBigFloatExponent(int v)     { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, v, validator); }
+
+    /** The same limits with {@code v} run after each decode; null for none. */
+    public UnmarshalOptions withValidator(Validator v)         { return new UnmarshalOptions(maxMessageSize, maxNestingDepth, maxNumericLiteralDigits, maxRepeatedCount, maxBigFloatExponent, v); }
 
     /**
      * Sets one limit by its HARDENING.md name. {@code MaxBytesLiteralLength}

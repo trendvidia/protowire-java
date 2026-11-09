@@ -20,6 +20,25 @@ format changes.
 
 ### Added
 
+- **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
+  - **pb:** `org.protowire.pb.Encoder` and `Decoder` frame each message with a varint length.
+  - **SBE:** `Codec.newEncoder` and `Codec.newDecoder` frame each message with a Simple Open Framing Header (SOFH), encoding type 0xEB50.
+  - **Envelope:** `org.protowire.envelope.Encoder` and `Decoder` reuse pb's framing.
+  - **Errors:** a frame past the decoder's maximum (16 MiB by default), a varint that overflows, or a bad SOFH header throws a `FramingCorruptException` with Go's text. A stream that ends inside a frame throws `unexpected EOF`. Both are thrown again on every later call. A message that fails to decode fails alone, and the next frame still reads.
+  - **Scope:** full tier only (decided on #205).
+
+- **A `Validator` hook on decode, as protowire-go's `check` package** (#205).
+  - **New module:** `check` (artifact `protowire-check`, package `org.protowire.check`) holds the seam: `Validator`, `Violation`, `Report`, `CheckException` (Go's `check.Error`, with the same message) and `Check.validate`. It has no dependencies, so validation engines plug in without the codecs depending on them.
+  - **Where it runs:** pxf's `UnmarshalOptions.withValidator`, pb's `UnmarshalOptions.withValidator` and sbe's `Codec.withValidator` run it after a successful decode, as Go's decoders do. Dataset rows run it too.
+  - **Outcome:** a report with violations fails the decode with a `CheckException` carrying the report, and an engine's exception propagates. On a clean pass, `Result.report()` returns the report.
+  - **Record change:** the two option records gain a `validator` component, with the shorter constructors kept.
+
+- **`UnmarshalOptions.withOnSecretField`: a hook that receives each `pxf.Secret` value in place of the message, as protowire-go's `OnSecretField`** (#206). A caller can route secrets to protected memory and keep them out of the decoded message.
+  - **Where it's called:** in every form a Secret takes: the literal, a list element, a map value, and the block, which goes through Go's Secret block decoder with Go's errors. A dataset row's cells call it too.
+  - **What it's given:** each value's dotted path in Go's spelling, as `servers[0].password` or `tenant_keys["acme"]`.
+  - **What happens to the field:** the Secret is left present with `value` unset, and `Result` still reports `value` set. `hint` and `fingerprint` are stored as usual.
+  - **Errors:** an exception from the hook aborts the decode as `pxf.Secret hook for "<path>": <message>`.
+  - **Record change:** `UnmarshalOptions` gains the record component `onSecretField`, and the five-argument constructor is kept.
 - **`Pxf.appendDatasetHeader` and `Pxf.appendDatasetRow` write `@dataset` tables, as protowire-go's `AppendDatasetHeader` and `AppendDatasetRow` do** (#204). Java could read a table but not write one.
   - **Header:** the columns are checked as the reader checks them, dotted paths included, and so is the schema. A `(pxf.required)` field missing from the columns is refused.
   - **Rows:** a set field is written as `Pxf.marshal` writes its value, and a list, map or block on one line. An unset field is an empty cell, except where reading one would not give the field back, in which case it follows Go's rules: a zero value, `[]` or `{}`, or `null`. An unset required field with presence is refused, and so is a row the reader would reject for a required sub-message.

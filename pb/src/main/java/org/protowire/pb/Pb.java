@@ -145,6 +145,8 @@ public final class Pb {
         }
         CodedInputStream in = CodedInputStream.newInstance(data);
         unmarshalStruct(in, dest, 0, opts);
+        // The Validator runs on the bound object, as protowire-go's (#205).
+        org.protowire.check.Check.validate(opts.validator(), dest);
     }
 
     /**

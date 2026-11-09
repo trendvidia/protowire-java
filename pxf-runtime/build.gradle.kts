@@ -11,4 +11,7 @@ plugins {
 }
 
 dependencies {
+    // Result.report() is a check.Report (#205). The check module has no
+    // dependencies, so this keeps the module free of protobuf-java.
+    api(project(":check"))
 }

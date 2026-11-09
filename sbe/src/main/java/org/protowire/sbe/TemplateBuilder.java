@@ -42,8 +42,7 @@ final class TemplateBuilder {
         for (FieldDescriptor fd : sortedFields(md)) {
             String at = md.getFullName() + "." + fd.getName();
             if (fd.isMapField()) throw new IllegalArgumentException("sbe: map field " + at + " not supported");
-            OneofDescriptor oo = fd.getContainingOneof();
-            if (oo != null && !oo.isSynthetic()) throw new IllegalArgumentException("sbe: oneof field " + at + " not supported");
+            if (fd.getRealContainingOneof() != null) throw new IllegalArgumentException("sbe: oneof field " + at + " not supported");
 
             if (fd.isRepeated() && fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE) {
                 groups.add(buildGroup(fd));
@@ -109,8 +108,7 @@ final class TemplateBuilder {
             }
             // A composite is a fixed layout of all its fields; a oneof sets
             // one of them (protowire-go#250, #198).
-            OneofDescriptor oo = f.getContainingOneof();
-            if (oo != null && !oo.isSynthetic()) {
+            if (f.getRealContainingOneof() != null) {
                 throw new IllegalArgumentException(prefix + "composite " + md.getFullName() + " contains oneof field " + f.getName());
             }
             String at = md.getFullName() + "." + f.getName();

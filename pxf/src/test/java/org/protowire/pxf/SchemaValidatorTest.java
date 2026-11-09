@@ -420,7 +420,9 @@ class SchemaValidatorTest {
                 .addField(FieldDescriptorProto.newBuilder().setName("opt").setNumber(1).setLabel(Label.LABEL_OPTIONAL)
                         .setType(Type.TYPE_STRING).setOneofIndex(0).setProto3Optional(true).setOptions(required))).build();
         FileDescriptor fd = build(fp);
-        assertTrue(fd.getMessageTypes().get(0).getOneofs().get(0).isSynthetic(), "fixture must be a synthetic oneof");
+        // A synthetic oneof is declared but not real.
+        assertEquals(1, fd.getMessageTypes().get(0).getOneofs().size(), "fixture must declare the oneof");
+        assertTrue(fd.getMessageTypes().get(0).getRealOneofs().isEmpty(), "fixture must be a synthetic oneof");
         assertEquals(List.of(), SchemaValidator.validateFile(fd));
         // The same bytes on a real oneof member are the violation.
         FileDescriptorProto bad = file("req.proto", "req.v1").addMessageType(DescriptorProto.newBuilder().setName("R")

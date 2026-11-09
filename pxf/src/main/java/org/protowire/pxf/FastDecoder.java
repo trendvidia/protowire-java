@@ -414,8 +414,8 @@ final class FastDecoder {
                 }
                 return;
             }
-            OneofDescriptor oo = fd.getContainingOneof();
-            if (oo != null && !oo.isSynthetic() && oo.equals(keyFd.getContainingOneof())) {
+            OneofDescriptor oo = fd.getRealContainingOneof();
+            if (oo != null && oo.equals(keyFd.getContainingOneof())) {
                 throw new PxfException(pos, "field \"" + fd.getName() + "\" shares oneof \"" + oo.getName() + "\" with key field \""
                         + keyName() + "\", which entry name \"" + entryName + "\" already set in keyed field \"" + field + "\"");
             }
@@ -645,8 +645,8 @@ final class FastDecoder {
     }
 
     private Map<String, String> checkOneof(FieldDescriptor fd, Map<String, String> setOneofs, Position pos) {
-        OneofDescriptor oo = fd.getContainingOneof();
-        if (oo == null || oo.isSynthetic()) return setOneofs;
+        OneofDescriptor oo = fd.getRealContainingOneof();
+        if (oo == null) return setOneofs;
         if (setOneofs == null) setOneofs = new HashMap<>();
         String prev = setOneofs.get(oo.getName());
         if (prev != null) throw new PxfException(pos, "oneof \"" + oo.getName() + "\": field \"" + fd.getName() + "\" conflicts with already-set field \"" + prev + "\"");
@@ -1391,8 +1391,8 @@ final class FastDecoder {
      * so it keeps plain per-field presence.
      */
     private boolean siblingPresent(FieldDescriptor fd, String pathPref) {
-        OneofDescriptor oo = fd.getContainingOneof();
-        if (oo == null || oo.isSynthetic()) return false;
+        OneofDescriptor oo = fd.getRealContainingOneof();
+        if (oo == null) return false;
         for (FieldDescriptor sib : oo.getFields()) {
             if (sib != fd && result.presentFieldsView().contains(pathPref + sib.getName())) return true;
         }

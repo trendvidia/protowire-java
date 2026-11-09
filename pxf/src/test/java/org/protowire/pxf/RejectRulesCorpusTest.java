@@ -168,7 +168,8 @@ class RejectRulesCorpusTest {
 
     @Test
     void nulls() throws Throwable {
-        assertEquals(20, run("nulls", f -> editions(f) ? null
+        Descriptor ed = edDescriptor();
+        assertEquals(20, run("nulls", f -> editions(f) ? ed
                 : NULL_SCHEMAS.getOrDefault(f.name(), Nulls.Holder.getDescriptor())));
     }
 
@@ -196,26 +197,31 @@ class RejectRulesCorpusTest {
     }
 
     /**
-     * The corpus's editions schema (protowire#380), which protoc 3.25.5 reads
-     * only behind {@code --experimental_editions}, so {@code
-     * nulls_editions.binpb} was built with that flag and is checked in. Pinned
-     * rather than run: this says what the 3.25.5 runtime does with the
-     * descriptor. The day the runtime moves past 3.25 this fails, and the two
-     * editions fixtures join {@link #nulls()}.
+     * {@code nulls.ed.v1.Ed}, the corpus's editions schema (protowire#380),
+     * from the checked-in {@code nulls_editions.binpb}. It was built when
+     * protoc read editions only behind {@code --experimental_editions}.
      */
-    @Test
-    void nullsEditions() throws Exception {
+    private Descriptor edDescriptor() throws Exception {
         FileDescriptorProto proto;
         try (InputStream in = getClass().getResourceAsStream("/editions/nulls_editions.binpb")) {
             assertNotNull(in, "missing nulls_editions.binpb");
             proto = FileDescriptorSet.parseFrom(in).getFile(0);
         }
         assertEquals("editions", proto.getSyntax());
-        FileDescriptor fd = FileDescriptor.buildFrom(proto, new FileDescriptor[0]);
-        Descriptor ed = fd.findMessageTypeByName("Ed");
-        // The runtime consults no features: neither scalar has presence, so
-        // the corpus's EXPLICIT accept fixture would be rejected.
-        assertFalse(ed.findFieldByName("explicit_scalar").hasPresence());
+        return FileDescriptor.buildFrom(proto, new FileDescriptor[0]).findMessageTypeByName("Ed");
+    }
+
+    /**
+     * The runtime resolves editions features (#190): the EXPLICIT scalar has
+     * presence, so its {@code null} leaves it unset, and the IMPLICIT one has
+     * none, so its {@code null} is refused. protobuf-java 3.25 consulted no
+     * features and gave neither presence; this fails if a runtime does that
+     * again.
+     */
+    @Test
+    void nullsEditions() throws Exception {
+        Descriptor ed = edDescriptor();
+        assertTrue(ed.findFieldByName("explicit_scalar").hasPresence());
         assertFalse(ed.findFieldByName("implicit_scalar").hasPresence());
     }
 

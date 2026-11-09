@@ -4,7 +4,7 @@ import com.google.protobuf.gradle.id
 
 plugins {
     `java-library`
-    id("com.google.protobuf") version "0.10.0"
+    id("com.google.protobuf") version "0.10.1"
 }
 
 // Lite-runtime mirror of :envelope. Generates the same classes

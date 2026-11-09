@@ -5,7 +5,7 @@ import com.google.protobuf.gradle.id
 plugins {
     `java-library`
     application
-    id("com.google.protobuf") version "0.10.0"
+    id("com.google.protobuf") version "0.10.1"
 }
 
 // Lite-tier mirror of :bench-pxf. Times PXF unmarshal + marshal of

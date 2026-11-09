@@ -28,6 +28,12 @@ public final class Format {
      * empty. A document whose only directive is {@code @type} formats as it
      * always has. The output is byte for byte protowire-go's
      * {@code FormatDocument}.
+     *
+     * <p>A comment is written where it was: before the entry, directive or
+     * dataset row it precedes, or before the end of its block or document
+     * when none follows it (#200, protowire-go#279). A row is written on one
+     * line, so a comment inside a row comes before it. Comments inside a
+     * list are written after the list (protowire-go#282).
      */
     public static String formatDocument(Ast.Document doc) {
         return format(doc, false);
@@ -62,6 +68,7 @@ public final class Format {
             }
             writeComments(sb, doc.leadingComments(), 0);
             formatEntries(sb, doc.entries(), 0, compact);
+            writeComments(sb, doc.trailingComments(), 0);
             return sb.toString();
         }
 
@@ -91,6 +98,7 @@ public final class Format {
             sb.append('\n');
             formatEntries(sb, doc.entries(), 0, compact);
         }
+        writeComments(sb, doc.trailingComments(), 0);
         return sb.toString();
     }
 
@@ -134,6 +142,7 @@ public final class Format {
         if (!t.type().isEmpty()) sb.append(' ').append(t.type());
         sb.append(" (").append(String.join(", ", t.columns())).append(")\n");
         for (Ast.DatasetRow row : t.rows()) {
+            writeComments(sb, row.leadingComments(), 0);
             sb.append('(');
             for (int i = 0; i < row.cells().size(); i++) {
                 if (i > 0) sb.append(", ");
@@ -235,6 +244,7 @@ public final class Format {
                     else sb.append(b.name());
                     sb.append(" {\n");
                     formatEntries(sb, b.entries(), level + 1, compact);
+                    writeComments(sb, b.trailingComments(), level + 1);
                     writeIndent(sb, level);
                     sb.append("}\n");
                 }
@@ -301,6 +311,7 @@ public final class Format {
             case Ast.BlockVal bv -> {
                 sb.append("{\n");
                 formatEntries(sb, bv.entries(), level + 1, compact);
+                writeComments(sb, bv.trailingComments(), level + 1);
                 writeIndent(sb, level);
                 sb.append('}');
             }

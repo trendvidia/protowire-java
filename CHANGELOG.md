@@ -20,6 +20,8 @@ format changes.
 
 ### Added
 
+- **`Ast.Document.trailingComments`, `Ast.Block.trailingComments`, `Ast.BlockVal.trailingComments` and `Ast.DatasetRow.leadingComments`: the comments that no entry follows** (#200, protowire-go#279). The parser fills them in. Each record keeps its existing constructors, which leave the new list empty. Code that takes these records apart with a record pattern must add the new component.
+
 - **`Ast.Assignment.equalsPos`, `Ast.Block.bracePos` and `Ast.TypeEntry.urlPos`: where an entry's `=`, its `{` and its type URL stand** (#222). The parser fills them in. Each record keeps its existing constructors, which set the new position to the entry's own `pos`. Code that takes these records apart with a record pattern must add the new component.
 
 - **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
@@ -93,6 +95,13 @@ format changes.
 
 ### Fixed
 
+- **Formatting keeps a comment that no entry follows where it was, as protowire-go does** (#200, protowire-go#279). The parser kept a comment only when an entry came after it.
+  - A comment at the end of a document was dropped. It is now written last.
+  - A comment before a block's `}` was dropped, or moved out of the block onto the next entry: `m {\n  k: 1\n  # end of m\n}\ny = 2` came out with `# end of m` above `y = 2`. It now stays inside the block.
+  - Comments around dataset rows were dropped. They are now written before the row they precede, and a comment inside a row before that row.
+  - The schema-aware format (`Pxf.formatDocument(doc, desc)`) kept none of these when it rewrote a keyed block, nor the comment of a redundant key assignment it dropped last in a block. It keeps both now.
+  - A comment inside a named directive's body was written a second time when an entry followed the directive: `@x { k = 1\n # in x\n }\ny = 2` came out with `# in x` again above `y = 2`. It is written once, in the body.
+- **`DatasetReader` gives a row the comments before it and inside it, as `Parser.parse` does** (#200). It also leaves the comments before the next directive for `tail()`, where it used to drop them.
 - **`DatasetReader` read a `//` or `/*` comment between rows as a stray `/` when a read ended between its two characters** (#200). It refused the table with `expected '(' to start a @dataset row or a directive, got '/'`. A one-byte stream always hit this, and a 4096-byte read could too. It now waits for the next read.
 
 - **The lite tier reports three errors where protowire-go does** (#222). The texts already matched; the line:column was one token off.

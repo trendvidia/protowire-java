@@ -267,10 +267,10 @@ for the rationale and template.
 
 ## Command-line tool
 
-The `protowire` CLI is shared across every port and lives in the spec repo at [github.com/trendvidia/protowire/cmd/protowire](https://github.com/trendvidia/protowire/tree/main/cmd/protowire). Install:
+The `pxf` CLI is shared across every port and lives in the spec repo at [github.com/trendvidia/protowire/cmd/pxf](https://github.com/trendvidia/protowire/tree/main/cmd/pxf). Install:
 
 ```sh
-go install github.com/trendvidia/protowire/cmd/protowire@latest
+go install github.com/trendvidia/protowire/cmd/pxf@latest
 ```
 
 Java users use this library for in-process encode/decode and the shared CLI for command-line operations. There is no separate Java CLI binary.

@@ -16,6 +16,7 @@ import org.protowire.pxf.PxfException;
 import org.protowire.pxf.Token;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
+import org.protowire.pxf.RowBody;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -27,6 +28,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -170,6 +172,176 @@ public final class LiteWireWriter {
             // protowire-go checks required fields after the document, so it
             // reports them at its start, by the path to the field.
             throw new PxfException(Position.UNKNOWN, "required field " + Token.quote(e.path) + " is absent");
+        }
+    }
+
+    // -- @dataset rows (#212) ------------------------------------------------
+
+    /**
+     * As {@link #encodeRows(Ast.DatasetDirective, PxfMeta, PxfRegistry, DecodeLimits)}
+     * for a row type with no nested-message or enum field outside its
+     * generated companion's own references.
+     */
+    public static Iterator<byte[]> encodeRows(Ast.DatasetDirective dataset, PxfMeta meta) {
+        return encodeRows(dataset, meta, REGISTRY_REQUIRED, DecodeLimits.defaults());
+    }
+
+    /** As {@link #encodeRows(Ast.DatasetDirective, PxfMeta, PxfRegistry, DecodeLimits)} under the default limits. */
+    public static Iterator<byte[]> encodeRows(Ast.DatasetDirective dataset, PxfMeta meta, PxfRegistry registry) {
+        return encodeRows(dataset, meta, registry, DecodeLimits.defaults());
+    }
+
+    /**
+     * Each row of {@code dataset} as the PB bytes of its message, whose type
+     * {@code meta} describes (draft §3.4.4). Parse them with the row type's
+     * generated {@code parseFrom}. Each row binds as
+     * {@link #encodeRow(List, Ast.DatasetRow, PxfMeta, PxfRegistry, DecodeLimits)}
+     * binds it, when the iterator reaches it, so a row the type refuses fails
+     * that {@code next()} call with a {@link PxfException} at the row. This
+     * is the lite tier's counterpart of the full tier's {@code BindRow} and
+     * protowire-go's {@code BindRow}, with the same verdicts and error texts.
+     *
+     * <p>{@code meta} is the companion of the type the dataset's header
+     * names ({@link Ast.DatasetDirective#type()}). For a document, bind
+     * each of {@link Ast.Document#datasets()} with its own type's companion.
+     */
+    public static Iterator<byte[]> encodeRows(Ast.DatasetDirective dataset, PxfMeta meta, PxfRegistry registry,
+            DecodeLimits limits) {
+        List<String> columns = dataset.columns();
+        Iterator<Ast.DatasetRow> rows = dataset.rows().iterator();
+        return new Iterator<>() {
+            private boolean checked;
+
+            @Override public boolean hasNext() {
+                return rows.hasNext();
+            }
+
+            @Override public byte[] next() {
+                Ast.DatasetRow row = rows.next();
+                // The column paths depend on the type and the header, never
+                // on the row, so they are checked once, at the first row.
+                if (!checked) {
+                    checkColumnPaths(meta, columns, registry, row.pos());
+                    checked = true;
+                }
+                return bindRow(columns, row, meta, registry, limits);
+            }
+        };
+    }
+
+    /**
+     * As {@link #encodeRow(List, Ast.DatasetRow, PxfMeta, PxfRegistry, DecodeLimits)}
+     * for a row type with no nested-message or enum field outside its
+     * generated companion's own references.
+     */
+    public static byte[] encodeRow(List<String> columns, Ast.DatasetRow row, PxfMeta meta) {
+        return encodeRow(columns, row, meta, REGISTRY_REQUIRED, DecodeLimits.defaults());
+    }
+
+    /** As {@link #encodeRow(List, Ast.DatasetRow, PxfMeta, PxfRegistry, DecodeLimits)} under the default limits. */
+    public static byte[] encodeRow(List<String> columns, Ast.DatasetRow row, PxfMeta meta, PxfRegistry registry) {
+        return encodeRow(columns, row, meta, registry, DecodeLimits.defaults());
+    }
+
+    /**
+     * One {@code @dataset} row as the PB bytes of its message, whose type
+     * {@code meta} describes, its cells bound to {@code columns} in order.
+     *
+     * <p>A non-empty cell in column {@code c} binds as the body entry
+     * {@code c = <value>} would: a list or block cell is a list or message,
+     * {@code {}} a present empty message, and {@code null} follows a body's
+     * null rules. A dotted column {@code a.b} binds into the sub-message
+     * {@code a}, and every cell under one prefix lands in one block. An empty
+     * cell leaves its field absent, so {@code (pxf.default)} and
+     * {@code (pxf.required)} apply ({@link org.protowire.pxf.RowBody}).
+     *
+     * <p>Every column must name a field, and a dotted one a path through
+     * singular message fields whose types are not written as literals; a
+     * broken column fails every row, its cells empty or not. An error is
+     * reported at the row, naming the column it fell in, as the full tier's
+     * {@code BindRow} reports it. {@code limits} apply as in
+     * {@link #encode(Ast.Document, PxfMeta, PxfRegistry, DecodeLimits)},
+     * except {@code MaxMessageSize}: the row's body repeats the column names,
+     * so it is wider than the row, and is read at the default.
+     *
+     * @throws IllegalArgumentException if the row's cells and the columns differ in number
+     */
+    public static byte[] encodeRow(List<String> columns, Ast.DatasetRow row, PxfMeta meta, PxfRegistry registry,
+            DecodeLimits limits) {
+        checkColumnPaths(meta, columns, registry, row.pos());
+        return bindRow(columns, row, meta, registry, limits);
+    }
+
+    private static byte[] bindRow(List<String> columns, Ast.DatasetRow row, PxfMeta meta, PxfRegistry registry,
+            DecodeLimits limits) {
+        RowBody body = RowBody.of(columns, row);
+        try {
+            Ast.Document doc = Parser.parse(body.text(),
+                limits.withMaxMessageSize(DecodeLimits.defaults().maxMessageSize()));
+            return encode(doc, meta, registry, limits);
+        } catch (PxfException e) {
+            throw body.atRow(e);
+        }
+    }
+
+    /** The well-known kinds written as a literal, which a column path cannot go into, by kind. */
+    private static final Map<Integer, String> LITERAL_TYPES = Map.ofEntries(
+        Map.entry(PxfMeta.WKT_TIMESTAMP, "google.protobuf.Timestamp"),
+        Map.entry(PxfMeta.WKT_DURATION, "google.protobuf.Duration"),
+        Map.entry(PxfMeta.WKT_STRING_VALUE, "google.protobuf.StringValue"),
+        Map.entry(PxfMeta.WKT_BYTES_VALUE, "google.protobuf.BytesValue"),
+        Map.entry(PxfMeta.WKT_BOOL_VALUE, "google.protobuf.BoolValue"),
+        Map.entry(PxfMeta.WKT_INT32_VALUE, "google.protobuf.Int32Value"),
+        Map.entry(PxfMeta.WKT_INT64_VALUE, "google.protobuf.Int64Value"),
+        Map.entry(PxfMeta.WKT_UINT32_VALUE, "google.protobuf.UInt32Value"),
+        Map.entry(PxfMeta.WKT_UINT64_VALUE, "google.protobuf.UInt64Value"),
+        Map.entry(PxfMeta.WKT_FLOAT_VALUE, "google.protobuf.FloatValue"),
+        Map.entry(PxfMeta.WKT_DOUBLE_VALUE, "google.protobuf.DoubleValue"),
+        Map.entry(PxfMeta.WKT_BIG_INT, "pxf.BigInt"),
+        Map.entry(PxfMeta.WKT_DECIMAL, "pxf.Decimal"),
+        Map.entry(PxfMeta.WKT_BIG_FLOAT, "pxf.BigFloat"));
+
+    /**
+     * Checks {@code columns} against the row type (draft §3.4.4): each
+     * segment names a field, and each segment but the last a singular message
+     * field whose type is not written as a literal. A path has no index, so
+     * it cannot go through a repeated or map field. A {@code pxf.Secret} has
+     * a block form as well as its literal, so a path may go into one. The
+     * full tier's {@code BindRow.checkColumnPaths} and protowire-go's
+     * {@code checkColumnPaths}, with their texts.
+     */
+    private static void checkColumnPaths(PxfMeta root, List<String> columns, PxfRegistry registry, Position pos) {
+        for (String c : columns) {
+            PxfMeta md = root;
+            int from = 0;
+            while (true) {
+                int dot = c.indexOf('.', from);
+                String seg = dot < 0 ? c.substring(from) : c.substring(from, dot);
+                Integer num = md.fieldNumbers().get(seg);
+                if (num == null) {
+                    throw new PxfException(pos, "@dataset column \"" + c + "\": " + md.fullName() + " has no field \"" + seg + "\"");
+                }
+                if (dot < 0) break;
+                String at = c.substring(0, dot);
+                if (md.mapFields().contains(num)) {
+                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at
+                        + "\" is a map field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)");
+                }
+                if (md.repeatedFields().contains(num)) {
+                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at
+                        + "\" is a repeated field, and a column path cannot go through one; use a value cell for \"" + at + "\" (draft §3.4.4)");
+                }
+                if (md.fieldKinds().getOrDefault(num, 0) != K_MESSAGE) {
+                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at + "\" is not a message field");
+                }
+                String literal = LITERAL_TYPES.get(md.wellKnownKinds().getOrDefault(num, PxfMeta.WKT_NONE));
+                if (literal != null) {
+                    throw new PxfException(pos, "@dataset column \"" + c + "\": \"" + at + "\" is a " + literal
+                        + ", which is written as a literal; a column path cannot go into it (draft §3.4.4)");
+                }
+                md = nestedMetaOf(num, md, registry);
+                from = dot + 1;
+            }
         }
     }
 

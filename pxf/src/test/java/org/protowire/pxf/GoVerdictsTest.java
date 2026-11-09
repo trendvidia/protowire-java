@@ -66,7 +66,7 @@ class GoVerdictsTest {
         Map<String, Descriptor> types = new HashMap<>();
         List<FileDescriptor> files = new ArrayList<>(List.of(
                 annotationsFile(), any.v1.Any.getDescriptor(), bf.v1.Bigfloat.getDescriptor(),
-                blocks.v1.Blocks.getDescriptor(), dup.v1.Duplicates.getDescriptor(),
+                blocks.v1.Blocks.getDescriptor(), dataset.v1.Paths.getDescriptor(), dup.v1.Duplicates.getDescriptor(),
                 duration.v1.Duration.getDescriptor(), keyed.v1.Keyed.getDescriptor(),
                 mapkeys.v1.BoolKeys.getDescriptor(), nulls.v1.Nulls.getDescriptor(),
                 nulls.v1.NullsProto2.getDescriptor(), strings.v1.Strings.getDescriptor(),
@@ -87,6 +87,26 @@ class GoVerdictsTest {
 
     private static FileDescriptor annotationsFile() {
         return settings.v1.SettingsOuterClass.getDescriptor();
+    }
+
+    /**
+     * What this tier says of a dataset document: each row bound with
+     * {@link BindRow} to the type its header names, as Go's table binds each
+     * with BindRow. "ok", or the first error as Go would print it.
+     */
+    static String datasetVerdict(byte[] doc, Map<String, Descriptor> types) {
+        try {
+            for (Ast.DatasetDirective ds : Pxf.parse(doc).datasets()) {
+                Descriptor d = types.get(ds.type());
+                assertNotNull(d, "no descriptor for " + ds.type());
+                for (Ast.DatasetRow row : ds.rows()) BindRow.bindRow(DynamicMessage.newBuilder(d), ds.columns(), row);
+            }
+            return "ok";
+        } catch (PxfException e) {
+            return e.getMessage();
+        } catch (RuntimeException e) {
+            return e.getClass().getSimpleName() + ": " + e.getMessage(); // never Go's text
+        }
     }
 
     /** What this tier says of a document: "ok", or the error as Go would print it. */
@@ -117,7 +137,10 @@ class GoVerdictsTest {
             tests.add(DynamicTest.dynamicTest(r.doc(), () -> {
                 Descriptor d = types.get(r.type());
                 assertNotNull(d, "no descriptor for " + r.type());
-                String got = verdict(Files.readAllBytes(root.resolve(r.doc())), d, r.doc().startsWith("any/"), types);
+                byte[] doc = Files.readAllBytes(root.resolve(r.doc()));
+                String got = r.doc().startsWith("dataset/")
+                        ? datasetVerdict(doc, types)
+                        : verdict(doc, d, r.doc().startsWith("any/"), types);
                 String issue = KNOWN_GAPS.get(r.doc());
                 if (issue == null) {
                     assertEquals(r.decode(), got, r.doc());
@@ -138,7 +161,7 @@ class GoVerdictsTest {
         try (Stream<Path> s = Files.walk(root)) {
             docs = s.filter(Files::isRegularFile)
                     .map(p -> root.relativize(p).toString().replace('\\', '/'))
-                    .filter(n -> n.endsWith(".pxf") && !n.endsWith(".expected.pxf") && !n.startsWith("dataset/"))
+                    .filter(n -> n.endsWith(".pxf") && !n.endsWith(".expected.pxf"))
                     .collect(Collectors.toCollection(TreeSet::new));
         }
         assertEquals(docs, table().stream().map(Row::doc).collect(Collectors.toCollection(TreeSet::new)),

@@ -12,7 +12,10 @@
 // Parse's, which knows no schema. The lite tier parses before it binds, so a
 // document Parse rejects is held to <parse>, and the rest to <decode>. The two
 // differ only where the decoder sees the schema first. The any/ documents
-// resolve exactly any.v1.Leaf, as the Java corpus tests do. Its output is scripts/go-verdicts/corpus.tsv,
+// resolve exactly any.v1.Leaf, as the Java corpus tests do. A dataset/
+// document's <decode> is the first error binding its rows, each with BindRow
+// to the type its @dataset header names, as cmd/pxf's validate binds them;
+// <message type> is the first header's type. Its output is scripts/go-verdicts/corpus.tsv,
 // which PxfCorpusTextTest and LiteCorpusTextTest hold each tier to, and the
 // conformance job reruns it against protowire-go main to keep the table
 // current. Run it from a protowire-go checkout, so its imports resolve
@@ -40,8 +43,7 @@ import (
 )
 
 // The directories, the schemas their documents name, and the type of a
-// document with no @type line. dataset/ is left out: its rows bind through
-// the dataset API, which the lite tier does not have yet (#212).
+// document with no @type line.
 var dirs = []struct {
 	dir, def string
 	protos   []string
@@ -49,6 +51,7 @@ var dirs = []struct {
 	{"annotations", "settings.v1.Settings", []string{"annotations/settings.proto"}},
 	{"any", "any.v1.Holder", []string{"any/any.proto"}},
 	{"bigfloat", "bf.v1.H", []string{"bigfloat/bigfloat.proto"}},
+	{"dataset", "test.v1.AllTypes", []string{"test.proto", "dataset/paths.proto"}},
 	{"blocks", "blocks.v1.Doc", []string{"blocks/blocks.proto"}},
 	{"duplicates", "dup.v1.Holder", []string{"duplicates/duplicates.proto"}},
 	{"duration", "duration.v1.Holder", []string{"duration/duration.proto"}},
@@ -59,7 +62,10 @@ var dirs = []struct {
 	{"strings", "strings.v1.S", []string{"strings/strings.proto"}},
 }
 
-var typeLine = regexp.MustCompile(`(?m)^@type\s+(\S+)`)
+var (
+	typeLine    = regexp.MustCompile(`(?m)^@type\s+(\S+)`)
+	datasetLine = regexp.MustCompile(`(?m)^@dataset\s+([\w.]+)`)
+)
 
 func main() {
 	if len(os.Args) != 3 {
@@ -122,6 +128,13 @@ func verdicts(path, dir, def string, files *protoregistry.Files) (name, decode, 
 		fail(err)
 	}
 	name = def
+	if dir == "dataset" {
+		if m := datasetLine.FindSubmatch(data); m != nil {
+			name = string(m[1])
+		}
+		_, perr := pxf.Parse(data)
+		return name, text(path, bindRows(path, data, files)), text(path, perr)
+	}
 	if m := typeLine.FindSubmatch(data); m != nil {
 		name = string(m[1])
 	}
@@ -136,6 +149,27 @@ func verdicts(path, dir, def string, files *protoregistry.Files) (name, decode, 
 	_, err = opts.UnmarshalFull(data, dynamicpb.NewMessage(desc.(protoreflect.MessageDescriptor)))
 	_, perr := pxf.Parse(data)
 	return name, text(path, err), text(path, perr)
+}
+
+// bindRows parses a dataset document and binds each row of each dataset to
+// the type its header names: Parse's error, or the first row's that fails.
+func bindRows(path string, data []byte, files *protoregistry.Files) error {
+	doc, err := pxf.Parse(data)
+	if err != nil {
+		return err
+	}
+	for _, ds := range doc.Datasets {
+		d, err := files.FindDescriptorByName(protoreflect.FullName(ds.Type))
+		if err != nil {
+			fail(fmt.Errorf("%s: dataset type %q: %w", path, ds.Type, err))
+		}
+		for _, row := range ds.Rows {
+			if err := pxf.BindRow(dynamicpb.NewMessage(d.(protoreflect.MessageDescriptor)), ds.Columns, row); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func text(path string, err error) string {

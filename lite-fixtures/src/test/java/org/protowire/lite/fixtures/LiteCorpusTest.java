@@ -54,9 +54,6 @@ class LiteCorpusTest {
      * {@code #text} is the error-text check of that fixture, not its verdict.
      */
     private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
-        // null on a (pxf.required) field is accepted
-        Map.entry("nulls/err-required-optional.pxf", "#189"),
-        Map.entry("nulls/err-required-wrapper.pxf", "#189"),
         // rejected, but with IllegalArgumentException rather than PxfException
         Map.entry("nulls/err-list-element.pxf", "#191"),
         Map.entry("nulls/err-oneof-sibling.pxf", "#191"),

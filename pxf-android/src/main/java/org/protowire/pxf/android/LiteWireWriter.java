@@ -302,11 +302,11 @@ public final class LiteWireWriter {
                     checkOneofCollision(num, a.key(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, a.key(), a.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
-                    // PXF `field = null` sentinel: the field counts as present
-                    // for (pxf.required) validation per the annotation's
-                    // Javadoc, but no wire bytes are emitted. This is the
-                    // canonical way to "explicitly absent" a wrapper or
-                    // proto3 optional field in PXF.
+                    // PXF `field = null`: present-but-null, so it keeps
+                    // (pxf.default) off, but no wire bytes are emitted. This
+                    // is the canonical way to "explicitly absent" a wrapper
+                    // or proto3 optional field in PXF. A required field is
+                    // not nullable, so checkNullable rejects it there.
                     if (a.value() instanceof Ast.NullVal) {
                         checkNullable(num, a.key(), a.value().pos(), meta);
                         recordSet(num, oneofOf, setFields, oneofSet);
@@ -611,7 +611,12 @@ public final class LiteWireWriter {
     /**
      * The null rule (draft -01 § Booleans, Null, and Identifier Values): a
      * list or map is not nullable, and neither is a field outside
-     * {@link PxfMeta#nullableFields()}.
+     * {@link PxfMeta#nullableFields()}. A field with (pxf.required) or
+     * {@code @required} holds a value, so null on it is rejected as absence
+     * is (protowire#569, protowire-go#268). That is read off
+     * {@link PxfMeta#requiredFields()} as well, so a companion generated
+     * before the plugin left required fields out of the nullable set gets
+     * the same verdict.
      */
     private static void checkNullable(int num, String name, Position pos, PxfMeta meta) {
         if (meta.mapFields().contains(num)) {
@@ -619,6 +624,10 @@ public final class LiteWireWriter {
         }
         if (meta.repeatedFields().contains(num)) {
             throw new PxfException(pos, "null is not allowed on repeated field \"" + name + "\"");
+        }
+        if (meta.requiredFields().contains(num)) {
+            throw new PxfException(pos, "null is not allowed on required field \"" + name
+                + "\": a required field holds a value");
         }
         if (!meta.nullableFields().contains(num)) {
             throw new PxfException(pos, "null is not allowed on field \"" + name

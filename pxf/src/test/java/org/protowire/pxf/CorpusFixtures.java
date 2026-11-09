@@ -44,10 +44,7 @@ final class CorpusFixtures {
      * that fixes it, keyed {@code <dir>/<file>}. {@link #meet} fails on a
      * listed fixture that meets its verdict, so the list only shrinks.
      */
-    static final Map<String, String> KNOWN_GAPS = Map.of(
-            "nulls/err-required-optional.pxf", "#189",
-            "nulls/err-required-wrapper.pxf", "#189",
-            "dataset/null-on-required-cell.pxf", "#189");
+    static final Map<String, String> KNOWN_GAPS = Map.of();
 
     /** Runs a fixture's verdict, or for a known gap checks that it still fails. */
     static void meet(String dir, String name, Executable verdict) throws Throwable {

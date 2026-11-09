@@ -42,6 +42,18 @@ public final class Result {
     public List<String> nullFields()      { return List.copyOf(nullFields); }
     Set<String> presentFieldsView()       { return presentFields; }
 
+    private org.protowire.check.Report report;
+
+    /**
+     * The report of the {@code UnmarshalOptions} validator, as protowire-go's
+     * {@code Result.Report()} (#205): its clean report, or null when no
+     * validator ran. A report with violations fails the decode instead, and
+     * rides on the {@code CheckException}.
+     */
+    public org.protowire.check.Report report() { return report; }
+
+    void setReport(org.protowire.check.Report r) { report = r; }
+
     /**
      * The paths of every field the document set, to a value or to null: the
      * union of {@link #isSet} and {@link #isNull}, as protowire-go's

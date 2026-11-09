@@ -133,6 +133,21 @@ class SpecCorpusTest {
         verdicts("repeated", AllTypes.getDescriptor());
     }
 
+    /** protowire-go's text and position for each shape that is not a list; lite-fixtures asserts the same. */
+    @Test
+    void aRepeatedFieldTakesOnlyAList() {
+        java.util.Map.of(
+                "err-scalar-entries.pxf", "6:19: expected '[' for repeated field \"repeated_string\"",
+                "err-assigned-block.pxf", "7:19: expected '[' for repeated field \"repeated_nested\"",
+                "err-block-entries.pxf",
+                "8:1: repeated field \"repeated_nested\" must use list syntax: repeated_nested = [...]")
+            .forEach((name, want) -> {
+                PxfException e = assertThrows(PxfException.class,
+                        () -> Pxf.unmarshal(fixture("repeated", name), AllTypes.getDescriptor()), name);
+                assertEquals(want, e.getMessage(), name);
+            });
+    }
+
     @Test
     void listBindingsConcatenate() throws IOException {
         AllTypes m = bind("repeated", "concat-lists.pxf", AllTypes.newBuilder()).build();

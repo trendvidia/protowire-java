@@ -332,6 +332,13 @@ public final class LiteWireWriter {
                         checkCount(num, mbv.entries().size(), a.key(), a.pos(), counts, limits);
                         writeMap(out, num, mbv.entries(), meta, registry, limits,
                             mapKeys.computeIfAbsent(num, k -> new HashSet<>()));
+                    } else if (repeated.contains(num) && !meta.mapFields().contains(num)) {
+                        // A repeated field is written with a list (draft -01
+                        // § Entries and Keys): a scalar, or a block outside
+                        // the keyed form above, is not one. As FastDecoder
+                        // and protowire-go say it, at the value.
+                        throw new PxfException(a.value().pos(),
+                            "expected '[' for repeated field \"" + a.key() + "\"");
                     } else if (mapEntry || !writesNothing(num, kind, a.value(), meta, registry)) {
                         writeField(out, num, kind, a.value(), meta, registry, limits);
                     }

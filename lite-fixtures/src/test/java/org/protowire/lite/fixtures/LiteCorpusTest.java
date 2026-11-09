@@ -67,9 +67,6 @@ class LiteCorpusTest {
         Map.entry("any/list-element.pxf", "#213"),
         Map.entry("any/map-value.pxf", "#213"),
         Map.entry("any/url-verbatim.pxf", "#213"),
-        // a scalar or an assigned block on a repeated field is accepted
-        Map.entry("repeated/err-scalar-entries.pxf", "#214"),
-        Map.entry("repeated/err-assigned-block.pxf", "#214"),
         // the error text is not Go's
         Map.entry("map-keys/invalid#text", "#215"),
         Map.entry("duplicates/err-oneof-member-twice.pxf#text", "#215"),
@@ -342,6 +339,22 @@ class LiteCorpusTest {
     void aNegativeDurationReEncodesWithOneLeadingSign() {
         byte[] wire = decode("duration", fixture("duration", "roundtrip-negative.pxf"), "duration.v1.Holder");
         assertEquals(body(text("duration", "roundtrip-negative.expected.pxf")), marshal(wire, "duration.v1.Holder"));
+    }
+
+    /** Go's text and position for each shape that is not a list, as the full tier gives them. */
+    static final Map<String, String> NOT_A_LIST = Map.of(
+        "err-scalar-entries.pxf", "6:19: expected '[' for repeated field \"repeated_string\"",
+        "err-assigned-block.pxf", "7:19: expected '[' for repeated field \"repeated_nested\"",
+        "err-block-entries.pxf",
+        "8:1: repeated field \"repeated_nested\" must use list syntax: repeated_nested = [...]");
+
+    @Test
+    void aRepeatedFieldTakesOnlyAList() {
+        NOT_A_LIST.forEach((name, want) -> {
+            PxfException e = assertThrows(PxfException.class,
+                () -> decode("repeated", fixture("repeated", name), "test.v1.AllTypes"), name);
+            assertEquals(want, e.getMessage(), name);
+        });
     }
 
     @Test

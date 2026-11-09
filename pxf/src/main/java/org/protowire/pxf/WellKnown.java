@@ -11,7 +11,12 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * Detection and accessors for well-known proto types and PXF big-num types.
@@ -33,15 +38,99 @@ public final class WellKnown {
             Map.entry("google.protobuf.UInt32Value", FieldDescriptor.Type.UINT32),
             Map.entry("google.protobuf.UInt64Value", FieldDescriptor.Type.UINT64));
 
-    public static boolean isWrapper(Descriptor d) { return WRAPPER_TYPES.containsKey(d.getFullName()); }
-    public static boolean isTimestamp(Descriptor d) { return "google.protobuf.Timestamp".equals(d.getFullName()); }
-    public static boolean isDuration(Descriptor d) { return "google.protobuf.Duration".equals(d.getFullName()); }
-    public static boolean isAny(Descriptor d) { return "google.protobuf.Any".equals(d.getFullName()); }
-    public static boolean isFieldMask(Descriptor d) { return "google.protobuf.FieldMask".equals(d.getFullName()); }
+    // Each predicate below holds a message to the shape its name needs: a
+    // message with a well-known name and the wrong fields is an ordinary
+    // message (draft -01 §wkt-shapes, protowire-go#218). Bind-time
+    // validation refuses it (SchemaValidator.Kind.WELL_KNOWN_SHAPE); this is
+    // what holds where validation does not run, marshal and skipValidate.
+    public static boolean isWrapper(Descriptor d) { return WRAPPER_TYPES.containsKey(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isTimestamp(Descriptor d) { return "google.protobuf.Timestamp".equals(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isDuration(Descriptor d) { return "google.protobuf.Duration".equals(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isAny(Descriptor d) { return "google.protobuf.Any".equals(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isFieldMask(Descriptor d) { return "google.protobuf.FieldMask".equals(d.getFullName()) && hasKnownShape(d); }
 
-    public static boolean isBigInt(Descriptor d) { return "pxf.BigInt".equals(d.getFullName()); }
-    public static boolean isDecimal(Descriptor d) { return "pxf.Decimal".equals(d.getFullName()); }
-    public static boolean isBigFloat(Descriptor d) { return "pxf.BigFloat".equals(d.getFullName()); }
+    public static boolean isBigInt(Descriptor d) { return "pxf.BigInt".equals(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isDecimal(Descriptor d) { return "pxf.Decimal".equals(d.getFullName()) && hasKnownShape(d); }
+    public static boolean isBigFloat(Descriptor d) { return "pxf.BigFloat".equals(d.getFullName()) && hasKnownShape(d); }
+
+    // -- shapes ---------------------------------------------------------------
+
+    /** One field a codec reads on a well-known type; an optional one may be undeclared, and must match when declared. */
+    private record ShapeField(String name, FieldDescriptor.Type type, boolean repeated, boolean optional) {
+        static ShapeField of(String name, FieldDescriptor.Type type) { return new ShapeField(name, type, false, false); }
+    }
+
+    /**
+     * Draft -01 §wkt-shapes, as protowire-go's {@code wktShapes}: the fields a
+     * message must declare to be handled as the well-known type its full name
+     * says it is, in the order they are checked. Field numbers are not in it,
+     * since PXF binds fields by name; the canonical definitions have this
+     * shape, and so does any copy of them.
+     */
+    private static final Map<String, List<ShapeField>> SHAPES;
+    static {
+        List<ShapeField> seconds = List.of(ShapeField.of("seconds", FieldDescriptor.Type.INT64), ShapeField.of("nanos", FieldDescriptor.Type.INT32));
+        Map<String, List<ShapeField>> m = new HashMap<>();
+        m.put("google.protobuf.Timestamp", seconds);
+        m.put("google.protobuf.Duration", seconds);
+        m.put("google.protobuf.Any", List.of(ShapeField.of("type_url", FieldDescriptor.Type.STRING), ShapeField.of("value", FieldDescriptor.Type.BYTES)));
+        m.put("google.protobuf.FieldMask", List.of(new ShapeField("paths", FieldDescriptor.Type.STRING, true, false)));
+        m.put("pxf.BigInt", List.of(ShapeField.of("abs", FieldDescriptor.Type.BYTES), ShapeField.of("negative", FieldDescriptor.Type.BOOL)));
+        m.put("pxf.Decimal", List.of(ShapeField.of("unscaled", FieldDescriptor.Type.BYTES), ShapeField.of("scale", FieldDescriptor.Type.INT32),
+                ShapeField.of("negative", FieldDescriptor.Type.BOOL)));
+        m.put("pxf.BigFloat", List.of(ShapeField.of("mantissa", FieldDescriptor.Type.BYTES), ShapeField.of("exponent", FieldDescriptor.Type.INT32),
+                ShapeField.of("prec", FieldDescriptor.Type.UINT32), ShapeField.of("negative", FieldDescriptor.Type.BOOL)));
+        m.put("pxf.Secret", List.of(ShapeField.of("value", FieldDescriptor.Type.STRING),
+                new ShapeField("hint", FieldDescriptor.Type.STRING, false, true),
+                new ShapeField("fingerprint", FieldDescriptor.Type.STRING, false, true)));
+        WRAPPER_TYPES.forEach((name, type) -> m.put(name, List.of(ShapeField.of("value", type))));
+        SHAPES = Map.copyOf(m);
+    }
+
+    /**
+     * What stops {@code d} having the shape its full name needs, in
+     * protowire-go's words, as {@code it has no field "seconds"}; empty when
+     * it has it or its name needs none.
+     */
+    static String shapeProblem(Descriptor d) {
+        for (ShapeField f : SHAPES.getOrDefault(d.getFullName(), List.of())) {
+            FieldDescriptor fd = d.findFieldByName(f.name());
+            if (fd == null) {
+                if (f.optional()) continue;
+                return "it has no field \"" + f.name() + "\"";
+            }
+            if (fd.getType() != f.type()) {
+                return "field \"" + f.name() + "\" is " + kindName(fd.getType()) + ", and must be " + kindName(f.type());
+            }
+            if (fd.isMapField() || fd.isRepeated() != f.repeated()) {
+                return "field \"" + f.name() + "\" has the wrong cardinality";
+            }
+        }
+        return "";
+    }
+
+    /** A field type as protowire-go's {@code protoreflect.Kind} names it: int32, string, bytes. */
+    private static String kindName(FieldDescriptor.Type t) { return t.name().toLowerCase(Locale.ROOT); }
+
+    /**
+     * Memoized {@link #shapeProblem} verdicts, bounded as the bind-time
+     * caches are. The predicates ask for every value of a well-known type,
+     * and protowire-go measured the field walk at 13% of a document of
+     * nothing else.
+     */
+    private static final Map<Descriptor, Boolean> SHAPE_CACHE = new ConcurrentHashMap<>();
+    private static final AtomicInteger SHAPE_COUNT = new AtomicInteger();
+
+    /** Whether {@code d}, whose name is already a well-known type's, can be handled as that type. */
+    private static boolean hasKnownShape(Descriptor d) {
+        Boolean hit = SHAPE_CACHE.get(d);
+        if (hit != null) return hit;
+        boolean ok = shapeProblem(d).isEmpty();
+        if (SHAPE_COUNT.get() < SchemaValidator.MAX_CACHED_DESCRIPTORS && SHAPE_CACHE.putIfAbsent(d, ok) == null) {
+            SHAPE_COUNT.incrementAndGet();
+        }
+        return ok;
+    }
 
     // -- timestamp ----------------------------------------------------------
 
@@ -99,16 +188,20 @@ public final class WellKnown {
         return Duration.ofSeconds(secs, nanos);
     }
 
-    public static boolean isSecret(Descriptor d) { return "pxf.Secret".equals(d.getFullName()); }
+    public static boolean isSecret(Descriptor d) { return "pxf.Secret".equals(d.getFullName()) && hasKnownShape(d); }
 
     /**
      * Whether a {@code pxf.Secret} carries a hint or fingerprint, which only
      * its block form can hold: the string literal sets {@code value} alone.
+     * A copy of the schema may leave either field out.
      */
     public static boolean secretHasMetadata(Message m) {
-        Descriptor d = m.getDescriptorForType();
-        return !((String) m.getField(d.findFieldByName("hint"))).isEmpty()
-                || !((String) m.getField(d.findFieldByName("fingerprint"))).isEmpty();
+        return !secretField(m, "hint").isEmpty() || !secretField(m, "fingerprint").isEmpty();
+    }
+
+    private static String secretField(Message m, String name) {
+        FieldDescriptor fd = m.getDescriptorForType().findFieldByName(name);
+        return fd == null ? "" : (String) m.getField(fd);
     }
 
     /**

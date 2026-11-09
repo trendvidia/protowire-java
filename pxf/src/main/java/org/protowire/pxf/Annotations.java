@@ -303,7 +303,8 @@ final class Annotations {
             case UINT32, FIXED32, UINT64, FIXED64 -> true;
             case MESSAGE -> {
                 String n = fd.getMessageType().getFullName();
-                yield "google.protobuf.UInt32Value".equals(n) || "google.protobuf.UInt64Value".equals(n);
+                yield WellKnown.isWrapper(fd.getMessageType())
+                        && ("google.protobuf.UInt32Value".equals(n) || "google.protobuf.UInt64Value".equals(n));
             }
             default -> false;
         };

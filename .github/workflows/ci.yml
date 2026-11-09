@@ -130,3 +130,16 @@ jobs:
           go run "$JAVA_DIR/scripts/go-verdicts/main.go" "$JAVA_DIR/testdata" "$PROTOWIRE_DIR/proto"
           | diff -u "$JAVA_DIR/scripts/go-verdicts/corpus.tsv" -
           && echo "scripts/go-verdicts/corpus.tsv: $(wc -l < "$JAVA_DIR/scripts/go-verdicts/corpus.tsv") documents match protowire-go"
+
+      # pxf/src/test/resources/dataset-write/go.tsv is what protowire-go's
+      # @dataset writer does with each of DatasetWriterTest's cases (#204).
+      # Rerun against protowire-go main, so a change in Go's writer fails here
+      # until the table, and the full tier, follow.
+      - name: Dataset writer table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-dataset-write/main.go"
+          "$JAVA_DIR/pxf/src/test/resources/dataset-write/cases.tsv"
+          "$JAVA_DIR/pxf/src/test/proto" "$JAVA_DIR/proto-annotations/src/main/proto"
+          | diff -u "$JAVA_DIR/pxf/src/test/resources/dataset-write/go.tsv" -
+          && echo "pxf/src/test/resources/dataset-write/go.tsv: $(wc -l < "$JAVA_DIR/pxf/src/test/resources/dataset-write/go.tsv") cases match protowire-go"

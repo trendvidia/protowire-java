@@ -20,6 +20,10 @@ format changes.
 
 ### Added
 
+- **`Pxf.appendDatasetHeader` and `Pxf.appendDatasetRow` write `@dataset` tables, as protowire-go's `AppendDatasetHeader` and `AppendDatasetRow` do** (#204). Java could read a table but not write one.
+  - **Header:** the columns are checked as the reader checks them, dotted paths included, and so is the schema. A `(pxf.required)` field missing from the columns is refused.
+  - **Rows:** a set field is written as `Pxf.marshal` writes its value, and a list, map or block on one line. An unset field is an empty cell, except where reading one would not give the field back, in which case it follows Go's rules: a zero value, `[]` or `{}`, or `null`. An unset required field with presence is refused, and so is a row the reader would reject for a required sub-message.
+  - **Evidence:** `DatasetWriterTest` holds 48 cases on protowire-go's own writer-test schemas to Go's header, row or error, word for word. It holds each row's read-back through `DatasetReader` to the message Go's reader scans from it. The conformance job reruns `scripts/go-dataset-write/main.go` against protowire-go main and diffs the table.
 - **Helpers protowire-go exports, public in Java too** (#210):
   - `Format.formatValue(Ast.Value)` and `Format.appendValue(StringBuilder, Ast.Value)`: one value as its PXF literal, as Go's `FormatValue` and `AppendValue` write it.
   - `Pxf.keyFieldName`, `Pxf.keyField` and `Pxf.isKeyed`: the `(pxf.key)` annotation, as Go's `KeyFieldName`, `KeyField` and `IsKeyed` read it.

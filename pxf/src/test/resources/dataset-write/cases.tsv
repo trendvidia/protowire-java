@@ -1,0 +1,52 @@
+# DatasetWriterTest's cases, which scripts/go-dataset-write/main.go runs
+# through protowire-go: <message type> TAB <columns, comma-separated> TAB
+# <the message, as a PXF document; \n for a newline>. A blank columns field
+# means no columns.
+dsw.v1.Row	s,b,i32,si32,sf32,i64,si64,sf64,u32,f32,u64,f64,fl,db,by,color,opt	s = "a,b \"c\""\nb = true\ni32 = -1\nsi32 = -2\nsf32 = -3\ni64 = -4\nsi64 = -5\nsf64 = -6\nu32 = 7\nf32 = 8\nu64 = 18446744073709551615\nf64 = 10\nfl = 1.5\ndb = -2.25e-10\nby = b"aGk="\ncolor = COLOR_RED\nopt = 0
+dsw.v1.Row	s,b,i32,u64,color,opt	
+dsw.v1.Row	ts,dur,w_s,w_i64,w_b,w_by,bi,dec,bf,sec	ts = 2026-01-02T03:04:05.5Z\ndur = 90m\nw_s = ""\nw_i64 = -7\nw_b = false\nw_by = b""\nbi = -123456789012345678901234567890\ndec = 1.250\nbf = 1.5p64\nsec = "pw"
+dsw.v1.Row	ts,dur,w_s,w_i64,w_b,w_by,bi,dec,bf,sec	
+dsw.v1.Row	d_s,d_i32,d_opt,d_w,d_ts,d_color	
+dsw.v1.Row	d_s,d_i32,d_opt,d_w,d_ts,d_color	d_s = ""\nd_i32 = 0\nd_opt = 0\nd_w = 0\nd_ts = 1970-01-01T00:00:00Z\nd_color = COLOR_UNSPECIFIED
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i	c_i = 5
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i	
+dsw.v1.Row	c_w,o_s	c_b = true\no_i = 3
+dsw.v1.Row	c_w,c_i,c_b,o_s,o_i	c_w = "x"\no_s = "y"
+dsw.v1.Row	list,m,inner,inners,keyed,by_key	list = [1, 2]\nm = { "a": 1  "b": 2 }\ninner { x = 1  label = "l"  deep { n = 2 } }\ninners = [{ x = 1 }, { x = 2 }]\nkeyed = [{ id = "k"  v = 1 }]\nby_key = { "z": { x = 3 } }
+dsw.v1.Row	list,m,inner,inners,keyed,by_key	
+dsw.v1.Row	s,inner.x,inner.deep.n,inner.label	s = "x"\ninner { x = 1  deep { n = 2 } }
+dsw.v1.Row	s,inner.x,inner.deep.n	s = "x"
+dsw.v1.Row	inner.x,sec.value,sec.hint	inner { x = 0 }\nsec { value = "pw"  hint = "h" }
+dsw.v1.Row		s = "x"
+dsw.v1.Row	nope	s = "x"
+dsw.v1.Row	inner..x	s = "x"
+dsw.v1.Row	s,s	s = "x"
+dsw.v1.Row	inner,inner.x	s = "x"
+dsw.v1.Row	inners.x	s = "x"
+dsw.v1.Row	m.a	s = "x"
+dsw.v1.Row	ts.seconds	s = "x"
+dsw.v1.Row	s.x	s = "x"
+dsw.v1.Req	id,name,note	id = 1\nname = "n"
+dsw.v1.Req	id,name,note	name = "n"
+dsw.v1.Req	id,name,note	id = 1
+dsw.v1.Req	id,note	id = 1\nname = "n"
+dsw.v1.ReqParent	id,child.n	id = "a"\nchild { n = 1 }
+dsw.v1.ReqParent	id,child.n	id = "a"
+dsw.v1.ReqParent	id,child.n	child { m = 2 }
+dsw.v1.ReqParent	id,child.m	child { n = 1  m = 2 }
+dsw.v1.Pick	c_w,c_i,c_b,o_s,o_i	
+dsw.v1.Pick	c_w,o_s,o_i	c_i = 4
+dsw.v1.Pick	c_w,c_i	c_b = true
+dswnull.v1.N	w,dw,rw,n,o	w = null\ndw = null\nrw = 5
+dswnull.v1.N	w,dw,rw,n,o	w = "s"
+dswnull.v1.N	w,dw,rw,n,o	w = "s"\nrw = 5\nn = 4\no = 1
+dswnull.v1.N	w,dw,n,o	rw = 5
+dswnull.v1.N	w,dw,rw,n,o	_null { paths = ["w", "dw", "n"] }\nrw = 5\nn = 3
+dswl.v1.Ints	f	
+dswl.v1.Ints	f	f = [1]
+dswl.v1.Maps	f	
+dswl.v1.Msgs	f	
+dswl.v1.Keyed	f	
+dswl.v1.MsgMaps	f	
+dswl.v1.Outer	ints,maps,list,by_key	ints { }\nmaps { }\nlist = [{ }]\nby_key = { "k": { } }
+dswl.v1.Outer	ints	

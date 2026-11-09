@@ -40,6 +40,7 @@ public final class Codec {
     // withLimits returns a Codec sharing the templates.
     private int maxMessageSize = SbeConstants.MAX_MESSAGE_SIZE;
     private int maxRepeatedCount = SbeConstants.MAX_REPEATED_COUNT;
+    private org.protowire.check.Validator validator;
 
     /**
      * A codec over the same templates that decodes under the given limits:
@@ -58,6 +59,21 @@ public final class Codec {
         c.names.putAll(names);
         c.maxMessageSize = maxMessageSize;
         c.maxRepeatedCount = maxRepeatedCount;
+        c.validator = validator;
+        return c;
+    }
+
+    /**
+     * A codec over the same templates and limits that runs {@code v} on each
+     * message {@link #unmarshal} and {@link #unmarshalDescriptor} decode, as
+     * protowire-go's {@code CodecOptions.Validator} (#205): a report with
+     * violations fails the decode with a {@code CheckException}, and an
+     * engine's exception propagates. {@link #view} reads the buffer without
+     * a message, so it does not run it. Null for none.
+     */
+    public Codec withValidator(org.protowire.check.Validator v) {
+        Codec c = withLimits(maxMessageSize, maxRepeatedCount);
+        c.validator = v;
         return c;
     }
 
@@ -127,6 +143,7 @@ public final class Codec {
         MessageTemplate t = byName.get(b.getDescriptorForType().getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + b.getDescriptorForType().getFullName());
         SbeWireCodec.unmarshal(data, new MessageWriter(b), t, maxMessageSize, maxRepeatedCount);
+        org.protowire.check.Check.validate(validator, b.buildPartial());
     }
 
     public DynamicMessage unmarshalDescriptor(byte[] data, Descriptor desc) {
@@ -134,7 +151,9 @@ public final class Codec {
         if (t == null) throw new IllegalStateException("sbe: no template for " + desc.getFullName());
         DynamicMessage.Builder b = DynamicMessage.newBuilder(desc);
         SbeWireCodec.unmarshal(data, new MessageWriter(b), t, maxMessageSize, maxRepeatedCount);
-        return b.build();
+        DynamicMessage m = b.build();
+        org.protowire.check.Check.validate(validator, m);
+        return m;
     }
 
     /**

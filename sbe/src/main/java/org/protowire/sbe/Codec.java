@@ -127,6 +127,12 @@ public final class Codec {
         for (Descriptor nested : md.getNestedTypes()) register(nested, schemaId, version);
     }
 
+    /** A writer of SOFH-framed messages to {@code out}, as protowire-go's {@code Codec.NewEncoder} (#207). */
+    public Encoder newEncoder(java.io.OutputStream out) { return new Encoder(this, out); }
+
+    /** A reader of SOFH-framed messages from {@code in}, decoding under this codec's limits, as protowire-go's {@code Codec.NewDecoder} (#207). */
+    public Decoder newDecoder(java.io.InputStream in) { return new Decoder(this, in); }
+
     public byte[] marshal(Message msg) {
         MessageTemplate t = byName.get(msg.getDescriptorForType().getFullName());
         if (t == null) throw new IllegalStateException("sbe: no template for " + msg.getDescriptorForType().getFullName());

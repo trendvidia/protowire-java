@@ -20,6 +20,13 @@ format changes.
 
 ### Added
 
+- **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
+  - **pb:** `org.protowire.pb.Encoder` and `Decoder` frame each message with a varint length.
+  - **SBE:** `Codec.newEncoder` and `Codec.newDecoder` frame each message with a Simple Open Framing Header (SOFH), encoding type 0xEB50.
+  - **Envelope:** `org.protowire.envelope.Encoder` and `Decoder` reuse pb's framing.
+  - **Errors:** a frame past the decoder's maximum (16 MiB by default), a varint that overflows, or a bad SOFH header throws a `FramingCorruptException` with Go's text. A stream that ends inside a frame throws `unexpected EOF`. Both are thrown again on every later call. A message that fails to decode fails alone, and the next frame still reads.
+  - **Scope:** full tier only (decided on #205).
+
 - **A `Validator` hook on decode, as protowire-go's `check` package** (#205).
   - **New module:** `check` (artifact `protowire-check`, package `org.protowire.check`) holds the seam: `Validator`, `Violation`, `Report`, `CheckException` (Go's `check.Error`, with the same message) and `Check.validate`. It has no dependencies, so validation engines plug in without the codecs depending on them.
   - **Where it runs:** pxf's `UnmarshalOptions.withValidator`, pb's `UnmarshalOptions.withValidator` and sbe's `Codec.withValidator` run it after a successful decode, as Go's decoders do. Dataset rows run it too.

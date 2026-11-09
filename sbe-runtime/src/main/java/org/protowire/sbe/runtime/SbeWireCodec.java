@@ -141,21 +141,35 @@ public final class SbeWireCodec {
         if (data.length > maxMessageSize) {
             throw new IllegalArgumentException("sbe: input of " + data.length + " bytes exceeds MaxMessageSize=" + maxMessageSize);
         }
-        if (data.length < HEADER_SIZE) throw new IllegalArgumentException("sbe: data too short for header");
+        if (data.length < HEADER_SIZE) {
+            throw new IllegalArgumentException("sbe: data too short for header: " + data.length + " bytes");
+        }
         ByteBuffer buf = ByteBuffer.wrap(data).order(ORDER);
         int blockLength = Short.toUnsignedInt(buf.getShort(0));
         int templateId = Short.toUnsignedInt(buf.getShort(2));
+        int schemaId = Short.toUnsignedInt(buf.getShort(4));
         if (templateId != t.templateId) {
-            throw new IllegalArgumentException("sbe: template id mismatch: got " + templateId + ", want " + t.templateId);
+            throw new IllegalArgumentException("sbe: template ID mismatch: got " + templateId + ", want " + t.templateId);
+        }
+        // A template id is unique only within a schema, so it alone does not
+        // say the bytes are this message's: they may be another schema's
+        // message with the same id (protowire-go#257; draft -01 § Header and
+        // Block Length, protowire#571).
+        if (schemaId != t.schemaId) {
+            throw new IllegalArgumentException("sbe: schema ID mismatch: got " + schemaId + ", want " + t.schemaId
+                    + " for template " + t.templateId);
         }
         // HARDENING.md § SBE step 2: a wire blockLength below the template's
         // would have field reads slice past the block. Schema evolution may
         // push it higher, which is fine.
         if (blockLength < t.blockLength) {
-            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength);
+            throw new IllegalArgumentException("sbe: wire blockLength " + blockLength + " < schema blockLength " + t.blockLength
+                    + " for template " + t.templateId);
         }
         int blockEnd = HEADER_SIZE + blockLength;
-        if (data.length < blockEnd) throw new IllegalArgumentException("sbe: data too short for root block");
+        if (data.length < blockEnd) {
+            throw new IllegalArgumentException("sbe: data too short for root block: need " + blockEnd + ", have " + data.length);
+        }
 
         for (FieldTemplate ft : t.fields) readField(buf, HEADER_SIZE, ft, writer);
 

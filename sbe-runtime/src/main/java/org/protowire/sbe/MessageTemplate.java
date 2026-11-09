@@ -2,6 +2,8 @@
 // Copyright (c) 2026 TrendVidia, LLC.
 package org.protowire.sbe;
 
+import org.protowire.sbe.runtime.SbeTemplateCheck;
+
 import java.util.List;
 
 /**
@@ -21,6 +23,8 @@ public final class MessageTemplate {
 
     public MessageTemplate(int templateId, int schemaId, int version, int blockLength,
                            List<FieldTemplate> fields, List<GroupTemplate> groups, ViewSchema view) {
+        // The checks protowire-go's NewCodec makes, for both tiers (#197, #198).
+        SbeTemplateCheck.message(templateId, schemaId, version, fields, groups);
         this.templateId = templateId;
         this.schemaId = schemaId;
         this.version = version;

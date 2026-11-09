@@ -1,0 +1,16 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// Schema 2's template 7; see a.proto.
+syntax = "proto3";
+
+package header.b.v1;
+
+import "sbe/annotations.proto";
+
+option (sbe.schema_id) = 2;
+
+message B7 {
+  option (sbe.template_id) = 7;
+  int64 y = 1;
+}

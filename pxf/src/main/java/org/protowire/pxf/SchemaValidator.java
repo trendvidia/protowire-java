@@ -330,11 +330,10 @@ public final class SchemaValidator {
             }
         }
         if (oneofDefaults != null) checkOneofDefaultCap(file, oneofDefaults, out);
-        for (OneofDescriptor o : m.getOneofs()) {
-            // Skip synthetic oneofs introduced for proto3 optional fields:
-            // their name is `_<fieldname>`, never in the reserved set, and
-            // they'd double-count an already-reported field violation.
-            if (o.isSynthetic()) continue;
+        // Real oneofs only: a synthetic one, introduced for a proto3 optional
+        // field, is named `_<fieldname>`, never in the reserved set, and would
+        // double-count an already-reported field violation.
+        for (OneofDescriptor o : m.getRealOneofs()) {
             String name = o.getName();
             if (RESERVED_NAMES.contains(name)) {
                 out.add(new Violation(file, o.getFullName(), name, Kind.ONEOF));
@@ -351,8 +350,7 @@ public final class SchemaValidator {
      * — nothing else can clear it — so it reports null.
      */
     private static OneofDescriptor realOneof(FieldDescriptor f) {
-        OneofDescriptor oo = f.getContainingOneof();
-        return oo == null || oo.isSynthetic() ? null : oo;
+        return f.getRealContainingOneof();
     }
 
     /**

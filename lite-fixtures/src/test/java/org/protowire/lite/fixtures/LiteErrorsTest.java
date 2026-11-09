@@ -62,6 +62,16 @@ class LiteErrorsTest {
         GO.forEach((doc, want) -> assertEquals(want, assertThrows(PxfException.class, () -> encode(doc)).getMessage(), doc));
     }
 
+    /** An Any body's fields are named under the Any's path, as Go names them (#213). */
+    @Test
+    void aRequiredFieldInAnAnyBodyIsNamedByItsPath() {
+        org.protowire.pxf.SimplePxfRegistry types = new org.protowire.pxf.SimplePxfRegistry();
+        types.register(liteerrors.v1.ItemPxfMeta.INSTANCE);
+        PxfException e = assertThrows(PxfException.class, () -> LiteWireWriter.encode(
+            Parser.parse("payload { @type = \"liteerrors.v1.Item\" id = \"x\" }"), HolderPxfMeta.INSTANCE, types));
+        assertEquals("1:1: required field \"payload.name\" is absent", e.getMessage());
+    }
+
     @Test
     void anAssignmentInAMapIsReportedAtTheEntry() {
         // Go says 1:14, at the '='. The AST keeps no position for it, so the

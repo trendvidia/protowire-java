@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+
+// An enum read through View.enumValue (#210): uint8 by default, uint16 by
+// (sbe.encoding).
+syntax = "proto3";
+
+package view.v1;
+
+import "sbe/annotations.proto";
+
+option (sbe.schema_id) = 30;
+
+enum Level {
+  LEVEL_UNSPECIFIED = 0;
+  LEVEL_HIGH = 200;
+}
+
+message E {
+  option (sbe.template_id) = 1;
+  Level small = 1;
+  Level wide = 2 [(sbe.encoding) = "uint16"];
+  int32 n = 3;
+}

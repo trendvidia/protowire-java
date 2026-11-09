@@ -13,6 +13,7 @@ import org.protowire.pxf.Parser;
 import org.protowire.pxf.Position;
 import org.protowire.pxf.PxfEnum;
 import org.protowire.pxf.PxfException;
+import org.protowire.pxf.Token;
 import org.protowire.pxf.PxfMeta;
 import org.protowire.pxf.PxfRegistry;
 
@@ -262,7 +263,7 @@ public final class LiteWireWriter {
         if (kind == K_ENUM) {
             return enumNumber(num, v, meta, registry) == 0;
         }
-        rejectPrecision(v);
+        rejectPrecision(v, fieldNameFor(meta, num));
         return isDefaultScalar(kind, v);
     }
 
@@ -299,7 +300,7 @@ public final class LiteWireWriter {
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + a.key());
                     }
-                    checkOneofCollision(num, a.key(), meta, oneofOf, oneofSet);
+                    checkOneofCollision(num, a.key(), a.pos(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, a.key(), a.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     // PXF `field = null`: present-but-null, so it keeps
@@ -354,7 +355,7 @@ public final class LiteWireWriter {
                     if (num == null) {
                         throw new IllegalArgumentException("unknown field name: " + b.name());
                     }
-                    checkOneofCollision(num, b.name(), meta, oneofOf, oneofSet);
+                    checkOneofCollision(num, b.name(), b.pos(), meta, oneofOf, oneofSet);
                     checkBoundOnce(num, b.name(), b.pos(), meta, setFields);
                     int kind = fieldKinds.getOrDefault(num, 0);
                     String keyName = meta.keyFields().get(num);
@@ -405,13 +406,14 @@ public final class LiteWireWriter {
      */
     private static PxfException repeatedBlock(Ast.Block b) {
         if (!b.entries().isEmpty()) {
-            String quoted = switch (b.entries().get(0)) {
+            Ast.Entry first = b.entries().get(0);
+            String quoted = switch (first) {
                 case Ast.Block e when e.nameQuoted() -> e.name();
                 case Ast.Assignment e when e.keyQuoted() -> e.key();
                 default -> null;
             };
             if (quoted != null) {
-                return new PxfException(b.pos(), "quoted entry name \"" + quoted
+                return new PxfException(first.pos(), "quoted entry name \"" + quoted
                     + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
             }
         }
@@ -577,6 +579,7 @@ public final class LiteWireWriter {
     private static void checkOneofCollision(
             int num,
             String fieldName,
+            Position pos,
             PxfMeta meta,
             Map<Integer, String> oneofOf,
             Map<String, Integer> oneofSet) {
@@ -585,13 +588,13 @@ public final class LiteWireWriter {
             return;
         }
         Integer existing = oneofSet.get(oneof);
-        if (existing == null || existing.equals(num)) {
-            return; // the same member twice is checkBoundOnce's rejection
+        if (existing == null) {
+            return;
         }
-        throw new IllegalArgumentException(
-            "oneof '" + oneof + "' in " + meta.fullName() +
-            " already has '" + fieldNameFor(meta, existing) +
-            "' set; cannot also set '" + fieldName + "'");
+        // Checked before the second binding, as protowire-go's
+        // checkOneofDirect is, so the same member twice reads as the oneof's.
+        throw new PxfException(pos, "oneof \"" + oneof + "\": field \"" + fieldName
+            + "\" conflicts with already-set field \"" + fieldNameFor(meta, existing) + "\"");
     }
 
     /**
@@ -630,9 +633,43 @@ public final class LiteWireWriter {
                 + "\": a required field holds a value");
         }
         if (!meta.nullableFields().contains(num)) {
-            throw new PxfException(pos, "null is not allowed on field \"" + name
-                + "\": it has no unset state, or it is required");
+            throw new PxfException(pos, nullOnSingular(num, name, meta));
         }
+    }
+
+    /**
+     * protowire-go's nullNotAllowed for a singular field outside the nullable
+     * set. A message field always has presence, so it is refused only for
+     * being proto2 required, and so is a scalar outside
+     * {@link PxfMeta#implicitPresenceFields()}. A companion that predates
+     * that table lists no field there, so it words a plain scalar's null as
+     * a required field's; the verdict is the same.
+     */
+    private static String nullOnSingular(int num, String name, PxfMeta meta) {
+        int kind = meta.fieldKinds().getOrDefault(num, 0);
+        if (kind == K_MESSAGE) {
+            return "null is not allowed on required field \"" + name + "\": it must be set";
+        }
+        if (!meta.implicitPresenceFields().contains(num)) {
+            return "null is not allowed on scalar field \"" + name + "\": the field is required, so it must be set";
+        }
+        return "null is not allowed on scalar field \"" + name + "\": declare it optional, or as a wrapper type "
+            + "(google.protobuf." + wrapperName(kind) + "Value or similar), to make it nullable";
+    }
+
+    /** The google.protobuf wrapper stem for a scalar kind, as protowire-go names it in that hint. */
+    private static String wrapperName(int kind) {
+        return switch (kind) {
+            case K_BOOL -> "Bool";
+            case K_STRING -> "String";
+            case K_BYTES -> "Bytes";
+            case K_FLOAT -> "Float";
+            case K_DOUBLE -> "Double";
+            case K_INT64, K_SINT64, K_SFIXED64 -> "Int64";
+            case K_UINT32, K_FIXED32 -> "UInt32";
+            case K_UINT64, K_FIXED64 -> "UInt64";
+            default -> "Int32";
+        };
     }
 
     /** Reverse-lookup of a field name from its number, for diagnostic messages. */
@@ -809,6 +846,7 @@ public final class LiteWireWriter {
             throw new IllegalArgumentException(
                 "field of kind MESSAGE requires a block value; got " + v.getClass().getSimpleName());
         }
+        rejectPrecision(v, fieldNameFor(meta, num));
         writeScalar(out, num, kind, v);
     }
 
@@ -1042,15 +1080,16 @@ public final class LiteWireWriter {
                     " in map field of " + meta.fullName());
             }
             if (me.value() instanceof Ast.NullVal) {
-                throw new PxfException(me.value().pos(), "null is not allowed as a map value in field \""
+                throw new PxfException(me.value().pos(), "null is not allowed as map value in field \""
                     + fieldNameFor(meta, num) + "\"");
             }
-            Ast.Value keyVal = mapKeyValue(me.key(), me.keyQuoted(), keyKind, me.pos());
+            Ast.Value keyVal = mapKeyValue(me.key(), me.keyQuoted(), keyKind, me.pos(), fieldNameFor(meta, num));
             // Keys compare as values of the key type, so 1 and "1" are one
             // key of an integer-keyed map (protowire#396).
             if (!seenKeys.add(canonicalMapKey(keyVal))) {
+                String shown = keyVal instanceof Ast.StringVal ? Token.quote(me.key()) : canonicalMapKey(keyVal);
                 throw new PxfException(me.pos(), "map field \"" + fieldNameFor(meta, num)
-                    + "\": key \"" + me.key() + "\" is already set");
+                    + "\": key " + shown + " is already set");
             }
             List<Ast.Entry> pair = List.of(
                 new Ast.Assignment(me.pos(), "key", keyVal, List.of(), ""),
@@ -1090,7 +1129,7 @@ public final class LiteWireWriter {
      * is whether the document spelled the key as a string literal, which
      * decides what it denotes (#76, #82).
      */
-    private static Ast.Value mapKeyValue(String key, boolean quoted, int keyKind, Position pos) {
+    private static Ast.Value mapKeyValue(String key, boolean quoted, int keyKind, Position pos, String field) {
         return switch (keyKind) {
             case K_STRING -> {
                 if (!quoted && ("true".equals(key) || "false".equals(key))) {
@@ -1104,7 +1143,7 @@ public final class LiteWireWriter {
             case K_INT32, K_INT64, K_UINT32, K_UINT64,
                  K_SINT32, K_SINT64,
                  K_FIXED32, K_FIXED64, K_SFIXED32, K_SFIXED64 -> new Ast.IntVal(pos, key);
-            case K_BOOL -> new Ast.BoolVal(pos, boolMapKey(key, quoted, pos));
+            case K_BOOL -> new Ast.BoolVal(pos, boolMapKey(key, quoted, pos, field));
             default -> throw new IllegalArgumentException(
                 "unsupported map key kind: " + keyKind +
                 " (proto restricts map keys to integral, bool, or string types)");
@@ -1130,20 +1169,19 @@ public final class LiteWireWriter {
      * "0"}, which is not a bool literal (#82 gave the AST the quoted flag
      * that tells it from a bare {@code 1}).
      */
-    private static boolean boolMapKey(String key, boolean quoted, Position pos) {
+    private static boolean boolMapKey(String key, boolean quoted, Position pos, String field) {
+        String rule = " for field \"" + field + "\": a bool key is true, false, 0, 1, \"true\" or \"false\"";
         if (quoted) {
             return switch (key) {
                 case "true" -> true;
                 case "false" -> false;
-                default -> throw new PxfException(pos, "invalid bool map key \"" + key
-                    + "\": a bool key is true, false, 0, 1, \"true\" or \"false\"");
+                default -> throw new PxfException(pos, "invalid bool map key " + Token.quote(key) + rule);
             };
         }
         return switch (key) {
             case "true", "1" -> true;
             case "false", "0" -> false;
-            default -> throw new PxfException(pos, "invalid bool map key " + key
-                + ": a bool key is true, false, 0, 1, \"true\" or \"false\"");
+            default -> throw new PxfException(pos, "invalid bool map key " + key + rule);
         };
     }
 
@@ -1240,6 +1278,9 @@ public final class LiteWireWriter {
         if (kind == K_ENUM) {
             writePackedEnum(out, num, list, meta, registry);
             return;
+        }
+        for (Ast.Value v : list.elements()) {
+            rejectPrecision(v, fieldNameFor(meta, num));
         }
         // Packed encoding: tag(num, LEN) + total length + concatenated value bytes (no tags).
         int payloadSize = computePackedPayloadSize(kind, list.elements());
@@ -1403,9 +1444,15 @@ public final class LiteWireWriter {
 
     /** Only a {@code pxf.BigFloat} reads a precision suffix (draft -01 § PXF Annotations, protowire#406). */
     private static void rejectPrecision(Ast.Value v) {
+        rejectPrecision(v, null);
+    }
+
+    /** {@link #rejectPrecision(Ast.Value)}, naming {@code field} as protowire-go does when it is known. */
+    private static void rejectPrecision(Ast.Value v, String field) {
         String prec = v instanceof Ast.IntVal i ? i.prec() : v instanceof Ast.FloatVal f ? f.prec() : "";
         if (!prec.isEmpty()) {
-            throw new PxfException(v.pos(), "precision suffix p" + prec + " is allowed only on a pxf.BigFloat");
+            throw new PxfException(v.pos(), "precision suffix p" + prec + " is allowed only on a pxf.BigFloat"
+                + (field == null ? "" : ", not on field \"" + field + "\""));
         }
     }
 

@@ -409,36 +409,25 @@ final class FastDecoder {
         void checkBinding(FieldDescriptor fd, boolean isNull, Position pos) {
             if (!named) return;
             if (fd.getName().equals(keyName())) {
-                if (isNull) {
-                    throw new PxfException(pos, "null on key field \"" + keyName() + "\" conflicts with entry name \""
-                            + entryName + "\" in keyed field \"" + field + "\"");
-                }
+                if (isNull) throw KeyedException.nullOnKey(pos, field, keyName(), entryName);
                 return;
             }
             OneofDescriptor oo = fd.getRealContainingOneof();
             if (oo != null && oo.equals(keyFd.getContainingOneof())) {
-                throw new PxfException(pos, "field \"" + fd.getName() + "\" shares oneof \"" + oo.getName() + "\" with key field \""
-                        + keyName() + "\", which entry name \"" + entryName + "\" already set in keyed field \"" + field + "\"");
+                throw KeyedException.oneofSibling(pos, field, fd.getName(), oo.getName(), keyName(), entryName);
             }
         }
 
         void checkExplicitKey(String value, Position pos) {
-            if (value.isEmpty()) {
-                throw new PxfException(pos, "explicit empty-string assignment to key field \"" + keyName()
-                        + "\" of keyed field \"" + field + "\": the empty string is not a valid key");
-            }
-            if (named && !value.equals(entryName)) {
-                throw new PxfException(pos, "key field \"" + keyName() + "\" = \"" + value + "\" conflicts with entry name \""
-                        + entryName + "\" in keyed field \"" + field + "\"");
-            }
+            if (value.isEmpty()) throw KeyedException.emptyExplicitKey(pos, field, keyName());
+            if (named && !value.equals(entryName)) throw KeyedException.keyConflict(pos, field, keyName(), value, entryName);
         }
     }
 
     private KeyedElem keyedElem;
 
     private static PxfException quotedNameUnkeyed(Position pos, String name) {
-        return new PxfException(pos, "quoted entry name \"" + name
-                + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+        return KeyedException.quotedNameUnkeyed(pos, name);
     }
 
     /**
@@ -466,13 +455,9 @@ final class FastDecoder {
                 }
                 Position namePos = current.pos();
                 String name = current.value();
-                if (name.isEmpty()) {
-                    throw new PxfException(namePos, "empty entry name in keyed field \"" + fd.getName() + "\": the empty string is not a valid key");
-                }
+                if (name.isEmpty()) throw KeyedException.emptyName(namePos, fd.getName());
                 if (seen == null) seen = new java.util.HashSet<>();
-                if (!seen.add(name)) {
-                    throw new PxfException(namePos, "duplicate key \"" + name + "\" in keyed field \"" + fd.getName() + "\"");
-                }
+                if (!seen.add(name)) throw KeyedException.duplicateKey(namePos, fd.getName(), name);
                 advance();
                 switch (current.kind()) {
                     case LBRACE -> advance();

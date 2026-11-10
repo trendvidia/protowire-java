@@ -18,6 +18,38 @@ format changes.
 
 ## [Unreleased]
 
+## [2.0.0] — 2026-11-10
+
+A major release, for two reasons. The full tier (`protowire-pb`, `-pxf`, `-sbe`,
+`-envelope`, `-proto-annotations`) now needs protobuf-java 4.36.2, up from
+3.25.5. And the PXF tree API changes in ways a compiler notices:
+
+- `Ast.BadVal` is a new variant of the sealed `Ast.Value`.
+- Every entry and value record gains an `end` component.
+- `UnmarshalOptions` gains components.
+
+Old constructors are kept, so code that builds these records compiles. Code that
+switches over `Ast.Value` without a `default`, or takes these records apart with
+a record pattern, must change. The lite tier's dependency (protobuf-javalite
+4.36.2) is unchanged.
+
+The release brings Java to protowire-go v1.17.0's feature set. It adds a tolerant
+parse and keyed diagnostics for editors, an in-place `Rewriter`, the `@dataset`
+writer, the `OnSecretField` and `Validator` hooks (in a new `protowire-check`
+artifact), stream framing for pb, SBE and envelopes, and lite-tier `@dataset`
+binding.
+
+Both tiers match Go's verdicts and error texts on the spec corpus. A few
+documents now parse differently, as Go's parser does:
+
+- URL-safe base64 in `b"…"` is accepted.
+- Timestamps follow Go's RFC 3339.
+- A precision suffix on a map key is refused.
+
+The Fixed entries below list each case. CI holds Java to seven tables that
+protowire-go writes, regenerated against protowire-go main on every PR. No
+wire-format change.
+
 ### Added
 
 - **`Rewriter`: format-preserving edits to a PXF document, as protowire-go's `Rewriter`** (#209). It splices replacement bytes into the source, so everything outside an edit stays byte for byte as it was: comments, blank lines, key order, indentation, number and string spellings. It is the write path for tools that edit a document a person also edits by hand.
@@ -101,16 +133,10 @@ format changes.
   - The lite tier leaves out a field with no presence (a proto3 plain scalar or enum) that holds its zero value, such as `f_int32 = 0` or `f_string = ""`. A `-0.0` is not a zero value, so it is still written, and so is a zero in a map entry, an `optional` field or a proto2 field. This needs a companion with `IMPLICIT_PRESENCE_FIELDS`; with an older one every zero is still written.
 - **The lite tier's `LiteWireWriter` writes map entries in key order** (protowire#509): false before true, integers by value, strings by UTF-8 bytes, as protowire-go's deterministic writer does. It used to write them in document order. Protobuf leaves map order on the wire open, so readers are not affected, but bytes for a map with keys out of order change.
 
-### Changed
-
 - **`Pb.marshal` writes null and zero big numbers as protowire-go does, and a `BigFloat` in the form a decoder holds it** (#159). A null `BigInteger` or `BigDecimal` element in a `List` threw `NullPointerException`; it is now an empty message, the zero value's record, as Go writes a nil `*big.Int` element, so the list keeps its length. A null `BigFloat` element was dropped, and a null `BigFloat` map value was written as an entry with no value field; both are an empty message now. A `BigFloat` is normalised before it is written: the mantissa at exactly `prec` bits (a wider one rounded half even, a narrower one widened), no exponent for a zero, and a prec-0 record is ±0 whatever its mantissa. So `{03, -1, 64}` (1.5) goes out as `{c000000000000000, -63, 64}`, as Go writes it, and a `+0` at prec 0 is omitted as a singular field. The value is unchanged; only its bytes change. A `BigFloat` whose prec needs more than `MaxNumericLiteralDigits` digits, or whose binary exponent after rounding is past `MaxBigFloatExponent`, is refused with an `IOException`, as Go refuses it. The rule is `BigFloats.normalize` in `:pxf-runtime`, which `:pb` now depends on; it is the form the PXF decoder already reads a BigFloat in.
 - **`Pb.unmarshal` bounds a `BigFloat`'s prec, and reads prec 0 as zero at any exponent** (#159; protowire#499). A prec whose literal needs more than `MaxNumericLiteralDigits` digits (13604 bits and up at the default) used to decode, and is now refused as protowire-go refuses it. A prec-0 message with a mantissa and an exponent past `MaxBigFloatExponent` used to be refused, although its value is zero; it now decodes, as in Go.
 
-### Changed
-
 - **`Pb.marshal` writes any NaN as the canonical quiet NaN** (#161; draft `-01` § Numeric Literals). A `double` or `float` field, singular or in a list, holding a NaN with a payload used to go out with that payload, because `CodedOutputStream.writeDouble` keeps the raw bits. Now it goes out as `0x7ff8000000000000` (or `0x7fc00000`), as protowire-go writes it from a struct. `Double.NaN` and `Float.NaN` already had those bits, so only a NaN a program built from bits changes. Generated and dynamic messages still write their fields as they are, and PXF `nan` already decoded to the canonical NaN in both tiers.
-
-### Changed
 
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
 

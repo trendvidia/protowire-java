@@ -296,14 +296,9 @@ final class FastDecoder {
                 String raw = current.value();
                 byte[] decoded;
                 try {
-                    decoded = java.util.Base64.getDecoder().decode(raw);
-                } catch (IllegalArgumentException e1) {
-                    try {
-                        decoded = java.util.Base64.getUrlDecoder().decode(raw);
-                    } catch (IllegalArgumentException e2) {
-                        throw new PxfException(current.pos(),
-                                "@proto descriptor body: invalid base64: " + e1.getMessage());
-                    }
+                    decoded = Base64Literal.decodeDescriptor(raw);
+                } catch (Base64Literal.Invalid e) {
+                    throw new PxfException(current.pos(), "@proto descriptor body: invalid base64: " + e.getMessage());
                 }
                 advance();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.DESCRIPTOR, "", decoded, java.util.List.of());
@@ -414,36 +409,25 @@ final class FastDecoder {
         void checkBinding(FieldDescriptor fd, boolean isNull, Position pos) {
             if (!named) return;
             if (fd.getName().equals(keyName())) {
-                if (isNull) {
-                    throw new PxfException(pos, "null on key field \"" + keyName() + "\" conflicts with entry name \""
-                            + entryName + "\" in keyed field \"" + field + "\"");
-                }
+                if (isNull) throw KeyedException.nullOnKey(pos, field, keyName(), entryName);
                 return;
             }
             OneofDescriptor oo = fd.getRealContainingOneof();
             if (oo != null && oo.equals(keyFd.getContainingOneof())) {
-                throw new PxfException(pos, "field \"" + fd.getName() + "\" shares oneof \"" + oo.getName() + "\" with key field \""
-                        + keyName() + "\", which entry name \"" + entryName + "\" already set in keyed field \"" + field + "\"");
+                throw KeyedException.oneofSibling(pos, field, fd.getName(), oo.getName(), keyName(), entryName);
             }
         }
 
         void checkExplicitKey(String value, Position pos) {
-            if (value.isEmpty()) {
-                throw new PxfException(pos, "explicit empty-string assignment to key field \"" + keyName()
-                        + "\" of keyed field \"" + field + "\": the empty string is not a valid key");
-            }
-            if (named && !value.equals(entryName)) {
-                throw new PxfException(pos, "key field \"" + keyName() + "\" = \"" + value + "\" conflicts with entry name \""
-                        + entryName + "\" in keyed field \"" + field + "\"");
-            }
+            if (value.isEmpty()) throw KeyedException.emptyExplicitKey(pos, field, keyName());
+            if (named && !value.equals(entryName)) throw KeyedException.keyConflict(pos, field, keyName(), value, entryName);
         }
     }
 
     private KeyedElem keyedElem;
 
     private static PxfException quotedNameUnkeyed(Position pos, String name) {
-        return new PxfException(pos, "quoted entry name \"" + name
-                + "\" is only valid inside a keyed repeated field's block (draft -01 §3.13)");
+        return KeyedException.quotedNameUnkeyed(pos, name);
     }
 
     /**
@@ -471,13 +455,9 @@ final class FastDecoder {
                 }
                 Position namePos = current.pos();
                 String name = current.value();
-                if (name.isEmpty()) {
-                    throw new PxfException(namePos, "empty entry name in keyed field \"" + fd.getName() + "\": the empty string is not a valid key");
-                }
+                if (name.isEmpty()) throw KeyedException.emptyName(namePos, fd.getName());
                 if (seen == null) seen = new java.util.HashSet<>();
-                if (!seen.add(name)) {
-                    throw new PxfException(namePos, "duplicate key \"" + name + "\" in keyed field \"" + fd.getName() + "\"");
-                }
+                if (!seen.add(name)) throw KeyedException.duplicateKey(namePos, fd.getName(), name);
                 advance();
                 switch (current.kind()) {
                     case LBRACE -> advance();
@@ -1309,10 +1289,10 @@ final class FastDecoder {
             case BYTE_STRING:
                 if (current.kind() != TokenKind.BYTES) throw new PxfException(pos, "expected bytes for field \"" + fd.getName() + "\"");
                 byte[] decoded;
-                try { decoded = Base64.getDecoder().decode(current.value()); }
-                catch (IllegalArgumentException e) {
-                    decoded = Base64.getDecoder().decode(current.value() + Lexer.padding(current.value()));
-                }
+                // The lexer has taken the payload in one of the four
+                // encodings protowire-go takes, so it decodes.
+                try { decoded = Base64Literal.decode(current.value()); }
+                catch (Base64Literal.Invalid e) { throw new PxfException(pos, "invalid base64 in bytes literal"); }
                 advance();
                 return ByteString.copyFrom(decoded);
             case ENUM:

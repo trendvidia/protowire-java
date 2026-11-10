@@ -311,9 +311,22 @@ public final class Ast {
 
     /** Right-hand-side value. */
     public sealed interface Value permits StringVal, IntVal, FloatVal, BoolVal, BytesVal, NullVal,
-            IdentVal, TimestampVal, DurationVal, ListVal, BlockVal {
+            IdentVal, TimestampVal, DurationVal, ListVal, BlockVal, BadVal {
         Position pos();
     }
+
+    /**
+     * A placeholder for a value that was required but missing or malformed,
+     * as protowire-go's {@code BadVal} (#208). Only {@link Parser#parseTolerant}
+     * makes one; {@link Parser#parse} never does. For a missing value,
+     * {@code pos} is just past the token that required it (a dangling
+     * {@code =} or key), where the value would be typed; for a malformed
+     * literal, it is the literal's own position. The error is among those
+     * the tolerant parse returns. {@link Format} writes a BadVal as nothing,
+     * so a formatted tree that holds one may not parse again, and a decoder
+     * refuses it.
+     */
+    public record BadVal(Position pos) implements Value {}
 
     public record StringVal(Position pos, String value) implements Value {}
 

@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 TrendVidia, LLC.
+//
+// protowire-go's TestKeyedEntryName_BodyCannotUndoIt schema (v1.17.0), for
+// KeyedDiagnosticsTest (#208): an entry name binds the key field, so the body
+// cannot undo it, and a oneof in a nested message is a different oneof.
+syntax = "proto3";
+package undo.v1;
+
+option java_package = "org.protowire.pxf.testproto.undo";
+
+import "pxf/annotations.proto";
+
+message P {
+  repeated O ko = 1 [(pxf.key) = "name"];
+  repeated N kn = 2 [(pxf.key) = "name"];
+}
+message O {
+  oneof pick { string name = 1; string other = 2; Sub sub = 3; }
+  string free = 4;
+  Sub nested = 5;
+}
+message Sub { oneof pick { string name = 1; string other = 2; } }
+message N { optional string name = 1; }

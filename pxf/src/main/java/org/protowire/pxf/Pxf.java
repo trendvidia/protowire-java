@@ -28,6 +28,9 @@ public final class Pxf {
     public static Ast.Document parse(byte[] data) { return Parser.parse(data); }
     public static Ast.Document parse(String data) { return Parser.parse(data); }
 
+    /** As {@link Parser#parseTolerant(byte[])}: a parse that recovers, for editor tooling (#208). */
+    public static Parser.TolerantResult parseTolerant(byte[] data) { return Parser.parseTolerant(data); }
+
     public static byte[] formatDocument(Ast.Document doc) {
         return Format.formatDocument(doc).getBytes(StandardCharsets.UTF_8);
     }
@@ -159,6 +162,23 @@ public final class Pxf {
     /** Whether {@code fd} is a keyed repeated field: {@link #keyField} is not null. As protowire-go's {@code IsKeyed}. */
     public static boolean isKeyed(FieldDescriptor fd) {
         return Annotations.keyField(fd) != null;
+    }
+
+    /**
+     * Every keyed-repeated-field violation in {@code doc} against
+     * {@code desc} (draft -01 §3.13), as positioned diagnostics in source
+     * order, as protowire-go's {@code KeyedDiagnostics} (#208): duplicate
+     * entry names in a keyed block, empty keys, an explicit key-field
+     * assignment that disagrees with its entry name or a binding that undoes
+     * it, and a quoted entry name outside a keyed field's block. They are
+     * the errors the decoder throws, one at a time, as
+     * {@link KeyedException}; editor tooling runs {@link #parseTolerant},
+     * binds a schema, and reports these instead. An entry that does not
+     * resolve against the schema is skipped: that is an ordinary schema
+     * error, not a keyed one.
+     */
+    public static java.util.List<KeyedException> keyedDiagnostics(Ast.Document doc, Descriptor desc) {
+        return KeyedDiagnostics.of(doc, desc);
     }
 
     /**

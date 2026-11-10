@@ -71,6 +71,11 @@ public final class Limits {
      * Whether {@code n} bytes of input exceed {@code maxMessageSize}; the
      * shared message for the four decoders.
      */
+    /** A literal cut to its first 24 characters and "…", as protowire-go's clipLiteral quotes one in an error. */
+    static String clipLiteral(String s) {
+        return s.length() <= 24 ? s : s.substring(0, 24) + "…";
+    }
+
     public static String messageSizeError(int n, int maxMessageSize) {
         return "input of " + n + " bytes exceeds MaxMessageSize=" + maxMessageSize;
     }

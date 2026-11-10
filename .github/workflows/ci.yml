@@ -143,3 +143,27 @@ jobs:
           "$JAVA_DIR/pxf/src/test/proto" "$JAVA_DIR/proto-annotations/src/main/proto"
           | diff -u "$JAVA_DIR/pxf/src/test/resources/dataset-write/go.tsv" -
           && echo "pxf/src/test/resources/dataset-write/go.tsv: $(wc -l < "$JAVA_DIR/pxf/src/test/resources/dataset-write/go.tsv") cases match protowire-go"
+
+      # pxf-runtime/src/test/resources/tolerant/go.tsv is what protowire-go's
+      # ParseTolerant makes of each of TolerantParseTest's documents (#208).
+      # Rerun against protowire-go main, so a change in Go's recovery fails
+      # here until the table, and the parser, follow.
+      - name: Tolerant-parse table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-tolerant/main.go"
+          "$JAVA_DIR/pxf-runtime/src/test/resources/tolerant/cases.tsv"
+          | diff -u "$JAVA_DIR/pxf-runtime/src/test/resources/tolerant/go.tsv" -
+          && echo "pxf-runtime/src/test/resources/tolerant/go.tsv: $(wc -l < "$JAVA_DIR/pxf-runtime/src/test/resources/tolerant/go.tsv") documents match protowire-go"
+
+      # pxf/src/test/resources/keyed-diagnostics/go.tsv is protowire-go's
+      # keyed errors and KeyedDiagnostics on each of KeyedDiagnosticsTest's
+      # documents (#208). Rerun against protowire-go main.
+      - name: Keyed-diagnostics table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-keyed-diagnostics/main.go"
+          "$JAVA_DIR/pxf/src/test/resources/keyed-diagnostics/cases.tsv"
+          "$JAVA_DIR/testdata" "$JAVA_DIR/pxf/src/test/proto" "$JAVA_DIR/proto-annotations/src/main/proto"
+          | diff -u "$JAVA_DIR/pxf/src/test/resources/keyed-diagnostics/go.tsv" -
+          && echo "pxf/src/test/resources/keyed-diagnostics/go.tsv: $(wc -l < "$JAVA_DIR/pxf/src/test/resources/keyed-diagnostics/go.tsv") documents match protowire-go"

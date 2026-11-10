@@ -1233,6 +1233,7 @@ public final class LiteWireWriter {
             case Ast.DurationVal x -> "duration (" + Token.quote(x.raw()) + ")";
             case Ast.BytesVal x -> "bytes";
             case Ast.NullVal x -> "null (\"null\")";
+            case Ast.BadVal x -> "a missing value (a tolerant parse's placeholder)";
             case Ast.ListVal x -> "[ (\"[\")";
             case Ast.BlockVal x -> "{ (\"{\")";
         };

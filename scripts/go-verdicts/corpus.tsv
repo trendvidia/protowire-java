@@ -53,6 +53,49 @@ blocks/err-comma-in-map.pxf	blocks.v1.Doc	6:21: expected map key, got , (",")	6:
 blocks/err-semicolon-in-block.pxf	blocks.v1.Doc	6:28: expected identifier, string, integer, or bool, got unexpected character ';'	6:28: expected identifier, string, integer, or bool, got unexpected character ';'
 blocks/newline-in-block.pxf	blocks.v1.Doc	ok	ok
 blocks/space-in-block.pxf	blocks.v1.Doc	ok	ok
+dataset/arity-long.pxf	test.v1.AllTypes	6:1: @dataset row has 3 cells, expected 2 (column count)	6:1: @dataset row has 3 cells, expected 2 (column count)
+dataset/arity-short.pxf	test.v1.AllTypes	6:1: @dataset row has 2 cells, expected 3 (column count)	6:1: @dataset row has 2 cells, expected 3 (column count)
+dataset/block-cell.pxf	test.v1.AllTypes	ok	ok
+dataset/block-on-scalar.pxf	test.v1.AllTypes	7:1: column int32_field: expected integer for field "int32_field"	ok
+dataset/cell-framing.pxf	test.v1.AllTypes	ok	ok
+dataset/dotted-bad-header-empty-row.pxf	dataset.v1.Event	8:1: @dataset column "picks.name": "picks" is a repeated field, and a column path cannot go through one; use a value cell for "picks" (draft §3.4.4)	ok
+dataset/dotted-bad-header-no-rows.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-column.pxf	test.v1.AllTypes	ok	ok
+dataset/dotted-empty-segment.pxf	dataset.v1.Event	4:32: @dataset column "desc..energy": a column path has an empty segment (draft §3.4.4)	4:32: @dataset column "desc..energy": a column path has an empty segment (draft §3.4.4)
+dataset/dotted-grouping.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-into-any.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-into-bignum.pxf	dataset.v1.Event	7:1: @dataset column "big.negative": "big" is a pxf.BigInt, which is written as a literal; a column path cannot go into it (draft §3.4.4)	ok
+dataset/dotted-into-duration.pxf	dataset.v1.Event	7:1: @dataset column "dur.seconds": "dur" is a google.protobuf.Duration, which is written as a literal; a column path cannot go into it (draft §3.4.4)	ok
+dataset/dotted-into-secret.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-into-timestamp.pxf	dataset.v1.Event	7:1: @dataset column "ts.seconds": "ts" is a google.protobuf.Timestamp, which is written as a literal; a column path cannot go into it (draft §3.4.4)	ok
+dataset/dotted-into-wrapper.pxf	dataset.v1.Event	7:1: @dataset column "wrap.value": "wrap" is a google.protobuf.Int32Value, which is written as a literal; a column path cannot go into it (draft §3.4.4)	ok
+dataset/dotted-null-leaf.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-oneof-two-members.pxf	dataset.v1.Event	7:1: column b.name: oneof "choice": field "b" conflicts with already-set field "a"	ok
+dataset/dotted-oneof.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-overlap-deep.pxf	dataset.v1.Event	6:44: @dataset column "desc.tempo.min_bpm" overlaps column "desc.tempo": a field and a path inside it cannot both be columns (draft §3.4.4)	6:44: @dataset column "desc.tempo.min_bpm" overlaps column "desc.tempo": a field and a path inside it cannot both be columns (draft §3.4.4)
+dataset/dotted-overlap.pxf	dataset.v1.Event	5:38: @dataset column "desc.energy" overlaps column "desc": a field and a path inside it cannot both be columns (draft §3.4.4)	5:38: @dataset column "desc.energy" overlaps column "desc": a field and a path inside it cannot both be columns (draft §3.4.4)
+dataset/dotted-required-missing.pxf	dataset.v1.Event	7:1: required field "req.n" is absent	ok
+dataset/dotted-required.pxf	dataset.v1.Event	ok	ok
+dataset/dotted-through-map.pxf	dataset.v1.Event	6:1: @dataset column "by_name.name": "by_name" is a map field, and a column path cannot go through one; use a value cell for "by_name" (draft §3.4.4)	ok
+dataset/dotted-through-repeated.pxf	dataset.v1.Event	7:1: @dataset column "picks.name": "picks" is a repeated field, and a column path cannot go through one; use a value cell for "picks" (draft §3.4.4)	ok
+dataset/dotted-through-scalar.pxf	dataset.v1.Event	7:1: @dataset column "plain.x": "plain" is not a message field	ok
+dataset/dotted-trailing-dot.pxf	dataset.v1.Event	4:32: @dataset column "desc.": a column path has an empty segment (draft §3.4.4)	4:32: @dataset column "desc.": a column path has an empty segment (draft §3.4.4)
+dataset/dotted-unknown-segment.pxf	dataset.v1.Event	6:1: @dataset column "desc.nope": dataset.v1.Desc has no field "nope"	ok
+dataset/dotted-with-value-cells.pxf	dataset.v1.Event	ok	ok
+dataset/duplicate-column.pxf	test.v1.AllTypes	4:42: @dataset column "string_field" appears twice (draft §3.4.4)	4:42: @dataset column "string_field" appears twice (draft §3.4.4)
+dataset/empty-rows.pxf	test.v1.AllTypes	ok	ok
+dataset/junk-between-rows.pxf	test.v1.AllTypes	8:1: @dataset directive cannot coexist with top-level field entries; the document's payload is the @dataset rows (draft §3.4.4)	8:1: @dataset directive cannot coexist with top-level field entries; the document's payload is the @dataset rows (draft §3.4.4)
+dataset/list-cell.pxf	test.v1.AllTypes	ok	ok
+dataset/nested-cells.pxf	test.v1.AllTypes	ok	ok
+dataset/null-on-optional-cell.pxf	dataset.v1.Event	ok	ok
+dataset/null-on-required-cell.pxf	dataset.v1.RowReq	9:1: column o: null is not allowed on required field "o": a required field holds a value	ok
+dataset/null-on-scalar-cell.pxf	test.v1.AllTypes	8:1: column int32_field: null is not allowed on scalar field "int32_field": declare it optional, or as a wrapper type (google.protobuf.Int32Value or similar), to make it nullable	ok
+dataset/rows-end-at-directive.pxf	test.v1.AllTypes	ok	ok
+dataset/string-newline-in-cell.pxf	test.v1.AllTypes	7:2: newline in string literal: write it as \n, or use a """triple-quoted""" string	7:2: newline in string literal: write it as \n, or use a """triple-quoted""" string
+dataset/truncated-row-eof.pxf	test.v1.AllTypes	10:1: expected ',' or ')' in @dataset row, got EOF	10:1: expected ',' or ')' in @dataset row, got EOF
+dataset/truncated-row-then-rows.pxf	test.v1.AllTypes	9:1: expected ',' or ')' in @dataset row, got (	9:1: expected ',' or ')' in @dataset row, got (
+dataset/with-body.pxf	test.v1.AllTypes	9:1: @dataset directive cannot coexist with top-level field entries; the document's payload is the @dataset rows (draft §3.4.4)	9:1: @dataset directive cannot coexist with top-level field entries; the document's payload is the @dataset rows (draft §3.4.4)
+dataset/with-type.pxf	test.v1.AllTypes	6:1: @dataset directive cannot coexist with @type; the @dataset header declares the document's type (draft §3.4.4)	6:1: @dataset directive cannot coexist with @type; the @dataset header declares the document's type (draft §3.4.4)
 duplicates/err-map-key-twice-across-bindings.pxf	dup.v1.Holder	5:12: map field "labels": key "a" is already set	ok
 duplicates/err-map-key-twice-in-literal.pxf	dup.v1.Holder	6:3: map field "labels": key "a" is already set	ok
 duplicates/err-map-key-twice-int-spellings.pxf	dup.v1.Holder	6:3: map field "nums": key 1 is already set	ok

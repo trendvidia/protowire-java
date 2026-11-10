@@ -10,11 +10,13 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestFactory;
+import org.protowire.pxf.Ast;
 import org.protowire.pxf.Parser;
 import org.protowire.pxf.PxfException;
 import org.protowire.pxf.PxfMeta;
@@ -63,8 +65,17 @@ class GoVerdictsLiteTest {
     }
 
     /** What this tier says of a document: "ok", or the error as Go would print it. */
-    private static String verdict(byte[] doc, String type, boolean any) {
+    private static String verdict(byte[] doc, String type, boolean any, boolean dataset) {
         try {
+            if (dataset) {
+                // Each row bound to the type its header names, as Go's
+                // table binds each with BindRow (#212).
+                for (Ast.DatasetDirective ds : Parser.parse(doc).datasets()) {
+                    Iterator<byte[]> rows = LiteWireWriter.encodeRows(ds, LiteCorpusTest.meta(ds.type()));
+                    while (rows.hasNext()) rows.next();
+                }
+                return "ok";
+            }
             PxfMeta m = LiteCorpusTest.meta(type);
             if (any) {
                 LiteWireWriter.encode(Parser.parse(doc), m, ANY_TYPES);
@@ -85,7 +96,8 @@ class GoVerdictsLiteTest {
         List<DynamicTest> tests = new ArrayList<>();
         for (Row r : table()) {
             tests.add(DynamicTest.dynamicTest(r.doc(), () -> {
-                String got = verdict(Files.readAllBytes(root.resolve(r.doc())), r.type(), r.doc().startsWith("any/"));
+                String got = verdict(Files.readAllBytes(root.resolve(r.doc())), r.type(), r.doc().startsWith("any/"),
+                    r.doc().startsWith("dataset/"));
                 String issue = KNOWN_GAPS.get(r.doc());
                 if (issue == null) {
                     assertEquals(r.expected(), got, r.doc());

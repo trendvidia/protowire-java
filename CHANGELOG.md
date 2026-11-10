@@ -20,6 +20,9 @@ format changes.
 
 ### Added
 
+- **The lite tier binds `@dataset` rows: `LiteWireWriter.encodeRows` gives each row of a dataset as its message's PB bytes** (#212). Parse them with the row type's generated `parseFrom`. `LiteWireWriter.encodeRow` binds one row. A row binds as the full tier's `BindRow` and protowire-go's `BindRow` bind it: dotted columns, list, block and `null` cells, `(pxf.required)` and `(pxf.default)`. A row the type refuses fails with the same error at the row, naming its column, as `7:1: column int32_field: expected integer for field "int32_field"`. Before, lite parsed a dataset but could not bind it, so a row that broke its type went unnoticed.
+  - The two tiers now share the step that writes a row as the body that binds it, `org.protowire.pxf.RowBody` in `:pxf-runtime`.
+  - `scripts/go-verdicts/corpus.tsv` now covers `testdata/dataset/`: 43 more documents, each row bound with Go's `BindRow`. Both tiers meet Go's verdict and text on every one, and lite writes Go's bytes for each of the 26 rows Go accepts.
 - **`Ast.Document.trailingComments`, `Ast.Block.trailingComments`, `Ast.BlockVal.trailingComments` and `Ast.DatasetRow.leadingComments`: the comments that no entry follows** (#200, protowire-go#279). The parser fills them in. Each record keeps its existing constructors, which leave the new list empty. Code that takes these records apart with a record pattern must add the new component.
 
 - **`Ast.Assignment.equalsPos`, `Ast.Block.bracePos` and `Ast.TypeEntry.urlPos`: where an entry's `=`, its `{` and its type URL stand** (#222). The parser fills them in. Each record keeps its existing constructors, which set the new position to the entry's own `pos`. Code that takes these records apart with a record pattern must add the new component.

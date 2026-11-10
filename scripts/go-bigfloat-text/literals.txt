@@ -1,0 +1,12 @@
+# BigFloat literals for scripts/go-bigfloat-text/main.go (#229): the issue's table, and the window's edges.
+1e4932
+1e4933
+1e4934
+1e4935
+1e5000
+1e-4949
+1e-4950
+1e99999999
+1e-99999999
+1.5e4934p64
+9.99e4934

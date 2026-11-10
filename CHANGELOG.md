@@ -116,6 +116,18 @@ format changes.
 
 ### Fixed
 
+- **A timestamp literal is accepted, refused and read as protowire-go reads it** (#247). Java read timestamps with `ISO_OFFSET_DATE_TIME`, and Go with `time.Parse(time.RFC3339Nano, …)`. The two disagreed on 9 of 23 measured forms. `TimeFormats.parseRfc3339` now ports Go's layout parse, so the lexer and both tiers' decoders follow it.
+  - **Now refused, as Go refuses them:**
+    - an hours-only offset (`+02`), or one with seconds (`+02:00:30`);
+    - a timestamp with no seconds (`10:30Z`);
+    - a lowercase `t` or `z`;
+    - a bare `.` before the zone.
+  - **Now accepted, as Go accepts them:**
+    - an offset past ±18:00, up to Go's `±24:60` (`+23:59`, `+24:00`), read as that instant;
+    - a one-digit hour;
+    - a fraction past nine digits, cut to nine.
+  - **Evidence:** `TimestampGrammarTest` holds 58 literals to Go's verdict, and for each one Go accepts, to its Unix seconds and nanosecond. `scripts/go-timestamps/main.go` writes the table, and the conformance job reruns it against protowire-go main. The tolerant-parse prefix pinned against #247 now matches Go, and the pin is gone.
+
 - **A `b"…"` literal takes the URL-safe base64 alphabet, padded or not, as protowire-go does** (#208; draft §3.7, RFC 4648 §5). `b"-_8="` used to be refused as `invalid base64 in bytes literal`; it decodes to `fb ff`. The standard alphabet was taken already.
 - **Parse errors that differed from protowire-go's:**
   - A lone `@` used to be reported as `@`. It is now `"@" must be followed by a directive name`.

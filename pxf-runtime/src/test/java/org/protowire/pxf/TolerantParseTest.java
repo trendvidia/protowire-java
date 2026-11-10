@@ -36,10 +36,7 @@ class TolerantParseTest {
      * Rows Java does not match yet, against the open issue for each. A
      * listed row that matches fails the test, so the list only shrinks.
      */
-    private static final java.util.Map<String, String> KNOWN_GAPS = java.util.Map.of(
-            // A prefix that ends inside "...00.5+02:00": Java's timestamp
-            // grammar takes the hours-only offset "+02", Go's refuses it.
-            "typed/strings#111", "#247");
+    private static final java.util.Map<String, String> KNOWN_GAPS = java.util.Map.of();
 
     private static List<Row> goRows() throws IOException {
         List<Row> rows = new ArrayList<>();

@@ -178,3 +178,14 @@ jobs:
           "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/cases.txt"
           | diff -u "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/go.tsv" -
           && echo "pxf-runtime/src/test/resources/rewrite/go.tsv: $(wc -l < "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/go.tsv") cases match protowire-go"
+
+      # pxf-runtime/src/test/resources/timestamps/go.tsv is protowire-go's
+      # verdict on each of TimestampGrammarTest's timestamp literals, and the
+      # instant it reads (#247). Rerun against protowire-go main.
+      - name: Timestamp table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-timestamps/main.go"
+          "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/variants.txt"
+          | diff -u "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/go.tsv" -
+          && echo "pxf-runtime/src/test/resources/timestamps/go.tsv: $(wc -l < "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/go.tsv") literals match protowire-go"

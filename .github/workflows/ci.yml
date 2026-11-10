@@ -189,3 +189,15 @@ jobs:
           "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/variants.txt"
           | diff -u "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/go.tsv" -
           && echo "pxf-runtime/src/test/resources/timestamps/go.tsv: $(wc -l < "$JAVA_DIR/pxf-runtime/src/test/resources/timestamps/go.tsv") literals match protowire-go"
+
+      # scripts/go-bigfloat-text/go.tsv is protowire-go's text for each
+      # BigFloat literal far past MaxBigFloatExponent, which both tiers pin
+      # Java's own text against (#229). Rerun against protowire-go main, so a
+      # change in Go's text fails here.
+      - name: BigFloat text table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-bigfloat-text/main.go"
+          "$JAVA_DIR/scripts/go-bigfloat-text/literals.txt" "$JAVA_DIR/testdata" "$PROTOWIRE_DIR/proto"
+          | diff -u "$JAVA_DIR/scripts/go-bigfloat-text/go.tsv" -
+          && echo "scripts/go-bigfloat-text/go.tsv: $(wc -l < "$JAVA_DIR/scripts/go-bigfloat-text/go.tsv") literals match protowire-go"

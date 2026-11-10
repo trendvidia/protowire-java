@@ -1,0 +1,11 @@
+1e4932	ok
+1e4933	1:6: big float literal 1e4933 has binary exponent 16388, and MaxBigFloatExponent=16384 bounds its magnitude
+1e4934	1:6: big float literal 1e4934 has binary exponent 16391, and MaxBigFloatExponent=16384 bounds its magnitude
+1e4935	1:6: big float literal 1e4935 has binary exponent 16394, and MaxBigFloatExponent=16384 bounds its magnitude
+1e5000	1:6: big float literal 1e5000 has binary exponent 16610, and MaxBigFloatExponent=16384 bounds its magnitude
+1e-4949	1:6: big float literal 1e-4949 has binary exponent -16440, and MaxBigFloatExponent=16384 bounds its magnitude
+1e-4950	1:6: big float literal 1e-4950 has binary exponent -16443, and MaxBigFloatExponent=16384 bounds its magnitude
+1e99999999	1:6: big float literal 1e99999999 has binary exponent 332192807, and MaxBigFloatExponent=16384 bounds its magnitude
+1e-99999999	1:6: big float literal 1e-99999999 has binary exponent -332192806, and MaxBigFloatExponent=16384 bounds its magnitude
+1.5e4934p64	1:6: big float literal 1.5e4934 has binary exponent 16391, and MaxBigFloatExponent=16384 bounds its magnitude
+9.99e4934	1:6: big float literal 9.99e4934 has binary exponent 16394, and MaxBigFloatExponent=16384 bounds its magnitude

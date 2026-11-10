@@ -167,3 +167,14 @@ jobs:
           "$JAVA_DIR/testdata" "$JAVA_DIR/pxf/src/test/proto" "$JAVA_DIR/proto-annotations/src/main/proto"
           | diff -u "$JAVA_DIR/pxf/src/test/resources/keyed-diagnostics/go.tsv" -
           && echo "pxf/src/test/resources/keyed-diagnostics/go.tsv: $(wc -l < "$JAVA_DIR/pxf/src/test/resources/keyed-diagnostics/go.tsv") documents match protowire-go"
+
+      # pxf-runtime/src/test/resources/rewrite/go.tsv is protowire-go's
+      # Rewriter on each of RewriterTest's cases (#209). Rerun against
+      # protowire-go main.
+      - name: Rewriter table matches protowire-go's
+        working-directory: ${{ env.GO_DIR }}
+        run: >-
+          go run "$JAVA_DIR/scripts/go-rewrite/main.go"
+          "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/cases.txt"
+          | diff -u "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/go.tsv" -
+          && echo "pxf-runtime/src/test/resources/rewrite/go.tsv: $(wc -l < "$JAVA_DIR/pxf-runtime/src/test/resources/rewrite/go.tsv") cases match protowire-go"

@@ -60,34 +60,35 @@ public final class Format {
     }
 
     private static String format(Ast.Document doc, boolean compact) {
+        String step = "  ";
         StringBuilder sb = new StringBuilder();
         List<Object> others = topDirectives(doc);
         if (others.isEmpty()) {
             if (!doc.typeUrl().isEmpty()) {
                 sb.append("@type ").append(doc.typeUrl()).append("\n\n");
             }
-            writeComments(sb, doc.leadingComments(), 0);
-            formatEntries(sb, doc.entries(), 0, compact);
-            writeComments(sb, doc.trailingComments(), 0);
+            writeComments(sb, doc.leadingComments(), 0, step);
+            formatEntries(sb, doc.entries(), 0, compact, step);
+            writeComments(sb, doc.trailingComments(), 0, step);
             return sb.toString();
         }
 
         if (!doc.typeUrl().isEmpty()) {
             sb.append("@type ").append(doc.typeUrl()).append('\n');
         }
-        writeComments(sb, doc.leadingComments(), 0);
+        writeComments(sb, doc.leadingComments(), 0, step);
         for (Object o : others) {
             switch (o) {
                 case Ast.Directive d -> {
-                    writeComments(sb, d.leadingComments(), 0);
+                    writeComments(sb, d.leadingComments(), 0, step);
                     formatNamedDirective(sb, d);
                 }
                 case Ast.DatasetDirective d -> {
-                    writeComments(sb, d.leadingComments(), 0);
+                    writeComments(sb, d.leadingComments(), 0, step);
                     formatDataset(sb, d);
                 }
                 case Ast.ProtoDirective d -> {
-                    writeComments(sb, d.leadingComments(), 0);
+                    writeComments(sb, d.leadingComments(), 0, step);
                     formatProto(sb, d);
                 }
                 default -> throw new IllegalStateException(
@@ -96,9 +97,9 @@ public final class Format {
         }
         if (!doc.entries().isEmpty()) {
             sb.append('\n');
-            formatEntries(sb, doc.entries(), 0, compact);
+            formatEntries(sb, doc.entries(), 0, compact, step);
         }
-        writeComments(sb, doc.trailingComments(), 0);
+        writeComments(sb, doc.trailingComments(), 0, step);
         return sb.toString();
     }
 
@@ -138,16 +139,17 @@ public final class Format {
 
     /** Writes the header, then one row per line. A null cell is an absent field, left empty; {@code null} is written. */
     private static void formatDataset(StringBuilder sb, Ast.DatasetDirective t) {
+        String step = "  ";
         sb.append("@dataset");
         if (!t.type().isEmpty()) sb.append(' ').append(t.type());
         sb.append(" (").append(String.join(", ", t.columns())).append(")\n");
         for (Ast.DatasetRow row : t.rows()) {
-            writeComments(sb, row.leadingComments(), 0);
+            writeComments(sb, row.leadingComments(), 0, step);
             sb.append('(');
             for (int i = 0; i < row.cells().size(); i++) {
                 if (i > 0) sb.append(", ");
                 Ast.Value cell = row.cells().get(i);
-                if (cell != null) formatValue(sb, cell, 0, false);
+                if (cell != null) formatValue(sb, cell, 0, false, step);
             }
             sb.append(")\n");
         }
@@ -166,13 +168,13 @@ public final class Format {
         sb.append('\n');
     }
 
-    private static void writeIndent(StringBuilder sb, int level) {
-        for (int i = 0; i < level; i++) sb.append("  ");
+    private static void writeIndent(StringBuilder sb, int level, String step) {
+        for (int i = 0; i < level; i++) sb.append(step);
     }
 
-    private static void writeComments(StringBuilder sb, List<Ast.Comment> comments, int level) {
+    private static void writeComments(StringBuilder sb, List<Ast.Comment> comments, int level, String step) {
         for (Ast.Comment c : comments) {
-            writeIndent(sb, level);
+            writeIndent(sb, level, step);
             sb.append(c.text()).append('\n');
         }
     }
@@ -197,13 +199,13 @@ public final class Format {
         }
     }
 
-    private static void formatEntries(StringBuilder sb, List<Ast.Entry> entries, int level, boolean compact) {
+    private static void formatEntries(StringBuilder sb, List<Ast.Entry> entries, int level, boolean compact, String step) {
         checkDepth(level, compact);
         for (Ast.Entry e : entries) {
             switch (e) {
                 case Ast.Assignment a -> {
-                    writeComments(sb, a.leadingComments(), level);
-                    writeIndent(sb, level);
+                    writeComments(sb, a.leadingComments(), level, step);
+                    writeIndent(sb, level, step);
                     if (a.keyQuoted()) sb.append('"').append(escape(a.key())).append('"');
                     else sb.append(a.key());
                     sb.append(" = ");
@@ -216,36 +218,36 @@ public final class Format {
                         checkDepth(level + 1, compact);
                         sb.append("{}");
                     }
-                    else formatValue(sb, a.value(), level, compact);
+                    else formatValue(sb, a.value(), level, compact, step);
                     if (!a.trailingComment().isEmpty()) sb.append(' ').append(a.trailingComment());
                     sb.append('\n');
                 }
                 case Ast.MapEntry m -> {
-                    writeComments(sb, m.leadingComments(), level);
-                    writeIndent(sb, level);
+                    writeComments(sb, m.leadingComments(), level, step);
+                    writeIndent(sb, level, step);
                     if (mapKeyQuoted(m)) sb.append('"').append(escape(m.key())).append('"');
                     else sb.append(m.key());
                     sb.append(": ");
-                    formatValue(sb, m.value(), level, compact);
+                    formatValue(sb, m.value(), level, compact, step);
                     if (!m.trailingComment().isEmpty()) sb.append(' ').append(m.trailingComment());
                     sb.append('\n');
                 }
                 case Ast.TypeEntry t -> {
-                    writeComments(sb, t.leadingComments(), level);
-                    writeIndent(sb, level);
+                    writeComments(sb, t.leadingComments(), level, step);
+                    writeIndent(sb, level, step);
                     sb.append("@type = \"").append(escape(t.url())).append('"');
                     if (!t.trailingComment().isEmpty()) sb.append(' ').append(t.trailingComment());
                     sb.append('\n');
                 }
                 case Ast.Block b -> {
-                    writeComments(sb, b.leadingComments(), level);
-                    writeIndent(sb, level);
+                    writeComments(sb, b.leadingComments(), level, step);
+                    writeIndent(sb, level, step);
                     if (b.nameQuoted()) sb.append('"').append(escape(b.name())).append('"');
                     else sb.append(b.name());
                     sb.append(" {\n");
-                    formatEntries(sb, b.entries(), level + 1, compact);
-                    writeComments(sb, b.trailingComments(), level + 1);
-                    writeIndent(sb, level);
+                    formatEntries(sb, b.entries(), level + 1, compact, step);
+                    writeComments(sb, b.trailingComments(), level + 1, step);
+                    writeIndent(sb, level, step);
                     sb.append("}\n");
                 }
             }
@@ -266,15 +268,34 @@ public final class Format {
 
     /** Appends {@link #formatValue}'s text to {@code sb} and returns it, as protowire-go's {@code AppendValue}. */
     public static StringBuilder appendValue(StringBuilder sb, Ast.Value v) {
-        formatValue(sb, v, 0, false);
+        formatValue(sb, v, 0, false, "  ");
         return sb;
     }
 
     static void formatValue(StringBuilder sb, Ast.Value v, int level) {
-        formatValue(sb, v, level, false);
+        formatValue(sb, v, level, false, "  ");
     }
 
-    private static void formatValue(StringBuilder sb, Ast.Value v, int level, boolean compact) {
+    /**
+     * {@code v} as {@link #formatValue} writes it, a nested level indented by
+     * {@code step} rather than two spaces: the rewriter matches the
+     * document's own indent width, as protowire-go's formatter does with its
+     * indent (#209).
+     */
+    static String formatValue(Ast.Value v, String step) {
+        StringBuilder sb = new StringBuilder();
+        formatValue(sb, v, 0, false, step);
+        return sb.toString();
+    }
+
+    /** {@code entries} as {@link #formatDocument} writes a body at level 0, each level indented by {@code step}. */
+    static String formatEntries(List<Ast.Entry> entries, String step) {
+        StringBuilder sb = new StringBuilder();
+        formatEntries(sb, entries, 0, false, step);
+        return sb.toString();
+    }
+
+    private static void formatValue(StringBuilder sb, Ast.Value v, int level, boolean compact, String step) {
         // NullVal has no payload to format — the bound variable would be
         // unused, which CodeQL flags. Java 21 standard pattern matching
         // requires a binding on every `case` label (unnamed `_` is a
@@ -303,19 +324,19 @@ public final class Format {
                 checkDepth(level + 1, compact);
                 sb.append("[\n");
                 for (int i = 0; i < l.elements().size(); i++) {
-                    writeIndent(sb, level + 1);
-                    formatValue(sb, l.elements().get(i), level + 1, compact);
+                    writeIndent(sb, level + 1, step);
+                    formatValue(sb, l.elements().get(i), level + 1, compact, step);
                     if (i < l.elements().size() - 1) sb.append(',');
                     sb.append('\n');
                 }
-                writeIndent(sb, level);
+                writeIndent(sb, level, step);
                 sb.append(']');
             }
             case Ast.BlockVal bv -> {
                 sb.append("{\n");
-                formatEntries(sb, bv.entries(), level + 1, compact);
-                writeComments(sb, bv.trailingComments(), level + 1);
-                writeIndent(sb, level);
+                formatEntries(sb, bv.entries(), level + 1, compact, step);
+                writeComments(sb, bv.trailingComments(), level + 1, step);
+                writeIndent(sb, level, step);
                 sb.append('}');
             }
             default -> throw new IllegalStateException(

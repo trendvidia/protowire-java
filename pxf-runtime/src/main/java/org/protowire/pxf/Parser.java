@@ -97,7 +97,8 @@ public final class Parser {
      * Parse a single {@code ( cell, cell, ... )} tuple as a {@code @dataset}
      * row. Used by {@link DatasetReader} to decode each row's byte slice
      * without re-running the full document grammar. {@code input} MUST
-     * start with {@code (} and contain a balanced row tuple.
+     * hold only newlines and comments before the row's {@code (}, and a
+     * balanced row tuple. The comments are the row's leading comments.
      *
      * @param input    row bytes including the surrounding parens
      * @param expected expected cell count (column arity)
@@ -199,8 +200,11 @@ public final class Parser {
             // reserved for the inside of a `{ ... }` block.
             entries.add(parseEntry(false));
         }
+        // The comments after the last entry, directive or row, which no
+        // entry follows to take them (#200).
+        List<Ast.Comment> trailing = flushComments();
         return new Ast.Document(typeUrl, List.copyOf(directives), List.copyOf(datasets),
-                List.copyOf(protos), List.copyOf(entries), leading);
+                List.copyOf(protos), List.copyOf(entries), leading, trailing);
     }
 
     /**
@@ -337,8 +341,15 @@ public final class Parser {
         return null;
     }
 
+    /**
+     * The comments pending at the '(' and those inside the row are the
+     * row's leading comments (#200). Left pending, they would pass to the
+     * next row or directive, or to the document's end. {@link DatasetReader}
+     * parses its rows here too, so it files them as {@link #parse} does.
+     */
     private Ast.DatasetRow parseDatasetRow(int expected) {
         Position pp = current.pos();
+        List<Ast.Comment> leading = new ArrayList<>(flushComments());
         advance(); // consume (
 
         List<Ast.Value> cells = new ArrayList<>();
@@ -351,6 +362,9 @@ public final class Parser {
             throw new PxfException(current.pos(),
                     "expected ',' or ')' in @dataset row, got " + current.kind());
         }
+        // Taken before the ')' is consumed: advance would add the comments
+        // after it, which belong to what follows the row.
+        leading.addAll(flushComments());
         advance();
         if (cells.size() != expected) {
             throw new PxfException(pp,
@@ -358,7 +372,7 @@ public final class Parser {
         }
         // Row cells legitimately contain null for empty cells. List.copyOf
         // rejects nulls, so wrap an ArrayList copy via Collections instead.
-        return new Ast.DatasetRow(pp, java.util.Collections.unmodifiableList(new ArrayList<>(cells)));
+        return new Ast.DatasetRow(pp, java.util.Collections.unmodifiableList(new ArrayList<>(cells)), List.copyOf(leading));
     }
 
     /**
@@ -533,8 +547,9 @@ public final class Parser {
                 }
                 Position bracePos = current.pos();
                 advance();
-                List<Ast.Entry> body = parseBody();
-                yield new Ast.Block(pp, key, body, leading, "", keyKind == TokenKind.STRING, bracePos);
+                Body body = parseBody();
+                yield new Ast.Block(pp, key, body.entries(), leading, "", keyKind == TokenKind.STRING, bracePos,
+                        body.trailing());
             }
             default -> throw new PxfException(current.pos(),
                     "expected '=', ':', or '{' after \"" + key + "\", got " + current.kind());
@@ -620,11 +635,14 @@ public final class Parser {
     private Ast.Value parseBlockVal() {
         Position pp = current.pos();
         advance();
-        List<Ast.Entry> body = parseBody();
-        return new Ast.BlockVal(pp, body);
+        Body body = parseBody();
+        return new Ast.BlockVal(pp, body.entries(), body.trailing());
     }
 
-    private List<Ast.Entry> parseBody() {
+    /** A block's entries, and the comments after the last of them, which no entry takes. */
+    private record Body(List<Ast.Entry> entries, List<Ast.Comment> trailing) {}
+
+    private Body parseBody() {
         enter(current.pos());
         try {
             return parseBodyInner();
@@ -655,7 +673,7 @@ public final class Parser {
         return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd), urlPos);
     }
 
-    private List<Ast.Entry> parseBodyInner() {
+    private Body parseBodyInner() {
         List<Ast.Entry> entries = new ArrayList<>();
         while (current.kind() != TokenKind.RBRACE && current.kind() != TokenKind.EOF) {
             entries.add(current.kind() == TokenKind.AT_TYPE ? parseTypeEntry(entries.isEmpty()) : parseEntry());
@@ -663,7 +681,10 @@ public final class Parser {
         if (current.kind() != TokenKind.RBRACE) {
             throw new PxfException(current.pos(), "expected '}', got " + current.kind());
         }
+        // Taken before the '}' is consumed: advance would add the comments
+        // after it, which belong to whatever follows the block (#200).
+        List<Ast.Comment> trailing = flushComments();
         advance();
-        return List.copyOf(entries);
+        return new Body(List.copyOf(entries), trailing);
     }
 }

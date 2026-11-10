@@ -55,8 +55,11 @@ jobs:
           fi
           echo "Publishing version $file_version"
 
-      - name: Build + test
-        run: ./gradlew --no-daemon build
+      # javadoc too, so a javadoc error stops the run here, before any
+      # publish task starts (v2.0.0's first publish failed in javadoc after
+      # ten modules' publish tasks had run).
+      - name: Build + test, and javadoc
+        run: ./gradlew --no-daemon build javadoc
 
       - name: Publish + release to Sonatype Central Portal
         env:

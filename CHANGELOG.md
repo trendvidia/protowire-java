@@ -20,6 +20,10 @@ format changes.
 
 ### Added
 
+- **Every tree node carries its end, and the document its body offset, as protowire-go's** (#209). `Ast.Entry.end()` and `Ast.Value.end()` give the position just past the node's last byte, so a node spans `pos()` to `end()`, as Go's `EntrySpan` and `ValueSpan`. `Ast.Document.bodyOffset()` is the byte where the body begins, after the last directive.
+  - **Record change:** each entry and value record gains an `end` component. Every existing constructor is kept, and sets `end` to the node's `pos`. A node built in code spans nothing, as Go's does. Code that takes these records apart with a record pattern must add the component.
+  - **Evidence:** the tolerant-parse table (#208) now holds every node's span and the body offset to Go's, on its 1021 documents.
+
 - **`Pxf.keyedDiagnostics(doc, desc)`: every keyed-repeated-field error in a parsed document, as protowire-go's `KeyedDiagnostics`** (#208; draft -01 §3.13). The decoder throws the first. Editor tooling runs `Pxf.parseTolerant`, binds a schema, and reports them all. They cover duplicate entry names, empty keys, a key-field binding that disagrees with or undoes its entry name, and a quoted entry name outside a keyed block.
   - **`KeyedException`, a `PxfException` with Go's `KeyedErrorKind`:** `kind()`, `field()` and `key()`. The decoder now throws it for each of these errors, with the same text as before, so a caller can tell the causes apart, as Go's `errors.As` does.
   - **Evidence:** `KeyedDiagnosticsTest` holds the decoder's error and the diagnostics to Go's, kind, position, field, key and text, on every `testdata/keyed/` document and Go's own key-binding tests, 39 in all. `scripts/go-keyed-diagnostics/main.go` writes Go's table, and the conformance job reruns it against protowire-go main.

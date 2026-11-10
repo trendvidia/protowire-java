@@ -50,6 +50,8 @@ public final class Parser {
      */
     private final boolean tolerant;
     private final List<PxfException> errs = new ArrayList<>();
+    /** Just past the last directive parsed: the document's body offset, as protowire-go's BodyOffset (#209). */
+    private int directiveEnd;
 
     private Parser(byte[] input) {
         this(input, DecodeLimits.defaults());
@@ -167,6 +169,14 @@ public final class Parser {
         return new TolerantResult(doc, List.copyOf(errs));
     }
 
+    /**
+     * Just past the current token's last byte. The lexer stands there: an
+     * advance reads one significant token, and only trivia before it.
+     */
+    private Position tokenEnd() {
+        return lex.position();
+    }
+
     /** A recoverable error: a strict parse throws it, a tolerant one records it and goes on. */
     private void soft(PxfException e) {
         if (!tolerant) throw e;
@@ -183,18 +193,19 @@ public final class Parser {
      * matching close (or the end). The tolerant recovery for a block or list
      * past MaxNestingDepth, which it cannot descend into.
      */
-    private void skipBalanced(TokenKind open, TokenKind close) {
+    private Position skipBalanced(TokenKind open, TokenKind close) {
         int d = 0;
         while (true) {
             if (current.kind() == open) {
                 d++;
             } else if (current.kind() == close) {
                 if (--d <= 0) {
+                    Position end = tokenEnd();
                     advance();
-                    return;
+                    return end;
                 }
             } else if (current.kind() == TokenKind.EOF) {
-                return;
+                return current.pos();
             }
             advance();
         }
@@ -285,6 +296,7 @@ public final class Parser {
     private Ast.Document parseDocument() {
         List<Ast.Comment> leading = flushComments();
         String typeUrl = "";
+        int bodyOffset = 0;
         List<Ast.Directive> directives = new ArrayList<>();
         List<Ast.DatasetDirective> datasets = new ArrayList<>();
         List<Ast.ProtoDirective> protos = new ArrayList<>();
@@ -306,6 +318,7 @@ public final class Parser {
                         continue;
                     }
                     typeUrl = current.value();
+                    bodyOffset = current.pos().offset() + current.value().getBytes(StandardCharsets.UTF_8).length;
                     advance();
                 }
                 case AT_DIRECTIVE, AT_DATASET, AT_PROTO -> {
@@ -317,6 +330,7 @@ public final class Parser {
                             case AT_DATASET -> datasets.add(parseDatasetDirective());
                             default -> protos.add(parseProtoDirective());
                         }
+                        bodyOffset = directiveEnd;
                     } catch (PxfException e) {
                         soft(e);
                         syncTopLevel();
@@ -355,7 +369,7 @@ public final class Parser {
         // entry follows to take them (#200).
         List<Ast.Comment> trailing = flushComments();
         return new Ast.Document(typeUrl, List.copyOf(directives), List.copyOf(datasets),
-                List.copyOf(protos), List.copyOf(entries), leading, trailing);
+                List.copyOf(protos), List.copyOf(entries), leading, trailing, bodyOffset);
     }
 
     /**
@@ -378,6 +392,8 @@ public final class Parser {
             soft(new PxfException(pp,
                     "@" + name + " is a spec-reserved directive name with no v1 semantics (draft §3.4.6)"));
         }
+        // Just past `@` and the name, its last prefix, or its block's '}'.
+        int end = pp.offset() + 1 + name.getBytes(StandardCharsets.UTF_8).length;
         advance(); // consume AT_DIRECTIVE
 
         List<String> prefixes = new ArrayList<>();
@@ -388,6 +404,7 @@ public final class Parser {
                 break;
             }
             prefixes.add(current.value());
+            end = current.pos().offset() + current.value().getBytes(StandardCharsets.UTF_8).length;
             advance();
         }
         // Back-compat: a single prefix populates the legacy `type` field,
@@ -406,7 +423,9 @@ public final class Parser {
                 throw new PxfException(pp, "directive @" + name + ": unmatched '{'");
             }
             body = lex.sliceBytes(open + 1, close);
+            end = close + 1;
         }
+        directiveEnd = end;
         return new Ast.Directive(pp, name, List.copyOf(prefixes), type, body, leading);
     }
 
@@ -461,13 +480,16 @@ public final class Parser {
         for (int i = 0; i < columns.size(); i++) {
             checkColumnPath(columns.subList(0, i), columns.get(i), colPos.get(i));
         }
+        int end = current.pos().offset() + 1; // past `)`
         advance(); // consume )
 
         // Zero or more rows.
         List<Ast.DatasetRow> rows = new ArrayList<>();
         while (current.kind() == TokenKind.LPAREN) {
             rows.add(parseDatasetRow(columns.size()));
+            end = prevEnd.offset(); // past the row's `)`
         }
+        directiveEnd = end;
         return new Ast.DatasetDirective(pp, type, List.copyOf(columns), List.copyOf(rows), leading);
     }
 
@@ -553,6 +575,7 @@ public final class Parser {
         switch (current.kind()) {
             case LBRACE -> {
                 byte[] body = captureBraceBody("@proto (anonymous form)");
+                directiveEnd = prevEnd.offset();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.ANONYMOUS, "", body, leading);
             }
             case IDENT -> {
@@ -563,10 +586,12 @@ public final class Parser {
                             "expected '{' after @proto " + typeName + ", got " + current.kind());
                 }
                 byte[] body = captureBraceBody("@proto " + typeName);
+                directiveEnd = prevEnd.offset();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.NAMED, typeName, body, leading);
             }
             case STRING -> {
                 byte[] body = current.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                directiveEnd = tokenEnd().offset();
                 advance();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.SOURCE, "", body, leading);
             }
@@ -578,6 +603,7 @@ public final class Parser {
                 } catch (Base64Literal.Invalid e) {
                     throw new PxfException(current.pos(), "@proto descriptor body: invalid base64: " + e.getMessage());
                 }
+                directiveEnd = tokenEnd().offset();
                 advance();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.DESCRIPTOR, "", decoded, leading);
             }
@@ -715,8 +741,8 @@ public final class Parser {
                 Position equalsPos = current.pos();
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING,
-                        equalsPos);
+                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(v.end()), keyKind == TokenKind.STRING,
+                        equalsPos, v.end());
             }
             case COLON -> {
                 // Map entry. Only allowed inside a `{ ... }` block, never at
@@ -736,7 +762,7 @@ public final class Parser {
                 }
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.MapEntry(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
+                yield new Ast.MapEntry(pp, key, v, leading, takeTrailingComment(v.end()), keyKind == TokenKind.STRING, v.end());
             }
             case LBRACE -> {
                 // `{ ... }` denotes a submessage field, or a named entry of
@@ -751,13 +777,13 @@ public final class Parser {
                 if (tooDeep()) {
                     // Too deep to descend: a tolerant parse skips the whole
                     // block and keeps the entry.
-                    skipBalanced(TokenKind.LBRACE, TokenKind.RBRACE);
-                    yield new Ast.Block(pp, key, List.of(), leading, "", keyKind == TokenKind.STRING, bracePos);
+                    Position end = skipBalanced(TokenKind.LBRACE, TokenKind.RBRACE);
+                    yield new Ast.Block(pp, key, List.of(), leading, "", keyKind == TokenKind.STRING, bracePos, List.of(), end);
                 }
                 advance();
                 Body body = parseBody();
                 yield new Ast.Block(pp, key, body.entries(), leading, "", keyKind == TokenKind.STRING, bracePos,
-                        body.trailing());
+                        body.trailing(), body.end());
             }
             default -> {
                 soft(new PxfException(current.pos(),
@@ -766,7 +792,7 @@ public final class Parser {
                 // assignment of a BadVal just past the key, where the value
                 // belongs. The current token, most likely the next entry's
                 // key, is left.
-                yield new Ast.Assignment(pp, key, new Ast.BadVal(prevEnd), leading, "");
+                yield new Ast.Assignment(pp, key, new Ast.BadVal(prevEnd), leading, "", false, pp, prevEnd);
             }
         };
     }
@@ -796,10 +822,10 @@ public final class Parser {
             return badValue(new PxfException(pp, current.value()));
         }
         return switch (current.kind()) {
-            case STRING -> { var v = new Ast.StringVal(pp, current.value()); advance(); yield v; }
-            case INT    -> { var v = new Ast.IntVal(pp, current.value(), current.prec());   advance(); yield v; }
-            case FLOAT  -> { var v = new Ast.FloatVal(pp, current.value(), current.prec()); advance(); yield v; }
-            case BOOL   -> { var v = new Ast.BoolVal(pp, "true".equals(current.value())); advance(); yield v; }
+            case STRING -> { var v = new Ast.StringVal(pp, current.value(), tokenEnd()); advance(); yield v; }
+            case INT    -> { var v = new Ast.IntVal(pp, current.value(), current.prec(), tokenEnd());   advance(); yield v; }
+            case FLOAT  -> { var v = new Ast.FloatVal(pp, current.value(), current.prec(), tokenEnd()); advance(); yield v; }
+            case BOOL   -> { var v = new Ast.BoolVal(pp, "true".equals(current.value()), tokenEnd()); advance(); yield v; }
             case BYTES  -> {
                 byte[] decoded;
                 try {
@@ -810,21 +836,21 @@ public final class Parser {
                     advance();
                     yield new Ast.BadVal(pp);
                 }
-                var v = new Ast.BytesVal(pp, decoded);
+                var v = new Ast.BytesVal(pp, decoded, tokenEnd());
                 advance(); yield v;
             }
             case TIMESTAMP -> {
                 var t = TimeFormats.parseRfc3339(current.value());
-                var v = new Ast.TimestampVal(pp, t, current.value());
+                var v = new Ast.TimestampVal(pp, t, current.value(), tokenEnd());
                 advance(); yield v;
             }
             case DURATION -> {
                 var d = TimeFormats.parseGoDuration(current.value());
-                var v = new Ast.DurationVal(pp, d, current.value());
+                var v = new Ast.DurationVal(pp, d, current.value(), tokenEnd());
                 advance(); yield v;
             }
-            case NULL  -> { var v = new Ast.NullVal(pp); advance(); yield v; }
-            case IDENT -> { var v = new Ast.IdentVal(pp, current.value()); advance(); yield v; }
+            case NULL  -> { var v = new Ast.NullVal(pp, tokenEnd()); advance(); yield v; }
+            case IDENT -> { var v = new Ast.IdentVal(pp, current.value(), tokenEnd()); advance(); yield v; }
             case LBRACKET -> parseList();
             case LBRACE   -> parseBlockVal();
             default -> {
@@ -854,8 +880,8 @@ public final class Parser {
     private Ast.Value parseList() {
         Position pp = current.pos();
         if (tooDeep()) {
-            skipBalanced(TokenKind.LBRACKET, TokenKind.RBRACKET);
-            return new Ast.ListVal(pp, List.of());
+            Position end = skipBalanced(TokenKind.LBRACKET, TokenKind.RBRACKET);
+            return new Ast.ListVal(pp, List.of(), end);
         }
         advance();
         depth++;
@@ -875,10 +901,11 @@ public final class Parser {
             if (current.kind() != TokenKind.RBRACKET) {
                 // A tolerant parse closes the list here, with what it holds.
                 soft(new PxfException(current.pos(), "expected ']', got " + current.kind()));
-                return new Ast.ListVal(pp, List.copyOf(elems));
+                return new Ast.ListVal(pp, List.copyOf(elems), current.pos());
             }
+            Position end = tokenEnd();
             advance();
-            return new Ast.ListVal(pp, List.copyOf(elems));
+            return new Ast.ListVal(pp, List.copyOf(elems), end);
         } finally {
             depth--;
         }
@@ -887,16 +914,16 @@ public final class Parser {
     private Ast.Value parseBlockVal() {
         Position pp = current.pos();
         if (tooDeep()) {
-            skipBalanced(TokenKind.LBRACE, TokenKind.RBRACE);
-            return new Ast.BlockVal(pp, List.of());
+            Position end = skipBalanced(TokenKind.LBRACE, TokenKind.RBRACE);
+            return new Ast.BlockVal(pp, List.of(), List.of(), end);
         }
         advance();
         Body body = parseBody();
-        return new Ast.BlockVal(pp, body.entries(), body.trailing());
+        return new Ast.BlockVal(pp, body.entries(), body.trailing(), body.end());
     }
 
     /** A block's entries, and the comments after the last of them, which no entry takes. */
-    private record Body(List<Ast.Entry> entries, List<Ast.Comment> trailing) {}
+    private record Body(List<Ast.Entry> entries, List<Ast.Comment> trailing, Position end) {}
 
     /** The entries after a '{' the caller consumed, one nesting level down. */
     private Body parseBody() {
@@ -927,8 +954,9 @@ public final class Parser {
         }
         String url = current.value();
         Position urlPos = current.pos();
+        Position end = tokenEnd();
         advance();
-        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd), urlPos);
+        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(end), urlPos, end);
     }
 
     /**
@@ -962,9 +990,10 @@ public final class Parser {
             errs.add(new PxfException(current.pos(), current.kind() == TokenKind.RPAREN
                     ? "unclosed block: expected '}' before ')'"
                     : "unclosed block: expected '}' before end of input"));
-            return new Body(List.copyOf(entries), trailing);
+            return new Body(List.copyOf(entries), trailing, current.pos());
         }
+        Position end = tokenEnd();
         advance();
-        return new Body(List.copyOf(entries), trailing);
+        return new Body(List.copyOf(entries), trailing, end);
     }
 }

@@ -135,6 +135,11 @@ class TolerantParseTest {
             return p.line() + ":" + p.column() + ":" + p.offset();
         }
 
+        /** A node's start and end (just past its last byte). */
+        static String span(Position start, Position end) {
+            return pos(start) + "~" + pos(end);
+        }
+
         static String q(String s) {
             StringBuilder b = new StringBuilder("\"");
             s.codePoints().forEach(r -> {
@@ -161,7 +166,7 @@ class TolerantParseTest {
 
         static String document(Ast.Document d) {
             StringBuilder b = new StringBuilder();
-            b.append("doc type=").append(q(d.typeUrl())).append(" lead=").append(comments(d.leadingComments()));
+            b.append("doc type=").append(q(d.typeUrl())).append(" body=").append(d.bodyOffset()).append(" lead=").append(comments(d.leadingComments()));
             for (Ast.Directive x : d.directives()) {
                 b.append(" dir(").append(pos(x.pos())).append(" @").append(q(x.name())).append(" prefixes=").append(strs(x.prefixes()))
                         .append(" type=").append(q(x.type())).append(" body=").append(body(x.body()))
@@ -200,24 +205,24 @@ class TolerantParseTest {
                 if (i > 0) b.append(',');
                 switch (es.get(i)) {
                     case Ast.Assignment e -> {
-                        b.append("A(").append(pos(e.pos())).append(' ').append(q(e.key())).append(" quoted=").append(e.keyQuoted())
+                        b.append("A(").append(span(e.pos(), e.end())).append(' ').append(q(e.key())).append(" quoted=").append(e.keyQuoted())
                                 .append(" lead=").append(comments(e.leadingComments())).append(" tc=").append(q(e.trailingComment())).append(" = ");
                         value(b, e.value());
                         b.append(')');
                     }
                     case Ast.MapEntry e -> {
-                        b.append("M(").append(pos(e.pos())).append(' ').append(q(e.key())).append(" quoted=").append(e.keyQuoted())
+                        b.append("M(").append(span(e.pos(), e.end())).append(' ').append(q(e.key())).append(" quoted=").append(e.keyQuoted())
                                 .append(" lead=").append(comments(e.leadingComments())).append(" tc=").append(q(e.trailingComment())).append(" : ");
                         value(b, e.value());
                         b.append(')');
                     }
                     case Ast.Block e -> {
-                        b.append("B(").append(pos(e.pos())).append(' ').append(q(e.name())).append(" quoted=").append(e.nameQuoted())
+                        b.append("B(").append(span(e.pos(), e.end())).append(' ').append(q(e.name())).append(" quoted=").append(e.nameQuoted())
                                 .append(" lead=").append(comments(e.leadingComments())).append(' ');
                         entries(b, e.entries());
                         b.append(" trail=").append(comments(e.trailingComments())).append(')');
                     }
-                    case Ast.TypeEntry e -> b.append("T(").append(pos(e.pos())).append(' ').append(q(e.url()))
+                    case Ast.TypeEntry e -> b.append("T(").append(span(e.pos(), e.end())).append(' ').append(q(e.url()))
                             .append(" lead=").append(comments(e.leadingComments())).append(" tc=").append(q(e.trailingComment())).append(')');
                 }
             }
@@ -226,24 +231,24 @@ class TolerantParseTest {
 
         static void value(StringBuilder b, Ast.Value v) {
             if (v instanceof Ast.NullVal n) {
-                b.append("Null(").append(pos(n.pos())).append(')');
+                b.append("Null(").append(span(n.pos(), n.end())).append(')');
                 return;
             }
             if (v instanceof Ast.BadVal x) {
-                b.append("Bad(").append(pos(x.pos())).append(')');
+                b.append("Bad(").append(span(x.pos(), x.end())).append(')');
                 return;
             }
             switch (v) {
-                case Ast.StringVal x -> b.append("S(").append(pos(x.pos())).append(' ').append(q(x.value())).append(')');
-                case Ast.IntVal x -> b.append("I(").append(pos(x.pos())).append(' ').append(q(x.raw())).append(" p=").append(q(x.prec())).append(')');
-                case Ast.FloatVal x -> b.append("F(").append(pos(x.pos())).append(' ').append(q(x.raw())).append(" p=").append(q(x.prec())).append(')');
-                case Ast.BoolVal x -> b.append("Bool(").append(pos(x.pos())).append(' ').append(x.value()).append(')');
-                case Ast.BytesVal x -> b.append("Bytes(").append(pos(x.pos())).append(' ').append(Base64.getEncoder().encodeToString(x.value())).append(')');
-                case Ast.TimestampVal x -> b.append("Ts(").append(pos(x.pos())).append(' ').append(q(x.raw())).append(')');
-                case Ast.DurationVal x -> b.append("Dur(").append(pos(x.pos())).append(' ').append(q(x.raw())).append(')');
-                case Ast.IdentVal x -> b.append("Id(").append(pos(x.pos())).append(' ').append(q(x.name())).append(')');
+                case Ast.StringVal x -> b.append("S(").append(span(x.pos(), x.end())).append(' ').append(q(x.value())).append(')');
+                case Ast.IntVal x -> b.append("I(").append(span(x.pos(), x.end())).append(' ').append(q(x.raw())).append(" p=").append(q(x.prec())).append(')');
+                case Ast.FloatVal x -> b.append("F(").append(span(x.pos(), x.end())).append(' ').append(q(x.raw())).append(" p=").append(q(x.prec())).append(')');
+                case Ast.BoolVal x -> b.append("Bool(").append(span(x.pos(), x.end())).append(' ').append(x.value()).append(')');
+                case Ast.BytesVal x -> b.append("Bytes(").append(span(x.pos(), x.end())).append(' ').append(Base64.getEncoder().encodeToString(x.value())).append(')');
+                case Ast.TimestampVal x -> b.append("Ts(").append(span(x.pos(), x.end())).append(' ').append(q(x.raw())).append(')');
+                case Ast.DurationVal x -> b.append("Dur(").append(span(x.pos(), x.end())).append(' ').append(q(x.raw())).append(')');
+                case Ast.IdentVal x -> b.append("Id(").append(span(x.pos(), x.end())).append(' ').append(q(x.name())).append(')');
                 case Ast.ListVal x -> {
-                    b.append("List(").append(pos(x.pos())).append(" [");
+                    b.append("List(").append(span(x.pos(), x.end())).append(" [");
                     for (int i = 0; i < x.elements().size(); i++) {
                         if (i > 0) b.append(',');
                         value(b, x.elements().get(i));
@@ -251,7 +256,7 @@ class TolerantParseTest {
                     b.append("])");
                 }
                 case Ast.BlockVal x -> {
-                    b.append("Blk(").append(pos(x.pos())).append(' ');
+                    b.append("Blk(").append(span(x.pos(), x.end())).append(' ');
                     entries(b, x.entries());
                     b.append(" trail=").append(comments(x.trailingComments())).append(')');
                 }

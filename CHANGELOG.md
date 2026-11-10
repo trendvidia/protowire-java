@@ -18,7 +18,22 @@ format changes.
 
 ## [Unreleased]
 
-## [2.0.0] — 2026-11-10
+## [2.0.1] — 2026-11-10
+
+The first 2.0 release on Maven Central. It holds everything listed under 2.0.0
+below, and nothing else changes for users. The v2.0.0 tag was cut, but its
+publish stopped on two javadoc errors before any artifact was released, so no
+2.0.0 artifacts exist. Release tags are protected, so that tag stays where it
+is, and this release carries the fix.
+
+### Fixed
+
+- Two javadoc comments in `pxf-runtime` (`Format`, `MarshalOptions`) had an
+  unterminated `{@code}` tag, which failed the javadoc task in the publish
+  workflow. CI now builds javadoc on every push, so this is caught before a
+  release (#253).
+
+## [2.0.0] — 2026-11-10 (tagged, never published)
 
 A major release, for two reasons. The full tier (`protowire-pb`, `-pxf`, `-sbe`,
 `-envelope`, `-proto-annotations`) now needs protobuf-java 4.36.2, up from

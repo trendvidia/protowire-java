@@ -4,10 +4,8 @@ package org.protowire.pxf;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
 
 /**
  * Pure JDK timestamp / duration parse and format helpers used by the PXF
@@ -19,13 +17,92 @@ import java.time.format.DateTimeParseException;
 public final class TimeFormats {
     private TimeFormats() {}
 
-    /** Parses an RFC 3339 (with optional fractional seconds) timestamp. */
+    /**
+     * Parses an RFC 3339 timestamp, with optional fractional seconds, as
+     * protowire-go reads one: Go's {@code time.Parse} with the
+     * {@code RFC3339Nano} layout, whose parse this ports (#247). It takes
+     * {@code YYYY-MM-DDThh:mm:ss[.f…]} and {@code Z} or {@code ±hh:mm}, and
+     * also what Go's layout parse lets through: a one-digit hour, an offset
+     * up to {@code ±24:60}, a ',' before the fraction, and a fraction past
+     * nine digits, which is cut to nine. It refuses what Go refuses: an
+     * {@code +hh} or {@code +hh:mm:ss} offset, a missing second, a lowercase
+     * {@code t} or {@code z}, a day past its month's last.
+     *
+     * @throws IllegalArgumentException {@code invalid timestamp: <raw>}
+     */
     public static Instant parseRfc3339(String raw) {
-        try {
-            return OffsetDateTime.parse(raw, DateTimeFormatter.ISO_OFFSET_DATE_TIME).toInstant();
-        } catch (DateTimeParseException e) {
-            throw new IllegalArgumentException("invalid timestamp: " + raw, e);
+        Instant t = goRfc3339(raw);
+        if (t == null) throw new IllegalArgumentException("invalid timestamp: " + raw);
+        return t;
+    }
+
+    /** Go's layout parse of {@code 2006-01-02T15:04:05.999999999Z07:00}, or null where it fails. */
+    private static Instant goRfc3339(String s) {
+        int[] i = {0};
+        int year = digits(s, i, 4);
+        if (year < 0 || !lit(s, i, '-')) return null;
+        int month = digits(s, i, 2);
+        if (month < 1 || month > 12 || !lit(s, i, '-')) return null;
+        int day = digits(s, i, 2);
+        if (day < 0 || !lit(s, i, 'T')) return null;
+        // stdHour takes one digit or two.
+        int hour = digits(s, i, 2);
+        if (hour < 0) hour = digits(s, i, 1);
+        if (hour < 0 || hour >= 24 || !lit(s, i, ':')) return null;
+        int min = digits(s, i, 2);
+        if (min < 0 || min >= 60 || !lit(s, i, ':')) return null;
+        int sec = digits(s, i, 2);
+        if (sec < 0 || sec >= 60) return null;
+        int nanos = 0;
+        if (i[0] + 1 < s.length() && (s.charAt(i[0]) == '.' || s.charAt(i[0]) == ',') && isDigit(s.charAt(i[0] + 1))) {
+            int from = ++i[0];
+            while (i[0] < s.length() && isDigit(s.charAt(i[0]))) i[0]++;
+            // Nine digits at most count; the rest are cut, as Go's parseNanoseconds cuts them.
+            String f = s.substring(from, Math.min(i[0], from + 9));
+            nanos = Integer.parseInt(f) * (int) Math.pow(10, 9 - f.length());
         }
+        int offset;
+        if (i[0] < s.length() && s.charAt(i[0]) == 'Z') {
+            offset = 0;
+            i[0]++;
+        } else {
+            if (s.length() - i[0] < 6 || s.charAt(i[0] + 3) != ':') return null;
+            char sign = s.charAt(i[0]);
+            if (sign != '+' && sign != '-') return null;
+            i[0]++;
+            int hh = digits(s, i, 2);
+            i[0]++; // ':'
+            int mm = digits(s, i, 2);
+            if (hh < 0 || mm < 0 || hh > 24 || mm > 60) return null;
+            offset = (sign == '-' ? -1 : 1) * (hh * 3600 + mm * 60);
+        }
+        if (i[0] != s.length()) return null;
+        if (day < 1 || day > java.time.YearMonth.of(year, month).lengthOfMonth()) return null;
+        long epoch = java.time.LocalDateTime.of(year, month, day, hour, min, sec).toEpochSecond(ZoneOffset.UTC) - offset;
+        return Instant.ofEpochSecond(epoch, nanos);
+    }
+
+    /** {@code n} ASCII digits at {@code i[0]}, consumed, as a number; -1, nothing consumed, when they are not there. */
+    private static int digits(String s, int[] i, int n) {
+        if (i[0] + n > s.length()) return -1;
+        int v = 0;
+        for (int k = 0; k < n; k++) {
+            char c = s.charAt(i[0] + k);
+            if (!isDigit(c)) return -1;
+            v = v * 10 + (c - '0');
+        }
+        i[0] += n;
+        return v;
+    }
+
+    private static boolean lit(String s, int[] i, char c) {
+        if (i[0] >= s.length() || s.charAt(i[0]) != c) return false;
+        i[0]++;
+        return true;
+    }
+
+    private static boolean isDigit(char c) {
+        return c >= '0' && c <= '9';
     }
 
     /** Format an Instant as RFC 3339 with nanosecond precision when needed. */

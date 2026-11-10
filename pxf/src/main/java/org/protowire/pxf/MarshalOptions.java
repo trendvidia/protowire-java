@@ -9,7 +9,7 @@ import com.google.protobuf.Message;
  *
  * @param maxNestingDepth the deepest document {@link #marshal} writes,
  *     counted as a decoder counts it: the root is depth 0, and every
- *     {@code {} or {@code [} is one descent. A message that needs more is an
+ *     '{' or '[' is one descent. A message that needs more is an
  *     error, because a reader at the same limit would refuse the document
  *     (HARDENING.md § Recursion, protowire#502). An Any past the limit is
  *     not: it stays as {@code type_url} and {@code value}. Raise it only with

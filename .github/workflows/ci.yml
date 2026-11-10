@@ -40,8 +40,11 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v6
 
-      - name: Build + test all modules (test tasks finalize with Jacoco)
-        run: ./gradlew --no-daemon build
+      # javadoc as well: the publish job builds every module's javadoc jar,
+      # and a javadoc error that only the publish run meets stops a release
+      # half done (v2.0.0's first publish).
+      - name: Build + test all modules (test tasks finalize with Jacoco), and javadoc
+        run: ./gradlew --no-daemon build javadoc
 
       - name: Upload per-module Jacoco coverage
         if: always()

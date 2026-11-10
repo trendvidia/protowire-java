@@ -48,7 +48,7 @@ public final class Format {
      * reads back (protowire-go#263), which Marshal spells that way. And, as
      * Marshal does, it refuses a document a reader would refuse for its
      * depth: a body or list past {@code MaxNestingDepth}, counted as the
-     * parser counts each {@code {} and {@code [} (HARDENING.md § Recursion,
+     * parser counts each '{' and '[' (HARDENING.md § Recursion,
      * #203), and a {@code pxf.BigFloat} literal whose value is past
      * MaxBigFloatExponent once rounded to its precision (#186). The lite tier
      * writes its text with this.

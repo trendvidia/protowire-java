@@ -143,15 +143,20 @@ public final class DatasetReader {
         for (;;) {
             try {
                 int start = skipTrivia(pending);
-                if (start >= 0 && start < pending.length) {
+                // A '/' that ends the buffer may open a comment whose second
+                // byte the next read brings, so it waits for that read.
+                boolean cutComment = start >= 0 && start == pending.length - 1 && pending[start] == '/' && !srcEof;
+                if (start >= 0 && start < pending.length && !cutComment) {
                     byte ch = pending[start];
                     if (ch == '(') {
                         int end = findMatchingParen(pending, start);
-                        if (end >= 0) return takeRow(start, end);
+                        if (end >= 0) return takeRow(end);
                     } else if (ch == '@') {
                         // The row sequence ends at the next directive (draft
-                        // §3.4.4 "Appending"); tail() reads on from it.
-                        consume(start);
+                        // §3.4.4 "Appending"); tail() reads on from it. The
+                        // newlines and comments before it stay in pending, so
+                        // tail() carries them: Parse gives them to that
+                        // directive as its leading comments (#200).
                         finished = true;
                         return null;
                     } else {
@@ -182,9 +187,14 @@ public final class DatasetReader {
         }
     }
 
-    private Ast.DatasetRow takeRow(int start, int end) {
-        Position at = positionAt(start);
-        Ast.DatasetRow row = Parser.parseDatasetRow(sliceBytes(pending, start, end + 1), columns.size(), at);
+    /**
+     * Parses the row that ends at {@code pending[end]}. The parse starts at
+     * {@code pending[0]}: the scan skipped only newlines and comments before
+     * the row's '(', and those comments are the row's leading comments, as
+     * {@link Parser#parse} files them (#200).
+     */
+    private Ast.DatasetRow takeRow(int end) {
+        Ast.DatasetRow row = Parser.parseDatasetRow(sliceBytes(pending, 0, end + 1), columns.size(), positionAt(0));
         consume(end + 1);
         return row;
     }

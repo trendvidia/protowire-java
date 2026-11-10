@@ -40,7 +40,7 @@ public final class KeyedCanonicalizer {
     public static Ast.Document canonicalize(Ast.Document doc, Descriptor desc) {
         if (doc == null || desc == null) return doc;
         return new Ast.Document(doc.typeUrl(), doc.directives(), doc.datasets(), doc.protos(),
-                canonEntries(doc.entries(), desc), doc.leadingComments());
+                canonEntries(doc.entries(), desc), doc.leadingComments(), doc.trailingComments());
     }
 
     private static List<Ast.Entry> canonEntries(List<Ast.Entry> entries, Descriptor desc) {
@@ -57,7 +57,7 @@ public final class KeyedCanonicalizer {
                     out.add(canonKeyedEntries(b, fd, keyFd));
                 } else if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && !fd.isRepeated()) {
                     out.add(new Ast.Block(b.pos(), b.name(), canonEntries(b.entries(), fd.getMessageType()),
-                            b.leadingComments(), b.trailingComment(), false, b.bracePos()));
+                            b.leadingComments(), b.trailingComment(), false, b.bracePos(), b.trailingComments()));
                 } else {
                     out.add(b);
                 }
@@ -75,13 +75,14 @@ public final class KeyedCanonicalizer {
                 List<Ast.Entry> es = new ArrayList<>(bv.entries().size());
                 for (Ast.Entry e : bv.entries()) {
                     if (e instanceof Ast.MapEntry me && me.value() instanceof Ast.BlockVal inner) {
-                        es.add(new Ast.MapEntry(me.pos(), me.key(), new Ast.BlockVal(inner.pos(), canonEntries(inner.entries(), valDesc)),
+                        es.add(new Ast.MapEntry(me.pos(), me.key(),
+                                new Ast.BlockVal(inner.pos(), canonEntries(inner.entries(), valDesc), inner.trailingComments()),
                                 me.leadingComments(), me.trailingComment(), me.keyQuoted()));
                     } else {
                         es.add(e);
                     }
                 }
-                return withValue(a, new Ast.BlockVal(bv.pos(), List.copyOf(es)));
+                return withValue(a, new Ast.BlockVal(bv.pos(), List.copyOf(es), bv.trailingComments()));
             }
             return a;
         }
@@ -92,21 +93,27 @@ public final class KeyedCanonicalizer {
                 if (keyFd != null) return canonAnonymousKeyed(a, lv, fd, keyFd);
                 List<Ast.Value> elems = new ArrayList<>(lv.elements().size());
                 for (Ast.Value v : lv.elements()) {
-                    elems.add(v instanceof Ast.BlockVal bv ? new Ast.BlockVal(bv.pos(), canonEntries(bv.entries(), fd.getMessageType())) : v);
+                    elems.add(v instanceof Ast.BlockVal bv ? canonBlockVal(bv, fd.getMessageType()) : v);
                 }
                 return withValue(a, new Ast.ListVal(lv.pos(), List.copyOf(elems)));
             }
             if (a.value() instanceof Ast.BlockVal bv && keyFd != null) {
                 // `children = { ... }` → `children { ... }`.
-                Ast.Block blk = new Ast.Block(a.pos(), a.key(), bv.entries(), a.leadingComments(), a.trailingComment(), false);
+                Ast.Block blk = new Ast.Block(a.pos(), a.key(), bv.entries(), a.leadingComments(), a.trailingComment(), false,
+                        bv.pos(), bv.trailingComments());
                 return canonKeyedEntries(blk, fd, keyFd);
             }
             return a;
         }
         if (fd.getJavaType() == FieldDescriptor.JavaType.MESSAGE && a.value() instanceof Ast.BlockVal bv) {
-            return withValue(a, new Ast.BlockVal(bv.pos(), canonEntries(bv.entries(), fd.getMessageType())));
+            return withValue(a, canonBlockVal(bv, fd.getMessageType()));
         }
         return a;
+    }
+
+    /** {@code bv} with its entries canonicalized, its closing comments kept. */
+    private static Ast.BlockVal canonBlockVal(Ast.BlockVal bv, Descriptor desc) {
+        return new Ast.BlockVal(bv.pos(), canonEntries(bv.entries(), desc), bv.trailingComments());
     }
 
     private static Ast.Assignment withValue(Ast.Assignment a, Ast.Value v) {
@@ -127,14 +134,28 @@ public final class KeyedCanonicalizer {
             if (e instanceof Ast.Block nb) {
                 eb = nb;
             } else if (e instanceof Ast.Assignment a && a.value() instanceof Ast.BlockVal bv) {
-                eb = new Ast.Block(a.pos(), a.key(), bv.entries(), a.leadingComments(), a.trailingComment(), a.keyQuoted());
+                eb = new Ast.Block(a.pos(), a.key(), bv.entries(), a.leadingComments(), a.trailingComment(), a.keyQuoted(),
+                        bv.pos(), bv.trailingComments());
             }
             if (eb == null) { out.add(e); continue; } // malformed entry; leave untouched
             boolean quoted = eb.nameQuoted() && !Format.identSafeEntryName(eb.name());
-            List<Ast.Entry> body = canonEntries(dropKeyAssignments(eb.entries(), keyName, eb.name()), fd.getMessageType());
-            out.add(new Ast.Block(eb.pos(), eb.name(), body, eb.leadingComments(), eb.trailingComment(), quoted, eb.bracePos()));
+            Kept kept = dropKeyAssignments(eb.entries(), keyName, eb.name());
+            List<Ast.Entry> body = canonEntries(kept.entries(), fd.getMessageType());
+            out.add(new Ast.Block(eb.pos(), eb.name(), body, eb.leadingComments(), eb.trailingComment(), quoted, eb.bracePos(),
+                    concat(kept.left(), eb.trailingComments())));
         }
-        return new Ast.Block(b.pos(), b.name(), List.copyOf(out), b.leadingComments(), b.trailingComment(), false, b.bracePos());
+        return new Ast.Block(b.pos(), b.name(), List.copyOf(out), b.leadingComments(), b.trailingComment(), false, b.bracePos(),
+                b.trailingComments());
+    }
+
+    /** The entries {@link #dropKeyAssignments} keeps, and the comments of a dropped assignment no entry follows. */
+    private record Kept(List<Ast.Entry> entries, List<Ast.Comment> left) {}
+
+    private static List<Ast.Comment> concat(List<Ast.Comment> a, List<Ast.Comment> b) {
+        if (a.isEmpty()) return b;
+        List<Ast.Comment> out = new ArrayList<>(a);
+        out.addAll(b);
+        return List.copyOf(out);
     }
 
     /**
@@ -142,9 +163,10 @@ public final class KeyedCanonicalizer {
      * agreeing spelling of an entry's key. Disagreeing or non-string
      * assignments are kept (the document is invalid; formatting must not
      * silently change its meaning). Leading comments of a dropped
-     * assignment move to the next surviving entry.
+     * assignment move to the next surviving entry; when none follows, they
+     * are returned, for the block's trailing comments (#200).
      */
-    private static List<Ast.Entry> dropKeyAssignments(List<Ast.Entry> entries, String keyName, String entryName) {
+    private static Kept dropKeyAssignments(List<Ast.Entry> entries, String keyName, String entryName) {
         List<Ast.Entry> out = new ArrayList<>(entries.size());
         List<Ast.Comment> pending = new ArrayList<>();
         for (Ast.Entry e : entries) {
@@ -158,7 +180,8 @@ public final class KeyedCanonicalizer {
                 merged.addAll(e.leadingComments());
                 e = switch (e) {
                     case Ast.Assignment a -> new Ast.Assignment(a.pos(), a.key(), a.value(), List.copyOf(merged), a.trailingComment(), a.keyQuoted(), a.equalsPos());
-                    case Ast.Block bl -> new Ast.Block(bl.pos(), bl.name(), bl.entries(), List.copyOf(merged), bl.trailingComment(), bl.nameQuoted(), bl.bracePos());
+                    case Ast.Block bl -> new Ast.Block(bl.pos(), bl.name(), bl.entries(), List.copyOf(merged), bl.trailingComment(), bl.nameQuoted(), bl.bracePos(),
+                            bl.trailingComments());
                     case Ast.MapEntry me -> new Ast.MapEntry(me.pos(), me.key(), me.value(), List.copyOf(merged), me.trailingComment(), me.keyQuoted());
                     case Ast.TypeEntry te -> new Ast.TypeEntry(te.pos(), te.url(), List.copyOf(merged), te.trailingComment(), te.urlPos());
                 };
@@ -166,7 +189,7 @@ public final class KeyedCanonicalizer {
             }
             out.add(e);
         }
-        return out;
+        return new Kept(out, List.copyOf(pending));
     }
 
     /**
@@ -191,15 +214,18 @@ public final class KeyedCanonicalizer {
         if (!eligible) {
             List<Ast.Value> elems = new ArrayList<>(lv.elements().size());
             for (Ast.Value v : lv.elements()) {
-                elems.add(v instanceof Ast.BlockVal bv ? new Ast.BlockVal(bv.pos(), canonEntries(bv.entries(), fd.getMessageType())) : v);
+                elems.add(v instanceof Ast.BlockVal bv ? canonBlockVal(bv, fd.getMessageType()) : v);
             }
             return withValue(a, new Ast.ListVal(lv.pos(), List.copyOf(elems)));
         }
         List<Ast.Entry> entries = new ArrayList<>(keys.size());
         for (int i = 0; i < keys.size(); i++) {
             String key = keys.get(i);
-            List<Ast.Entry> body = canonEntries(dropKeyAssignments(blocks.get(i).entries(), keyName, key), fd.getMessageType());
-            entries.add(new Ast.Block(blocks.get(i).pos(), key, body, List.of(), "", !Format.identSafeEntryName(key)));
+            Ast.BlockVal bv = blocks.get(i);
+            Kept kept = dropKeyAssignments(bv.entries(), keyName, key);
+            List<Ast.Entry> body = canonEntries(kept.entries(), fd.getMessageType());
+            entries.add(new Ast.Block(bv.pos(), key, body, List.of(), "", !Format.identSafeEntryName(key), bv.pos(),
+                    concat(kept.left(), bv.trailingComments())));
         }
         return new Ast.Block(a.pos(), a.key(), List.copyOf(entries), a.leadingComments(), a.trailingComment(), false);
     }

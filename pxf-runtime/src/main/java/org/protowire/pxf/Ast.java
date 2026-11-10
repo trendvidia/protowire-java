@@ -30,6 +30,9 @@ public final class Ast {
      *                        (draft §3.4.5)
      * @param entries         message body entries
      * @param leadingComments comments before any directive or body entry
+     * @param trailingComments the comments after the document's last entry,
+     *                        directive or dataset row, which precede nothing
+     *                        of their own (#200, protowire-go#279)
      */
     public record Document(
             String typeUrl,
@@ -37,10 +40,17 @@ public final class Ast {
             List<DatasetDirective> datasets,
             List<ProtoDirective> protos,
             List<Entry> entries,
-            List<Comment> leadingComments) {
+            List<Comment> leadingComments,
+            List<Comment> trailingComments) {
+
+        /** As the seven-argument form with no trailing comments. */
+        public Document(String typeUrl, List<Directive> directives, List<DatasetDirective> datasets,
+                List<ProtoDirective> protos, List<Entry> entries, List<Comment> leadingComments) {
+            this(typeUrl, directives, datasets, protos, entries, leadingComments, List.of());
+        }
 
         public static Document of(String typeUrl, List<Entry> entries) {
-            return new Document(typeUrl, List.of(), List.of(), List.of(), List.copyOf(entries), List.of());
+            return new Document(typeUrl, List.of(), List.of(), List.of(), List.copyOf(entries), List.of(), List.of());
         }
     }
 
@@ -106,8 +116,18 @@ public final class Ast {
      * cell" between two commas); a {@link NullVal} denotes a present-but-
      * null field; any other {@link Value} denotes a present field with that
      * value.
+     *
+     * @param leadingComments the comments before this row (after the column
+     *     list or the previous row) and inside it. {@link Format} writes a
+     *     row on one line, so it writes them all before the row (#200,
+     *     protowire-go#279)
      */
-    public record DatasetRow(Position pos, List<Value> cells) {}
+    public record DatasetRow(Position pos, List<Value> cells, List<Comment> leadingComments) {
+        /** As the three-argument form with no comments. */
+        public DatasetRow(Position pos, List<Value> cells) {
+            this(pos, cells, List.of());
+        }
+    }
 
     /**
      * Shape of a {@link ProtoDirective}'s body (draft §3.4.5).
@@ -235,6 +255,10 @@ public final class Ast {
      * @param bracePos where the opening brace stands. A schema layer
      *     that refuses the block because of its brace, such as one inside a
      *     map block, reports it here, as protowire-go does (#222).
+     * @param trailingComments the comments after the last entry, before the
+     *     closing brace (all of an empty block's comments), which precede no
+     *     entry (#200, protowire-go#279). Not to be confused with
+     *     {@code trailingComment}, the comment on an entry's own line.
      */
     public record Block(
             Position pos,
@@ -243,16 +267,23 @@ public final class Ast {
             List<Comment> leadingComments,
             String trailingComment,
             boolean nameQuoted,
-            Position bracePos) implements Entry {
-        /** As the seven-argument form with {@code bracePos = pos}. */
+            Position bracePos,
+            List<Comment> trailingComments) implements Entry {
+        /** As the eight-argument form with no trailing comments. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
-                boolean nameQuoted) {
-            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, pos);
+                boolean nameQuoted, Position bracePos) {
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, bracePos, List.of());
         }
 
-        /** As the seven-argument form with {@code nameQuoted = false} and {@code bracePos = pos}. */
+        /** As the eight-argument form with {@code bracePos = pos} and no trailing comments. */
+        public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
+                boolean nameQuoted) {
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, pos, List.of());
+        }
+
+        /** As the eight-argument form with {@code nameQuoted = false}, {@code bracePos = pos} and no trailing comments. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment) {
-            this(pos, name, entries, leadingComments, trailingComment, false, pos);
+            this(pos, name, entries, leadingComments, trailingComment, false, pos, List.of());
         }
     }
 
@@ -322,5 +353,17 @@ public final class Ast {
     public record TimestampVal(Position pos, Instant value, String raw) implements Value {}
     public record DurationVal(Position pos, Duration value, String raw) implements Value {}
     public record ListVal(Position pos, List<Value> elements) implements Value {}
-    public record BlockVal(Position pos, List<Entry> entries) implements Value {}
+    /**
+     * A {@code { entries }} value.
+     *
+     * @param trailingComments the comments after the last entry, before the
+     *     closing brace (all of an empty block's comments), which precede no
+     *     entry (#200, protowire-go#279)
+     */
+    public record BlockVal(Position pos, List<Entry> entries, List<Comment> trailingComments) implements Value {
+        /** As the three-argument form with no trailing comments. */
+        public BlockVal(Position pos, List<Entry> entries) {
+            this(pos, entries, List.of());
+        }
+    }
 }

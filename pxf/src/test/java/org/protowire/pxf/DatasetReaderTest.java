@@ -425,4 +425,22 @@ class DatasetReaderTest {
                 () -> BindRow.bindRow(b, List.of("string_field"), row));
         assertTrue(ex.getMessage().contains("column string_field: "), ex.getMessage());
     }
+
+    /**
+     * Read a byte at a time, a comment between rows arrives with its '/'
+     * alone at the end of the buffer. It used to be refused as a stray '/'
+     * (#200), which a 4096-byte read could do too.
+     */
+    @Test
+    void aCommentBetweenRowsMayArriveAByteAtATime() throws IOException {
+        String doc = "@dataset T (a, b)\n(1, 2)\n// c\n(3, 4)\n/* d */\n(5, 6)\n";
+        var tr = new DatasetReader(new java.io.FilterInputStream(s(doc)) {
+            @Override public int read(byte[] b, int off, int len) throws IOException {
+                return super.read(b, off, Math.min(1, len));
+            }
+        });
+        int rows = 0;
+        while (tr.next() != null) rows++;
+        assertEquals(3, rows);
+    }
 }

@@ -33,6 +33,9 @@ public final class Ast {
      * @param trailingComments the comments after the document's last entry,
      *                        directive or dataset row, which precede nothing
      *                        of their own (#200, protowire-go#279)
+     * @param bodyOffset      the byte just past the last directive's last
+     *                        token, where the body begins; 0 when there is no
+     *                        directive. As protowire-go's {@code BodyOffset} (#209)
      */
     public record Document(
             String typeUrl,
@@ -41,16 +44,24 @@ public final class Ast {
             List<ProtoDirective> protos,
             List<Entry> entries,
             List<Comment> leadingComments,
-            List<Comment> trailingComments) {
+            List<Comment> trailingComments,
+            int bodyOffset) {
 
-        /** As the seven-argument form with no trailing comments. */
+        /** As the eight-argument form with {@code bodyOffset = 0}. */
+        public Document(String typeUrl, List<Directive> directives, List<DatasetDirective> datasets,
+                List<ProtoDirective> protos, List<Entry> entries, List<Comment> leadingComments,
+                List<Comment> trailingComments) {
+            this(typeUrl, directives, datasets, protos, entries, leadingComments, trailingComments, 0);
+        }
+
+        /** As the eight-argument form with no trailing comments and {@code bodyOffset = 0}. */
         public Document(String typeUrl, List<Directive> directives, List<DatasetDirective> datasets,
                 List<ProtoDirective> protos, List<Entry> entries, List<Comment> leadingComments) {
-            this(typeUrl, directives, datasets, protos, entries, leadingComments, List.of());
+            this(typeUrl, directives, datasets, protos, entries, leadingComments, List.of(), 0);
         }
 
         public static Document of(String typeUrl, List<Entry> entries) {
-            return new Document(typeUrl, List.of(), List.of(), List.of(), List.copyOf(entries), List.of(), List.of());
+            return new Document(typeUrl, List.of(), List.of(), List.of(), List.copyOf(entries), List.of(), List.of(), 0);
         }
     }
 
@@ -175,6 +186,14 @@ public final class Ast {
     /** A single entry inside a message body: assignment, map entry, block, or type entry. */
     public sealed interface Entry permits Assignment, MapEntry, Block, TypeEntry {
         Position pos();
+
+        /**
+         * Just past the entry's last byte: its value's end, or a block's
+         * closing brace. Its span is {@code pos()} to {@code end()}, as
+         * protowire-go's {@code EntrySpan} (#209). An entry built in code has
+         * {@code end() == pos()}.
+         */
+        Position end();
         List<Comment> leadingComments();
         String trailingComment();
     }
@@ -202,16 +221,23 @@ public final class Ast {
             List<Comment> leadingComments,
             String trailingComment,
             boolean keyQuoted,
-            Position equalsPos) implements Entry {
-        /** As the seven-argument form with {@code equalsPos = pos}. */
+            Position equalsPos,
+            Position end) implements Entry {
+        /** As the eight-argument form with {@code end = pos}. */
         public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment,
-                boolean keyQuoted) {
-            this(pos, key, value, leadingComments, trailingComment, keyQuoted, pos);
+                boolean keyQuoted, Position equalsPos) {
+            this(pos, key, value, leadingComments, trailingComment, keyQuoted, equalsPos, pos);
         }
 
-        /** As the seven-argument form with {@code keyQuoted = false} and {@code equalsPos = pos}. */
+        /** As the eight-argument form with {@code equalsPos = pos} and {@code end = pos}. */
+        public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment,
+                boolean keyQuoted) {
+            this(pos, key, value, leadingComments, trailingComment, keyQuoted, pos, pos);
+        }
+
+        /** As the eight-argument form with {@code keyQuoted = false}, {@code equalsPos = pos} and {@code end = pos}. */
         public Assignment(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment) {
-            this(pos, key, value, leadingComments, trailingComment, false, pos);
+            this(pos, key, value, leadingComments, trailingComment, false, pos, pos);
         }
     }
 
@@ -235,10 +261,17 @@ public final class Ast {
             Value value,
             List<Comment> leadingComments,
             String trailingComment,
-            boolean keyQuoted) implements Entry {
-        /** As the six-argument form with {@code keyQuoted = false}. */
+            boolean keyQuoted,
+            Position end) implements Entry {
+        /** As the seven-argument form with {@code end = pos}. */
+        public MapEntry(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment,
+                boolean keyQuoted) {
+            this(pos, key, value, leadingComments, trailingComment, keyQuoted, pos);
+        }
+
+        /** As the seven-argument form with {@code keyQuoted = false} and {@code end = pos}. */
         public MapEntry(Position pos, String key, Value value, List<Comment> leadingComments, String trailingComment) {
-            this(pos, key, value, leadingComments, trailingComment, false);
+            this(pos, key, value, leadingComments, trailingComment, false, pos);
         }
     }
 
@@ -268,22 +301,29 @@ public final class Ast {
             String trailingComment,
             boolean nameQuoted,
             Position bracePos,
-            List<Comment> trailingComments) implements Entry {
-        /** As the eight-argument form with no trailing comments. */
+            List<Comment> trailingComments,
+            Position end) implements Entry {
+        /** As the nine-argument form with {@code end = pos}. */
+        public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
+                boolean nameQuoted, Position bracePos, List<Comment> trailingComments) {
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, bracePos, trailingComments, pos);
+        }
+
+        /** As the nine-argument form with no trailing comments and {@code end = pos}. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
                 boolean nameQuoted, Position bracePos) {
-            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, bracePos, List.of());
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, bracePos, List.of(), pos);
         }
 
-        /** As the eight-argument form with {@code bracePos = pos} and no trailing comments. */
+        /** As the nine-argument form with {@code bracePos = pos}, no trailing comments and {@code end = pos}. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment,
                 boolean nameQuoted) {
-            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, pos, List.of());
+            this(pos, name, entries, leadingComments, trailingComment, nameQuoted, pos, List.of(), pos);
         }
 
-        /** As the eight-argument form with {@code nameQuoted = false}, {@code bracePos = pos} and no trailing comments. */
+        /** As the nine-argument form with {@code nameQuoted = false}, {@code bracePos = pos}, no trailing comments and {@code end = pos}. */
         public Block(Position pos, String name, List<Entry> entries, List<Comment> leadingComments, String trailingComment) {
-            this(pos, name, entries, leadingComments, trailingComment, false, pos, List.of());
+            this(pos, name, entries, leadingComments, trailingComment, false, pos, List.of(), pos);
         }
     }
 
@@ -302,10 +342,16 @@ public final class Ast {
             String url,
             List<Comment> leadingComments,
             String trailingComment,
-            Position urlPos) implements Entry {
-        /** As the five-argument form with {@code urlPos = pos}. */
+            Position urlPos,
+            Position end) implements Entry {
+        /** As the six-argument form with {@code end = pos}. */
+        public TypeEntry(Position pos, String url, List<Comment> leadingComments, String trailingComment, Position urlPos) {
+            this(pos, url, leadingComments, trailingComment, urlPos, pos);
+        }
+
+        /** As the six-argument form with {@code urlPos = pos} and {@code end = pos}. */
         public TypeEntry(Position pos, String url, List<Comment> leadingComments, String trailingComment) {
-            this(pos, url, leadingComments, trailingComment, pos);
+            this(pos, url, leadingComments, trailingComment, pos, pos);
         }
     }
 
@@ -313,6 +359,14 @@ public final class Ast {
     public sealed interface Value permits StringVal, IntVal, FloatVal, BoolVal, BytesVal, NullVal,
             IdentVal, TimestampVal, DurationVal, ListVal, BlockVal, BadVal {
         Position pos();
+
+        /**
+         * Just past the value's last byte, as protowire-go's
+         * {@code ValueSpan} (#209). A value built in code has
+         * {@code end() == pos()}, and so does a {@link BadVal}, which spans
+         * no source bytes.
+         */
+        Position end();
     }
 
     /**
@@ -326,9 +380,15 @@ public final class Ast {
      * so a formatted tree that holds one may not parse again, and a decoder
      * refuses it.
      */
-    public record BadVal(Position pos) implements Value {}
+    public record BadVal(Position pos) implements Value {
+        /** A BadVal spans no source bytes. */
+        @Override public Position end() { return pos; }
+    }
 
-    public record StringVal(Position pos, String value) implements Value {}
+    public record StringVal(Position pos, String value, Position end) implements Value {
+        /** As the three-argument form with {@code end = pos}. */
+        public StringVal(Position pos, String value) { this(pos, value, pos); }
+    }
 
     /**
      * An integer literal.
@@ -338,9 +398,12 @@ public final class Ast {
      *     {@code pxf.BigFloat} reads it, and the schema layer rejects it on
      *     any other field (draft -01 § PXF Annotations, protowire#406).
      */
-    public record IntVal(Position pos, String raw, String prec) implements Value {
-        /** As the three-argument form with no suffix. */
-        public IntVal(Position pos, String raw) { this(pos, raw, ""); }
+    public record IntVal(Position pos, String raw, String prec, Position end) implements Value {
+        /** As the four-argument form with {@code end = pos}. */
+        public IntVal(Position pos, String raw, String prec) { this(pos, raw, prec, pos); }
+
+        /** As the four-argument form with no suffix and {@code end = pos}. */
+        public IntVal(Position pos, String raw) { this(pos, raw, "", pos); }
 
         /** The literal as written, its suffix included. */
         public String literal() { return prec.isEmpty() ? raw : raw + "p" + prec; }
@@ -351,21 +414,44 @@ public final class Ast {
      *
      * @param prec the digits of its precision suffix, or "": see {@link IntVal}
      */
-    public record FloatVal(Position pos, String raw, String prec) implements Value {
-        /** As the three-argument form with no suffix. */
-        public FloatVal(Position pos, String raw) { this(pos, raw, ""); }
+    public record FloatVal(Position pos, String raw, String prec, Position end) implements Value {
+        /** As the four-argument form with {@code end = pos}. */
+        public FloatVal(Position pos, String raw, String prec) { this(pos, raw, prec, pos); }
+
+        /** As the four-argument form with no suffix and {@code end = pos}. */
+        public FloatVal(Position pos, String raw) { this(pos, raw, "", pos); }
 
         /** The literal as written, its suffix included. */
         public String literal() { return prec.isEmpty() ? raw : raw + "p" + prec; }
     }
 
-    public record BoolVal(Position pos, boolean value) implements Value {}
-    public record BytesVal(Position pos, byte[] value) implements Value {}
-    public record NullVal(Position pos) implements Value {}
-    public record IdentVal(Position pos, String name) implements Value {}
-    public record TimestampVal(Position pos, Instant value, String raw) implements Value {}
-    public record DurationVal(Position pos, Duration value, String raw) implements Value {}
-    public record ListVal(Position pos, List<Value> elements) implements Value {}
+    public record BoolVal(Position pos, boolean value, Position end) implements Value {
+        public BoolVal(Position pos, boolean value) { this(pos, value, pos); }
+    }
+
+    public record BytesVal(Position pos, byte[] value, Position end) implements Value {
+        public BytesVal(Position pos, byte[] value) { this(pos, value, pos); }
+    }
+
+    public record NullVal(Position pos, Position end) implements Value {
+        public NullVal(Position pos) { this(pos, pos); }
+    }
+
+    public record IdentVal(Position pos, String name, Position end) implements Value {
+        public IdentVal(Position pos, String name) { this(pos, name, pos); }
+    }
+
+    public record TimestampVal(Position pos, Instant value, String raw, Position end) implements Value {
+        public TimestampVal(Position pos, Instant value, String raw) { this(pos, value, raw, pos); }
+    }
+
+    public record DurationVal(Position pos, Duration value, String raw, Position end) implements Value {
+        public DurationVal(Position pos, Duration value, String raw) { this(pos, value, raw, pos); }
+    }
+
+    public record ListVal(Position pos, List<Value> elements, Position end) implements Value {
+        public ListVal(Position pos, List<Value> elements) { this(pos, elements, pos); }
+    }
     /**
      * A {@code { entries }} value.
      *
@@ -373,10 +459,15 @@ public final class Ast {
      *     closing brace (all of an empty block's comments), which precede no
      *     entry (#200, protowire-go#279)
      */
-    public record BlockVal(Position pos, List<Entry> entries, List<Comment> trailingComments) implements Value {
-        /** As the three-argument form with no trailing comments. */
+    public record BlockVal(Position pos, List<Entry> entries, List<Comment> trailingComments, Position end) implements Value {
+        /** As the four-argument form with {@code end = pos}. */
+        public BlockVal(Position pos, List<Entry> entries, List<Comment> trailingComments) {
+            this(pos, entries, trailingComments, pos);
+        }
+
+        /** As the four-argument form with no trailing comments and {@code end = pos}. */
         public BlockVal(Position pos, List<Entry> entries) {
-            this(pos, entries, List.of());
+            this(pos, entries, List.of(), pos);
         }
     }
 }

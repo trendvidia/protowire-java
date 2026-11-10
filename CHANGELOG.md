@@ -20,6 +20,16 @@ format changes.
 
 ### Added
 
+- **`Rewriter`: format-preserving edits to a PXF document, as protowire-go's `Rewriter`** (#209). It splices replacement bytes into the source, so everything outside an edit stays byte for byte as it was: comments, blank lines, key order, indentation, number and string spellings. It is the write path for tools that edit a document a person also edits by hand.
+  - **Edits:** `set` and `remove` take a dotted path. `replaceValue` takes a node. `setSpan` takes raw bytes. `appendEntry` adds to a block.
+  - **Keyed editors** (draft -01 §3.13) take an element key as an opaque atom: `setKeyed`, `removeKeyed`, `insertKeyedElement`, `removeKeyedElement`, `renameKeyedElement` and `moveKeyedElement`, with `keyedByField` for the anonymous list form.
+  - **Output:** `bytes()` applies the edits, refuses overlapping ones, and parses the result before returning it. An edit the document cannot take throws `IllegalArgumentException` with Go's text, and a `BadVal` is refused as Go refuses it.
+  - **Evidence:** `RewriterTest` holds it to Go on 408 cases, byte for byte, including each error's text. They are all of Go's rewriter tests, its property tests expanded over its rewrite corpus, and its anonymous-list comment matrix. `scripts/go-rewrite/main.go` writes Go's table from `rewrite/cases.txt`, and the conformance job reruns it against protowire-go main.
+
+- **Every tree node carries its end, and the document its body offset, as protowire-go's** (#209). `Ast.Entry.end()` and `Ast.Value.end()` give the position just past the node's last byte, so a node spans `pos()` to `end()`, as Go's `EntrySpan` and `ValueSpan`. `Ast.Document.bodyOffset()` is the byte where the body begins, after the last directive.
+  - **Record change:** each entry and value record gains an `end` component. Every existing constructor is kept, and sets `end` to the node's `pos`. A node built in code spans nothing, as Go's does. Code that takes these records apart with a record pattern must add the component.
+  - **Evidence:** the tolerant-parse table (#208) now holds every node's span and the body offset to Go's, on its 1021 documents.
+
 - **`Pxf.keyedDiagnostics(doc, desc)`: every keyed-repeated-field error in a parsed document, as protowire-go's `KeyedDiagnostics`** (#208; draft -01 §3.13). The decoder throws the first. Editor tooling runs `Pxf.parseTolerant`, binds a schema, and reports them all. They cover duplicate entry names, empty keys, a key-field binding that disagrees with or undoes its entry name, and a quoted entry name outside a keyed block.
   - **`KeyedException`, a `PxfException` with Go's `KeyedErrorKind`:** `kind()`, `field()` and `key()`. The decoder now throws it for each of these errors, with the same text as before, so a caller can tell the causes apart, as Go's `errors.As` does.
   - **Evidence:** `KeyedDiagnosticsTest` holds the decoder's error and the diagnostics to Go's, kind, position, field, key and text, on every `testdata/keyed/` document and Go's own key-binding tests, 39 in all. `scripts/go-keyed-diagnostics/main.go` writes Go's table, and the conformance job reruns it against protowire-go main.

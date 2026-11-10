@@ -13,8 +13,8 @@
 // the document is typed. <errors> is every error, as line:col:offset and the
 // message, joined by " | ". <tree> is the document in a fixed notation that
 // pxf-runtime's TolerantParseTest writes for Java's tree, so the two compare
-// as text. It covers what both trees hold; protowire-go's End positions and
-// BodyOffset, which Java's tree has no counterpart of, are left out. Its output
+// as text. It covers what both trees hold: each entry and value's span, and
+// the document's body offset, included (#209). Its output
 // is pxf-runtime/src/test/resources/tolerant/go.tsv, and the conformance job
 // reruns it against protowire-go main. Run it from a protowire-go checkout:
 //
@@ -88,6 +88,9 @@ func row(out *bufio.Writer, name string, doc []byte) {
 
 func pos(p pxf.Position) string { return fmt.Sprintf("%d:%d:%d", p.Line, p.Column, p.Offset) }
 
+// span is a node's start and end (just past its last byte).
+func span(start, end pxf.Position) string { return pos(start) + "~" + pos(end) }
+
 // q quotes s: backslash, quote and control bytes escaped, a non-ASCII rune
 // as \u{hex}, a byte that is not UTF-8 as \x{hex}.
 func q(s string) string {
@@ -141,7 +144,7 @@ func body(b []byte) string {
 
 func document(d *pxf.Document) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "doc type=%s lead=%s", q(d.TypeURL), comments(d.LeadingComments))
+	fmt.Fprintf(&b, "doc type=%s body=%d lead=%s", q(d.TypeURL), d.BodyOffset, comments(d.LeadingComments))
 	for _, x := range d.Directives {
 		fmt.Fprintf(&b, " dir(%s @%s prefixes=%s type=%s body=%s lead=%s)", pos(x.Pos), q(x.Name), strs(x.Prefixes), q(x.Type), body(x.Body), comments(x.LeadingComments))
 	}
@@ -183,19 +186,19 @@ func entries(b *strings.Builder, es []pxf.Entry) {
 		}
 		switch e := e.(type) {
 		case *pxf.Assignment:
-			fmt.Fprintf(b, "A(%s %s quoted=%t lead=%s tc=%s = ", pos(e.Pos), q(e.Key), e.KeyQuoted, comments(e.LeadingComments), q(e.TrailingComment))
+			fmt.Fprintf(b, "A(%s %s quoted=%t lead=%s tc=%s = ", span(e.Pos, e.End), q(e.Key), e.KeyQuoted, comments(e.LeadingComments), q(e.TrailingComment))
 			value(b, e.Value)
 			b.WriteByte(')')
 		case *pxf.MapEntry:
-			fmt.Fprintf(b, "M(%s %s quoted=%t lead=%s tc=%s : ", pos(e.Pos), q(e.Key), e.KeyQuoted, comments(e.LeadingComments), q(e.TrailingComment))
+			fmt.Fprintf(b, "M(%s %s quoted=%t lead=%s tc=%s : ", span(e.Pos, e.End), q(e.Key), e.KeyQuoted, comments(e.LeadingComments), q(e.TrailingComment))
 			value(b, e.Value)
 			b.WriteByte(')')
 		case *pxf.Block:
-			fmt.Fprintf(b, "B(%s %s quoted=%t lead=%s ", pos(e.Pos), q(e.Name), e.NameQuoted, comments(e.LeadingComments))
+			fmt.Fprintf(b, "B(%s %s quoted=%t lead=%s ", span(e.Pos, e.End), q(e.Name), e.NameQuoted, comments(e.LeadingComments))
 			entries(b, e.Entries)
 			fmt.Fprintf(b, " trail=%s)", comments(e.TrailingComments))
 		case *pxf.TypeEntry:
-			fmt.Fprintf(b, "T(%s %s lead=%s tc=%s)", pos(e.Pos), q(e.URL), comments(e.LeadingComments), q(e.TrailingComment))
+			fmt.Fprintf(b, "T(%s %s lead=%s tc=%s)", span(e.Pos, e.End), q(e.URL), comments(e.LeadingComments), q(e.TrailingComment))
 		default:
 			fail(fmt.Errorf("entry %T", e))
 		}
@@ -206,25 +209,25 @@ func entries(b *strings.Builder, es []pxf.Entry) {
 func value(b *strings.Builder, v pxf.Value) {
 	switch v := v.(type) {
 	case *pxf.StringVal:
-		fmt.Fprintf(b, "S(%s %s)", pos(v.Pos), q(v.Value))
+		fmt.Fprintf(b, "S(%s %s)", span(v.Pos, v.End), q(v.Value))
 	case *pxf.IntVal:
-		fmt.Fprintf(b, "I(%s %s p=%s)", pos(v.Pos), q(v.Raw), q(v.Prec))
+		fmt.Fprintf(b, "I(%s %s p=%s)", span(v.Pos, v.End), q(v.Raw), q(v.Prec))
 	case *pxf.FloatVal:
-		fmt.Fprintf(b, "F(%s %s p=%s)", pos(v.Pos), q(v.Raw), q(v.Prec))
+		fmt.Fprintf(b, "F(%s %s p=%s)", span(v.Pos, v.End), q(v.Raw), q(v.Prec))
 	case *pxf.BoolVal:
-		fmt.Fprintf(b, "Bool(%s %t)", pos(v.Pos), v.Value)
+		fmt.Fprintf(b, "Bool(%s %t)", span(v.Pos, v.End), v.Value)
 	case *pxf.BytesVal:
-		fmt.Fprintf(b, "Bytes(%s %s)", pos(v.Pos), base64.StdEncoding.EncodeToString(v.Value))
+		fmt.Fprintf(b, "Bytes(%s %s)", span(v.Pos, v.End), base64.StdEncoding.EncodeToString(v.Value))
 	case *pxf.TimestampVal:
-		fmt.Fprintf(b, "Ts(%s %s)", pos(v.Pos), q(v.Raw))
+		fmt.Fprintf(b, "Ts(%s %s)", span(v.Pos, v.End), q(v.Raw))
 	case *pxf.DurationVal:
-		fmt.Fprintf(b, "Dur(%s %s)", pos(v.Pos), q(v.Raw))
+		fmt.Fprintf(b, "Dur(%s %s)", span(v.Pos, v.End), q(v.Raw))
 	case *pxf.NullVal:
-		fmt.Fprintf(b, "Null(%s)", pos(v.Pos))
+		fmt.Fprintf(b, "Null(%s)", span(v.Pos, v.End))
 	case *pxf.IdentVal:
-		fmt.Fprintf(b, "Id(%s %s)", pos(v.Pos), q(v.Name))
+		fmt.Fprintf(b, "Id(%s %s)", span(v.Pos, v.End), q(v.Name))
 	case *pxf.ListVal:
-		fmt.Fprintf(b, "List(%s [", pos(v.Pos))
+		fmt.Fprintf(b, "List(%s [", span(v.Pos, v.End))
 		for i, e := range v.Elements {
 			if i > 0 {
 				b.WriteByte(',')
@@ -233,11 +236,11 @@ func value(b *strings.Builder, v pxf.Value) {
 		}
 		b.WriteString("])")
 	case *pxf.BlockVal:
-		fmt.Fprintf(b, "Blk(%s ", pos(v.Pos))
+		fmt.Fprintf(b, "Blk(%s ", span(v.Pos, v.End))
 		entries(b, v.Entries)
 		fmt.Fprintf(b, " trail=%s)", comments(v.TrailingComments))
 	case *pxf.BadVal:
-		fmt.Fprintf(b, "Bad(%s)", pos(v.Pos))
+		fmt.Fprintf(b, "Bad(%s)", span(v.Pos, v.End))
 	default:
 		fail(fmt.Errorf("value %T", v))
 	}

@@ -20,14 +20,14 @@ Maven:
 <dependency>
   <groupId>org.protowire</groupId>
   <artifactId>protowire-pxf</artifactId>
-  <version>2.0.0</version>
+  <version>2.0.1</version>
 </dependency>
 ```
 
 Gradle (Kotlin DSL):
 
 ```kotlin
-implementation("org.protowire:protowire-pxf:2.0.0")
+implementation("org.protowire:protowire-pxf:2.0.1")
 // or pick the modules you need:
 //   JVM (protobuf-java):   protowire-pb, protowire-pxf, protowire-sbe, protowire-envelope, protowire-proto-annotations
 //   descriptor-free:       protowire-pxf-runtime, protowire-sbe-runtime, protowire-check

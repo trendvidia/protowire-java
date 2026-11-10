@@ -29,6 +29,20 @@ final class Lexer {
      * limits (#79).
      */
     int maxBytesLiteral = Limits.MAX_BYTES_LITERAL_LENGTH;
+    /**
+     * The recoveries of {@link Parser#parseTolerant}, as protowire-go's
+     * tolerant lexer makes them (#208): an unterminated string ends at the
+     * newline or the end, an unterminated triple-quoted string, block comment
+     * or bytes literal at the end (a bytes literal at the newline), a bad
+     * escape is kept as written, and a bytes literal's base64 is left to the
+     * parser. Each reports its error to {@link #onErr}.
+     */
+    boolean tolerant;
+    java.util.function.BiConsumer<Position, String> onErr;
+
+    private void reportErr(Position pp, String msg) {
+        if (onErr != null) onErr.accept(pp, msg);
+    }
 
     Lexer(byte[] input) { this.input = input; }
     Lexer(String input) { this(input.getBytes(StandardCharsets.UTF_8)); }
@@ -283,6 +297,11 @@ final class Lexer {
             }
             advance();
         }
+        if (tolerant) {
+            while (pos < input.length) advance();
+            reportErr(pp, "unterminated block comment");
+            return new Token(TokenKind.COMMENT, slice(start, pos), pp);
+        }
         return new Token(TokenKind.ILLEGAL, "unterminated block comment", pp);
     }
 
@@ -294,40 +313,33 @@ final class Lexer {
         // bytes that decode to the right Java String.
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         while (pos < input.length) {
-            int ch = advance() & 0xff;
-            if (ch == '"') {
-                // Strict decode: a \xHH or octal escape can produce bytes that
-                // are not UTF-8, and a proto3 string field may not hold them
-                // (HARDENING.md § UTF-8). ByteArrayOutputStream.toString would
-                // substitute U+FFFD silently, which the same section forbids.
-                // Quoted literals only ever feed string fields (bytes fields
-                // take b"..."), so rejecting here is the same rule the Go
-                // decoder applies at every string-field site.
-                try {
-                    String s = StandardCharsets.UTF_8.newDecoder()
-                            .onMalformedInput(CodingErrorAction.REPORT)
-                            .onUnmappableCharacter(CodingErrorAction.REPORT)
-                            .decode(ByteBuffer.wrap(out.toByteArray()))
-                            .toString();
-                    return new Token(TokenKind.STRING, s, pp);
-                } catch (CharacterCodingException e) {
-                    return new Token(TokenKind.ILLEGAL, "invalid UTF-8 in string literal", pp);
-                }
-            }
-            if (ch == '\n') {
+            if (peek() == '\n') {
                 // Draft -01 § String Literals: a simple string holds no raw
                 // LF (protowire#350). \n is the escape, and a triple-quoted
-                // string is the multi-line form.
+                // string is the multi-line form. A tolerant parse takes it as
+                // a literal being typed: the string ends here, and the next
+                // line parses on.
+                if (tolerant) {
+                    reportErr(pp, "unterminated string: ended at newline");
+                    return stringToken(out, pp);
+                }
                 return new Token(TokenKind.ILLEGAL,
                         "newline in string literal: write it as \\n, or use a \"\"\"triple-quoted\"\"\" string", pp);
             }
+            int ch = advance() & 0xff;
+            if (ch == '"') return stringToken(out, pp);
             if (ch != '\\') {
                 out.write(ch);
                 continue;
             }
             if (pos >= input.length) {
+                if (tolerant) {
+                    reportErr(pp, "unterminated escape sequence");
+                    return stringToken(out, pp);
+                }
                 return new Token(TokenKind.ILLEGAL, "unterminated escape sequence", pp);
             }
+            Position escPos = currentPos();
             int esc = advance() & 0xff;
             switch (esc) {
                 case '"', '\\', '\'', '?' -> out.write(esc);
@@ -340,30 +352,24 @@ final class Lexer {
                 case 'v' -> out.write(0x0B);
                 case 'x' -> {
                     // Exactly 2 hex digits → 1 byte.
-                    if (pos + 1 >= input.length) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid \\x escape: expected 2 hex digits", pp);
-                    }
-                    int hi = hexVal(input[pos] & 0xff);
-                    int lo = hexVal(input[pos + 1] & 0xff);
+                    int hi = pos + 1 < input.length ? hexVal(input[pos] & 0xff) : -1;
+                    int lo = pos + 1 < input.length ? hexVal(input[pos + 1] & 0xff) : -1;
                     if (hi < 0 || lo < 0) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid \\x escape: expected 2 hex digits", pp);
+                        String msg = "invalid \\x escape: expected 2 hex digits";
+                        if (keepBadEscape(escPos, msg, out, "\\x")) continue;
+                        return new Token(TokenKind.ILLEGAL, msg, pp);
                     }
                     advance(); advance();
                     out.write((hi << 4) | lo);
                 }
                 case '0', '1', '2', '3' -> {
                     // \\nnn — 3 octal digits, leading 0–3 keeps result <= 0xFF.
-                    if (pos + 1 >= input.length) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid octal escape: expected 3 octal digits", pp);
-                    }
-                    int d1 = octVal(input[pos] & 0xff);
-                    int d2 = octVal(input[pos + 1] & 0xff);
+                    int d1 = pos + 1 < input.length ? octVal(input[pos] & 0xff) : -1;
+                    int d2 = pos + 1 < input.length ? octVal(input[pos + 1] & 0xff) : -1;
                     if (d1 < 0 || d2 < 0) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid octal escape: expected 3 octal digits", pp);
+                        String msg = "invalid octal escape: expected 3 octal digits";
+                        if (keepBadEscape(escPos, msg, out, "\\" + (char) esc)) continue;
+                        return new Token(TokenKind.ILLEGAL, msg, pp);
                     }
                     advance(); advance();
                     out.write(((esc - '0') << 6) | (d1 << 3) | d2);
@@ -371,28 +377,66 @@ final class Lexer {
                 case 'u' -> {
                     int r = readHexRune(4);
                     if (r < 0 || !isValidRune(r)) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid \\u escape: expected 4 hex digits forming a valid codepoint",
-                                pp);
+                        String msg = "invalid \\u escape: expected 4 hex digits forming a valid codepoint";
+                        if (keepBadEscape(escPos, msg, out, "\\u")) continue;
+                        return new Token(TokenKind.ILLEGAL, msg, pp);
                     }
                     encodeRune(r, out);
                 }
                 case 'U' -> {
                     int r = readHexRune(8);
                     if (r < 0 || !isValidRune(r)) {
-                        return new Token(TokenKind.ILLEGAL,
-                                "invalid \\U escape: expected 8 hex digits forming a valid codepoint",
-                                pp);
+                        String msg = "invalid \\U escape: expected 8 hex digits forming a valid codepoint";
+                        if (keepBadEscape(escPos, msg, out, "\\U")) continue;
+                        return new Token(TokenKind.ILLEGAL, msg, pp);
                     }
                     encodeRune(r, out);
                 }
                 default -> {
-                    return new Token(TokenKind.ILLEGAL,
-                            "unknown escape sequence \\" + (char) esc, pp);
+                    String msg = "unknown escape sequence \\" + (char) esc;
+                    if (keepBadEscape(escPos, msg, out, "\\" + (char) esc)) continue;
+                    return new Token(TokenKind.ILLEGAL, msg, pp);
                 }
             }
         }
+        if (tolerant) {
+            reportErr(pp, "unterminated string");
+            return stringToken(out, pp);
+        }
         return new Token(TokenKind.ILLEGAL, "unterminated string", pp);
+    }
+
+    /**
+     * A tolerant parse keeps a bad escape as written and reports it at the
+     * escape, as protowire-go does; a strict one refuses the string.
+     */
+    private boolean keepBadEscape(Position escPos, String msg, ByteArrayOutputStream out, String written) {
+        if (!tolerant) return false;
+        reportErr(escPos, msg);
+        out.writeBytes(written.getBytes(StandardCharsets.UTF_8));
+        return true;
+    }
+
+    /**
+     * A string's bytes as its token. Strict decode: a \\xHH or octal escape
+     * can produce bytes that are not UTF-8, and a proto3 string field may not
+     * hold them (HARDENING.md § UTF-8). ByteArrayOutputStream.toString would
+     * substitute U+FFFD silently, which the same section forbids. Quoted
+     * literals only ever feed string fields (bytes fields take b"..."), so
+     * rejecting here is the same rule the Go decoder applies at every
+     * string-field site.
+     */
+    private static Token stringToken(ByteArrayOutputStream out, Position pp) {
+        try {
+            String s = StandardCharsets.UTF_8.newDecoder()
+                    .onMalformedInput(CodingErrorAction.REPORT)
+                    .onUnmappableCharacter(CodingErrorAction.REPORT)
+                    .decode(ByteBuffer.wrap(out.toByteArray()))
+                    .toString();
+            return new Token(TokenKind.STRING, s, pp);
+        } catch (CharacterCodingException e) {
+            return new Token(TokenKind.ILLEGAL, "invalid UTF-8 in string literal", pp);
+        }
     }
 
     private static int hexVal(int c) {
@@ -455,6 +499,11 @@ final class Lexer {
             }
             advance();
         }
+        if (tolerant) {
+            while (pos < input.length) advance();
+            reportErr(pp, "unterminated triple-quoted string");
+            return new Token(TokenKind.STRING, dedent(new String(input, start, pos - start, StandardCharsets.UTF_8)), pp);
+        }
         return new Token(TokenKind.ILLEGAL, "unterminated triple-quoted string", pp);
     }
 
@@ -485,31 +534,38 @@ final class Lexer {
         int start = pos;
         while (pos < input.length) {
             byte c = input[pos];
+            // Refused from its length, as it is scanned, before it is decoded:
+            // the decode allocates the decoded bytes, so the cap comes first.
+            // Four base64 characters carry three bytes. protowire-go checks it
+            // at every byte, so an unterminated literal past it says so too.
+            if (maxBytesLiteral > 0 && (pos - start) / 4 * 3 > maxBytesLiteral) {
+                return new Token(TokenKind.ILLEGAL,
+                        "bytes literal decodes to more than MaxBytesLiteralLength=" + maxBytesLiteral + " bytes", pp);
+            }
             if (c == '"') {
-                // Refused from its length before it is decoded: the base64
-                // decode below allocates the decoded bytes, so the cap must
-                // come first. Four base64 characters carry three bytes.
-                if ((pos - start) / 4 * 3 > maxBytesLiteral) {
-                    return new Token(TokenKind.ILLEGAL,
-                            "bytes literal decodes to more than MaxBytesLiteralLength=" + maxBytesLiteral + " bytes", pp);
-                }
                 String raw = new String(input, start, pos - start, StandardCharsets.UTF_8);
                 advance(); // closing "
-                try {
-                    Base64.getDecoder().decode(raw);
-                } catch (IllegalArgumentException e) {
-                    try {
-                        Base64.getDecoder().decode(raw + padding(raw));
-                    } catch (IllegalArgumentException e2) {
-                        return new Token(TokenKind.ILLEGAL, "invalid base64 in bytes literal", pp);
-                    }
+                // The standard or URL-safe alphabet, padded or not, as
+                // protowire-go takes it (RFC 4648 §5, draft §3.7). A tolerant
+                // parse leaves the check to the parser, which reports where
+                // the payload goes wrong.
+                if (!tolerant && !Base64Literal.valid(raw)) {
+                    return new Token(TokenKind.ILLEGAL, "invalid base64 in bytes literal", pp);
                 }
                 return new Token(TokenKind.BYTES, raw, pp);
             }
             if (c == '\n') {
+                if (tolerant) {
+                    reportErr(pp, "unterminated bytes literal: ended at newline");
+                    return new Token(TokenKind.BYTES, slice(start, pos), pp);
+                }
                 return new Token(TokenKind.ILLEGAL, "unterminated bytes literal", pp);
             }
             advance();
+        }
+        if (tolerant) {
+            reportErr(pp, "unterminated bytes literal");
+            return new Token(TokenKind.BYTES, slice(start, pos), pp);
         }
         return new Token(TokenKind.ILLEGAL, "unterminated bytes literal", pp);
     }
@@ -524,7 +580,7 @@ final class Lexer {
         int start = pos;
         while (pos < input.length && isIdentPart(input[pos])) advance();
         String name = slice(start, pos);
-        if (name.isEmpty()) return new Token(TokenKind.ILLEGAL, "@", pp);
+        if (name.isEmpty()) return new Token(TokenKind.ILLEGAL, "\"@\" must be followed by a directive name", pp);
         if ("type".equals(name)) return new Token(TokenKind.AT_TYPE, "@type", pp);
         if ("dataset".equals(name)) return new Token(TokenKind.AT_DATASET, "@dataset", pp);
         if ("proto".equals(name)) return new Token(TokenKind.AT_PROTO, "@proto", pp);
@@ -550,7 +606,7 @@ final class Lexer {
             }
             neg = true;
             if (pos >= input.length || !isDigit(peek())) {
-                return new Token(TokenKind.ILLEGAL, "-", pp);
+                return new Token(TokenKind.ILLEGAL, "\"-\" must be followed by a digit or \"inf\"", pp);
             }
         }
         int digitStart = pos;

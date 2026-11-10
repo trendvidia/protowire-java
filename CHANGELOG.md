@@ -20,6 +20,10 @@ format changes.
 
 ### Added
 
+- **`Parser.parseTolerant`: a parse that recovers from a broken document and returns every error, as protowire-go's `ParseTolerant`** (#208). It is for editor tooling, which needs a tree exactly while the buffer is broken: completion mid-keystroke, hover on a half-typed entry. It recovers where Go does: a missing value becomes an `Ast.BadVal`, an unclosed block or list closes at the end, and an unterminated string ends at the newline. It returns the tree with every error, in source order. A valid document gives `Parser.parse`'s tree and no error.
+  - **New `Ast.Value` variant:** `Ast.BadVal` is added to the sealed `Ast.Value`, as decided on #208. **An exhaustive `switch` over `Ast.Value` with no `default` no longer compiles** until it handles `BadVal`. Only `parseTolerant` makes one. `Format` writes it as nothing, as Go does.
+  - **Evidence:** `TolerantParseTest` holds Java to Go on 1021 documents: the same errors, at the same positions, and the same tree. They are Go's own tolerant-parse tests, every prefix of five documents typed top to bottom, a document for each recovery, and the whole spec corpus. One prefix is pinned against #247. `pxf-runtime/src/test/resources/tolerant/go.tsv` is Go's, from `scripts/go-tolerant/main.go`, and the conformance job reruns it against protowire-go main.
+
 - **The lite tier binds `@dataset` rows: `LiteWireWriter.encodeRows` gives each row of a dataset as its message's PB bytes** (#212). Parse them with the row type's generated `parseFrom`. `LiteWireWriter.encodeRow` binds one row. A row binds as the full tier's `BindRow` and protowire-go's `BindRow` bind it: dotted columns, list, block and `null` cells, `(pxf.required)` and `(pxf.default)`. A row the type refuses fails with the same error at the row, naming its column, as `7:1: column int32_field: expected integer for field "int32_field"`. Before, lite parsed a dataset but could not bind it, so a row that broke its type went unnoticed.
   - The two tiers now share the step that writes a row as the body that binds it, `org.protowire.pxf.RowBody` in `:pxf-runtime`.
   - `scripts/go-verdicts/corpus.tsv` now covers `testdata/dataset/`: 43 more documents, each row bound with Go's `BindRow`. Both tiers meet Go's verdict and text on every one, and lite writes Go's bytes for each of the 26 rows Go accepts.
@@ -97,6 +101,17 @@ format changes.
 - **`Pb.marshal` writes a `BigDecimal` in reduced form, as protowire-go does** (#154; protowire#508). `new BigDecimal("1.00")` used to go out as unscaled 100 and scale 2, while Go writes unscaled 1 and no scale. Now `1.00` is written as `1`, `5E+2` as `500`, and a zero as an empty message. The number is the same; only its bytes change, so any golden file holding `Pb` output for a scaled `BigDecimal` will differ. A value whose reduced scale is past `MaxNumericLiteralDigits` (4096) is refused with an `IOException`, as Go refuses it, since every conformant reader rejects those bytes. Reading is unchanged and still accepts every form. Generated and dynamic messages and PXF text are not affected. `PbGoldenTest` gains Go-generated rows for each case, from protowire-go f8a01b1.
 
 ### Fixed
+
+- **A `b"…"` literal takes the URL-safe base64 alphabet, padded or not, as protowire-go does** (#208; draft §3.7, RFC 4648 §5). `b"-_8="` used to be refused as `invalid base64 in bytes literal`; it decodes to `fb ff`. The standard alphabet was taken already.
+- **Parse errors that differed from protowire-go's:**
+  - A lone `@` used to be reported as `@`. It is now `"@" must be followed by a directive name`.
+  - A lone `-` used to be reported as `-`. It is now `"-" must be followed by a digit or "inf"`.
+  - A block nested past MaxNestingDepth is refused at its `{`, not at the token after it.
+  - A map key with a precision suffix (`5p3: 1`) is refused by the parser, as Go's does: `map key 5: a key cannot carry a precision suffix (p3)`.
+  - A `@dataset` header's column paths are checked after the whole list is read, so a malformed list reports its syntax error first, as Go does.
+  - An unterminated bytes literal past MaxBytesLiteralLength says so, rather than `unterminated bytes literal`.
+  - A `@proto b"…"` body that is not base64 is reported with Go's `illegal base64 data at input byte N`, not Java's decoder's text.
+- **A comment before a block cell of a `@dataset` row belongs to the row, not to the cell's first entry,** as protowire-go files it (#208).
 
 - **Formatting keeps a comment that no entry follows where it was, as protowire-go does** (#200, protowire-go#279). The parser kept a comment only when an entry came after it.
   - A comment at the end of a document was dropped. It is now written last.

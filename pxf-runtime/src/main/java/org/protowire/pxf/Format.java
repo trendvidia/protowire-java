@@ -284,6 +284,9 @@ public final class Format {
             sb.append("null");
             return;
         }
+        // A tolerant parse's placeholder has no source text, so it is written
+        // as nothing, as protowire-go writes it; the output may not parse.
+        if (v instanceof Ast.BadVal) return;
         switch (v) {
             case Ast.StringVal s   -> sb.append('"').append(escape(s.value())).append('"');
             case Ast.IntVal i      -> sb.append(i.literal());

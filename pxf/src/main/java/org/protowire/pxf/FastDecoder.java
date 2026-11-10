@@ -296,14 +296,9 @@ final class FastDecoder {
                 String raw = current.value();
                 byte[] decoded;
                 try {
-                    decoded = java.util.Base64.getDecoder().decode(raw);
-                } catch (IllegalArgumentException e1) {
-                    try {
-                        decoded = java.util.Base64.getUrlDecoder().decode(raw);
-                    } catch (IllegalArgumentException e2) {
-                        throw new PxfException(current.pos(),
-                                "@proto descriptor body: invalid base64: " + e1.getMessage());
-                    }
+                    decoded = Base64Literal.decodeDescriptor(raw);
+                } catch (Base64Literal.Invalid e) {
+                    throw new PxfException(current.pos(), "@proto descriptor body: invalid base64: " + e.getMessage());
                 }
                 advance();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.DESCRIPTOR, "", decoded, java.util.List.of());
@@ -1309,10 +1304,10 @@ final class FastDecoder {
             case BYTE_STRING:
                 if (current.kind() != TokenKind.BYTES) throw new PxfException(pos, "expected bytes for field \"" + fd.getName() + "\"");
                 byte[] decoded;
-                try { decoded = Base64.getDecoder().decode(current.value()); }
-                catch (IllegalArgumentException e) {
-                    decoded = Base64.getDecoder().decode(current.value() + Lexer.padding(current.value()));
-                }
+                // The lexer has taken the payload in one of the four
+                // encodings protowire-go takes, so it decodes.
+                try { decoded = Base64Literal.decode(current.value()); }
+                catch (Base64Literal.Invalid e) { throw new PxfException(pos, "invalid base64 in bytes literal"); }
                 advance();
                 return ByteString.copyFrom(decoded);
             case ENUM:

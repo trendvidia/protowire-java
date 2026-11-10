@@ -504,9 +504,11 @@ public final class Parser {
                             "field assignment with '=' requires an identifier or string key, got " + keyKind
                                     + " (\"" + key + "\"); use ':' for map entries");
                 }
+                Position equalsPos = current.pos();
                 advance();
                 Ast.Value v = parseValue();
-                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING);
+                yield new Ast.Assignment(pp, key, v, leading, takeTrailingComment(prevEnd), keyKind == TokenKind.STRING,
+                        equalsPos);
             }
             case COLON -> {
                 // Map entry. Only allowed inside a `{ ... }` block, never at
@@ -529,9 +531,10 @@ public final class Parser {
                             "submessage block requires an identifier or string key, got " + keyKind
                                     + " (\"" + key + "\")");
                 }
+                Position bracePos = current.pos();
                 advance();
                 List<Ast.Entry> body = parseBody();
-                yield new Ast.Block(pp, key, body, leading, "", keyKind == TokenKind.STRING);
+                yield new Ast.Block(pp, key, body, leading, "", keyKind == TokenKind.STRING, bracePos);
             }
             default -> throw new PxfException(current.pos(),
                     "expected '=', ':', or '{' after \"" + key + "\", got " + current.kind());
@@ -647,8 +650,9 @@ public final class Parser {
             throw new PxfException(current.pos(), "expected a string type URL after @type =, got " + current.errMsg());
         }
         String url = current.value();
+        Position urlPos = current.pos();
         advance();
-        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd));
+        return new Ast.TypeEntry(pp, url, leading, takeTrailingComment(prevEnd), urlPos);
     }
 
     private List<Ast.Entry> parseBodyInner() {

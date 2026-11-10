@@ -380,12 +380,16 @@ class LiteCorpusTest {
             HexFormat.of().formatHex(decode("any", fixture("any", name + ".pxf"), "any.v1.Holder")), name));
     }
 
-    /** Without a registry an Any's type entry cannot be resolved, as the full tier says without a TypeResolver. */
+    /**
+     * Without a registry an Any's type entry cannot be resolved, as the full
+     * tier says without a TypeResolver, and at the URL, where both it and
+     * protowire-go report it (#222).
+     */
     @Test
     void aTypeEntryWithoutARegistryIsRejected() {
         PxfException e = assertThrows(PxfException.class,
             () -> LiteWireWriter.encode(Parser.parse(fixture("any", "block.pxf")), meta("any.v1.Holder")));
-        assertEquals("5:3: cannot resolve Any type \"any.v1.Leaf\": no PxfRegistry (LiteWireWriter.encode(doc, meta, registry))",
+        assertEquals("5:11: cannot resolve Any type \"any.v1.Leaf\": no PxfRegistry (LiteWireWriter.encode(doc, meta, registry))",
             e.getMessage());
     }
 

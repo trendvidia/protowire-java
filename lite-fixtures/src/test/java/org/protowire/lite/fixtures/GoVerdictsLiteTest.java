@@ -37,10 +37,7 @@ class GoVerdictsLiteTest {
      * issue for each. A listed document that does fails the test, so the
      * list only shrinks.
      */
-    private static final Map<String, String> KNOWN_GAPS = Map.ofEntries(
-        // Go's text at the @type entry, not at the URL: the AST keeps no
-        // position for the URL
-        Map.entry("any/err-unresolved.pxf", "#222"));
+    private static final Map<String, String> KNOWN_GAPS = Map.of();
 
     private static final SimplePxfRegistry ANY_TYPES = new SimplePxfRegistry();
     static {

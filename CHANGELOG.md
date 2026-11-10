@@ -20,6 +20,8 @@ format changes.
 
 ### Added
 
+- **`Ast.Assignment.equalsPos`, `Ast.Block.bracePos` and `Ast.TypeEntry.urlPos`: where an entry's `=`, its `{` and its type URL stand** (#222). The parser fills them in. Each record keeps its existing constructors, which set the new position to the entry's own `pos`. Code that takes these records apart with a record pattern must add the new component.
+
 - **Stream encoders and decoders for pb, SBE and envelopes, as protowire-go's** (#207). Java can now read and write the message streams Go writes, byte for byte.
   - **pb:** `org.protowire.pb.Encoder` and `Decoder` frame each message with a varint length.
   - **SBE:** `Codec.newEncoder` and `Codec.newDecoder` frame each message with a Simple Open Framing Header (SOFH), encoding type 0xEB50.
@@ -91,6 +93,10 @@ format changes.
 
 ### Fixed
 
+- **The lite tier reports three errors where protowire-go does** (#222). The texts already matched; the line:column was one token off.
+  - `counts = { a = 1 }` is refused at the `=` (`1:14: unexpected '=' in map, use ':' for map entries`). It used to be refused at the entry, `1:12`.
+  - `counts = { a { } }` is refused at the `{` (`1:14: expected ':' after map key, got {`), not at the entry.
+  - An Any whose `@type` URL cannot be resolved is refused at the URL, as the full tier does: `testdata/any/err-unresolved.pxf` gives `5:11: cannot resolve Any type "any.v1.Nope": not found`, not `5:3`.
 - **`null` on an editions scalar with EXPLICIT presence leaves it unset, as the draft says** (#190; draft `-01` § Booleans, Null, and Identifier Values). The full tier refused it: protobuf-java 3.25 resolves no editions features, so the field had no presence. On 4.36.2 it does, so the corpus's `nulls/editions-explicit.pxf` is accepted, as Go and every other port accept it, and `err-editions-implicit.pxf` is still refused.
 
 - **The SBE codec refuses a value its `(sbe.encoding)` primitive or its field cannot hold, and a schema the 16-bit header cannot describe** (#197, #198; draft `-01` § SBE Annotations; protowire-go#250, #252). Both tiers share the fix: lite's generated templates check themselves when built, through the shared check in `:sbe-runtime`.

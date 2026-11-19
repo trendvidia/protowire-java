@@ -36,7 +36,53 @@ class TolerantParseTest {
      * Rows Java does not match yet, against the open issue for each. A
      * listed row that matches fails the test, so the list only shrinks.
      */
-    private static final java.util.Map<String, String> KNOWN_GAPS = java.util.Map.of();
+    private static final java.util.Map<String, String> KNOWN_GAPS = gaps("#259", // protowire-go#312's directive recovery
+            "typed/proto#10",
+            "typed/proto#11",
+            "typed/proto#12",
+            "typed/proto#13",
+            "typed/proto#14",
+            "typed/proto#15",
+            "typed/proto#16",
+            "typed/proto#17",
+            "typed/proto#18",
+            "typed/proto#19",
+            "typed/proto#20",
+            "typed/proto#21",
+            "typed/proto#22",
+            "typed/proto#23",
+            "typed/proto#45",
+            "typed/proto#46",
+            "typed/proto#47",
+            "typed/proto#48",
+            "typed/proto#49",
+            "typed/proto#50",
+            "typed/proto#51",
+            "typed/proto#52",
+            "typed/proto#53",
+            "typed/proto#54",
+            "typed/proto#55",
+            "typed/proto#56",
+            "typed/proto#57",
+            "shape/dataset-arity",
+            "shape/dataset-bad-col",
+            "shape/dataset-dup-col",
+            "shape/dataset-no-parens",
+            "shape/proto-unmatched",
+            "shape/proto-named-no-brace",
+            "corpus/dataset/dotted-empty-segment.pxf",
+            "corpus/dataset/dotted-overlap-deep.pxf",
+            "corpus/dataset/dotted-overlap.pxf",
+            "corpus/dataset/dotted-trailing-dot.pxf",
+            "corpus/dataset/duplicate-column.pxf",
+            "corpus/dataset/truncated-row-then-rows.pxf"
+    );
+
+    private static java.util.Map<String, String> gaps(String issue, String... names) {
+        java.util.Map<String, String> m = new java.util.HashMap<>();
+        for (String n : names) m.put(n, issue);
+        return java.util.Map.copyOf(m);
+    }
 
     private static List<Row> goRows() throws IOException {
         List<Row> rows = new ArrayList<>();

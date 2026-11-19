@@ -18,6 +18,12 @@ format changes.
 
 ## [Unreleased]
 
+### Fixed
+
+- **`Format.formatDocument` writes a triple-quoted `@proto` with its `"""` on lines of their own**, as protowire-go does since [protowire-go#303]. It wrote the body straight after the opening `"""` and straight before the closing one. Reading strips a line break after the opening `"""` and drops a last line holding only whitespace, so some bodies did not read back. A body ending in `"`, such as a last line `import "x.proto"`, was written as `...proto""""`, which does not parse. A body's leading line break, trailing line break, or whitespace-only last line was lost. Now the output is `@proto """`, a line break, the body, a line break, and `"""`. Every body without a `"""` in it reads back byte for byte. Both tiers get the change, through `:pxf-runtime`.
+
+[protowire-go#303]: https://github.com/trendvidia/protowire-go/issues/303
+
 ## [2.0.1] — 2026-11-10
 
 The first 2.0 release on Maven Central. It holds everything listed under 2.0.0

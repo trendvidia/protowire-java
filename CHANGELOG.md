@@ -21,6 +21,9 @@ format changes.
 ### Changed
 
 - **A `@proto` source body must be triple-quoted, as protowire-go's** (#258, protowire-go#305). Both tiers read a simple-quoted `@proto "…"` as a source body, which the grammar does not admit (`proto_source_body = triple_string`). Its escapes could put `"""` in the body, and no formatter can write that back as a triple-quoted string. Now `Parser.parse`, `Pxf.unmarshal` and `DatasetReader`'s header refuse it with Go's text, `1:8: @proto source body must be a triple-quoted string ("""...""")`, and `Parser.parseTolerant` reports it once and parses on. The lite tier reads through `Parser.parse`, so it refuses it too. The triple-quoted body, on one line or across lines, and the `b"…"` descriptor body still read.
+### Fixed
+
+- **`Parser.parseTolerant` reports a malformed directive once, as protowire-go's** (#259, protowire-go#312). After a directive failed, recovery resumed at the next token that could start an entry, even one still on the directive's own line or inside the rows of a dataset whose header failed. Each stray token then gave an error of its own, and a following `@type` was read as body: `@proto 5` then `@type a.v1.M` gave four errors and no type. Now the rest of the failed directive's line is skipped, unless it starts an entry (a key followed by `=`, `:` or `{`), and so is each parenthesized row after a failed `@dataset` header. Both give one error and keep what follows. `TolerantParseTest` holds Java to Go's table at protowire-go main on all 1021 documents again.
 
 ## [2.0.1] — 2026-11-10
 

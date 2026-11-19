@@ -12,6 +12,9 @@
 //   pb, pb-render       wire to text, through LiteWireReader
 //   pb-text             as pb-render, and writes the text on stdout
 //   sbe                 the generated <Message>SbeCodec, under the row's limits
+//   pxf-fmt             the document formatter, Format.formatDocument, which
+//                       :pxf-runtime shares with the full tier; it writes the
+//                       formatted document on stdout and needs no --schema
 package org.protowire.check.android;
 
 import org.protowire.pxf.DecodeLimits;
@@ -66,7 +69,9 @@ public final class CheckDecodeAndroid {
         }
         // Map.of refuses a null key, and the NPE would exit 1, the reject code.
         PxfMeta meta = schema == null ? null : METAS.get(schema);
-        if (format == null || input == null || meta == null) {
+        // Formatting reads no schema, so pxf-fmt alone may leave --schema out.
+        boolean needsSchema = !"pxf-fmt".equals(format);
+        if (format == null || input == null || (needsSchema && meta == null)) {
             System.err.println("check-decode-android: need --format, --input and a known --schema, got " + schema);
             System.exit(2);
         }
@@ -106,6 +111,14 @@ public final class CheckDecodeAndroid {
                 System.out.flush();
             }
             case "sbe" -> sbeDecode(data, schema, limits);
+            // For the format gate (protowire/scripts/cross_fmt_check.sh,
+            // protowire#584): the parsed document, not a message, so comments,
+            // directives and dataset rows are kept. A document that does not
+            // parse is a rejection.
+            case "pxf-fmt" -> {
+                System.out.write(Format.formatDocument(Parser.parse(data)).getBytes(StandardCharsets.UTF_8));
+                System.out.flush();
+            }
             default -> throw new UnsupportedFormat("the lite tier has no " + format + " decoder");
         }
     }

@@ -9,7 +9,7 @@
 //
 // Contract:
 //
-//   check-decode --format <pxf|pxf-pb|pb|pb-render|pb-text|sbe|envelope> \
+//   check-decode --format <pxf|pxf-pb|pxf-fmt|pb|pb-render|pb-text|sbe|envelope> \
 //                --schema <fully.qualified.MessageType> \
 //                --proto  <path-to-adversarial.proto> \
 //                --input  <path> \
@@ -22,11 +22,15 @@
 //
 //   Exit 0 -> input was accepted
 //   Exit 1 -> input was rejected (clean error; "reject: <msg>" on stderr)
+//   Exit 2 -> the harness cannot judge the row (bad flags, or a
+//             StackOverflowError / OutOfMemoryError), which the gate reports
+//             as a crash
 //   Other  -> bug in the decoder (uncaught exception / OOM / ...)
 //
 //   pb-text and pxf-pb also write their output on stdout, for the text gate
 //   and the write gate (protowire/scripts/cross_text_check.sh and
-//   cross_write_check.sh).
+//   cross_write_check.sh). pxf-fmt writes the formatted document on stdout,
+//   for the format gate (cross_fmt_check.sh); it needs no --schema or --proto.
 //
 // Like the Rust and C++ ports, the Java port handles `--proto <path>.proto`
 // by reading the sibling `<stem>.binpb` (a FileDescriptorSet built with
@@ -42,6 +46,7 @@ import com.google.protobuf.Descriptors.FileDescriptor;
 import com.google.protobuf.DynamicMessage;
 import org.protowire.pb.Pb;
 import org.protowire.pb.ProtoField;
+import org.protowire.pxf.Ast;
 import org.protowire.pxf.DecodeLimits;
 import org.protowire.pxf.Pxf;
 import org.protowire.pxf.UnmarshalOptions;
@@ -140,8 +145,9 @@ public final class CheckDecode {
                 }
             }
         }
-        if (format == null || schema == null || input == null) {
-            System.err.println("usage: check-decode --format <pxf|pxf-pb|pb|pb-render|pb-text|sbe|envelope> "
+        // Formatting reads no schema, so pxf-fmt alone may leave --schema out.
+        if (format == null || (schema == null && !"pxf-fmt".equals(format)) || input == null) {
+            System.err.println("usage: check-decode --format <pxf|pxf-pb|pxf-fmt|pb|pb-render|pb-text|sbe|envelope> "
                     + "--schema <full.name> --proto <path> --input <path> [--limit NAME=VALUE]...");
             System.exit(2);
         }
@@ -176,6 +182,7 @@ public final class CheckDecode {
         switch (format) {
             case "pxf"      -> pxfDecode(data, schema, proto, limits);
             case "pxf-pb"   -> pxfPb(data, schema, proto, limits);
+            case "pxf-fmt"  -> pxfFmt(data);
             case "pb"       -> pbDecode(data, schema, limits);
             case "pb-render" -> pbRender(data, schema, proto);
             case "pb-text"  -> pbText(data, schema, proto);
@@ -199,6 +206,24 @@ public final class CheckDecode {
             // are also clean rejects under the contract.
             throw new RejectException(messageOf(e));
         }
+    }
+
+    /**
+     * The formatted document, on stdout, for the format gate
+     * (protowire/scripts/cross_fmt_check.sh, protowire#584). Formatting works
+     * on the parsed document, not a message, so it keeps comments, directives
+     * and dataset rows and needs no schema. A document that does not parse
+     * is a rejection.
+     */
+    private static void pxfFmt(byte[] data) throws Exception {
+        Ast.Document doc;
+        try {
+            doc = Pxf.parse(data);
+        } catch (RuntimeException e) {
+            throw new RejectException(messageOf(e));
+        }
+        System.out.write(Pxf.formatDocument(doc));
+        System.out.flush();
     }
 
     // The producer's side of the bounds (HARDENING.md § Arbitrary-precision

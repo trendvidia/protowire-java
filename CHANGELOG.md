@@ -18,6 +18,10 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **A `@proto` source body must be triple-quoted, as protowire-go's** (#258, protowire-go#305). Both tiers read a simple-quoted `@proto "…"` as a source body, which the grammar does not admit (`proto_source_body = triple_string`). Its escapes could put `"""` in the body, and no formatter can write that back as a triple-quoted string. Now `Parser.parse`, `Pxf.unmarshal` and `DatasetReader`'s header refuse it with Go's text, `1:8: @proto source body must be a triple-quoted string ("""...""")`, and `Parser.parseTolerant` reports it once and parses on. The lite tier reads through `Parser.parse`, so it refuses it too. The triple-quoted body, on one line or across lines, and the `b"…"` descriptor body still read.
+
 ## [2.0.1] — 2026-11-10
 
 The first 2.0 release on Maven Central. It holds everything listed under 2.0.0

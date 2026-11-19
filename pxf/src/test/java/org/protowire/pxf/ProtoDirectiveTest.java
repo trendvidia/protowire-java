@@ -4,11 +4,15 @@ package org.protowire.pxf;
 
 import org.junit.jupiter.api.Test;
 
+import com.google.protobuf.Empty;
+
+import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -154,6 +158,95 @@ class ProtoDirectiveTest {
         assertEquals("some.pkg.Foo", doc.typeUrl());
         assertEquals(1, doc.protos().size());
         assertEquals(Ast.ProtoShape.NAMED, doc.protos().get(0).shape());
+    }
+
+    // --- A source body must be triple-quoted (#258, protowire-go#305) ---
+
+    private static byte[] utf8(String s) { return s.getBytes(StandardCharsets.UTF_8); }
+
+    /**
+     * The grammar's proto_source_body is a triple_string. A simple-quoted
+     * body could carry {@code """} through its escapes, and no formatter can
+     * write that back. Parse, unmarshal and a dataset stream's header each
+     * refuse it, in protowire-go's words.
+     */
+    @Test
+    void rejectsSimpleQuotedSource() throws Exception {
+        String want = "1:8: @proto source body must be a triple-quoted string (\"\"\"...\"\"\")";
+        for (String in : new String[]{
+                "@proto \"syntax = \\\"proto3\\\";\"",
+                "@proto \"syntax = \\\"proto3\\\"; // a \\\"\\\"\\\" b\"", // protowire-go#305's body
+                "@proto \"\"",
+        }) {
+            var ex = assertThrows(PxfException.class, () -> Parser.parse(in), in);
+            assertEquals(want, ex.getMessage(), in);
+
+            // Unmarshal reads directives on its own path (FastDecoder).
+            ex = assertThrows(PxfException.class, () -> Pxf.unmarshal(utf8(in), Empty.getDescriptor()), in);
+            assertEquals(want, ex.getMessage(), in);
+            ex = assertThrows(PxfException.class,
+                    () -> Pxf.unmarshalFull(utf8(in), Empty.newBuilder()), in);
+            assertEquals(want, ex.getMessage(), in);
+
+            // So does a dataset stream's header.
+            ex = assertThrows(PxfException.class, () -> new DatasetReader(
+                    new ByteArrayInputStream(utf8(in + "\n@dataset T (a)\n(1)\n"))), in);
+            assertEquals(want, ex.getMessage(), in);
+        }
+
+        // After @type, the position moves but the refusal does not.
+        String typed = "@type adversarial.v1.StringHolder\n@proto \"syntax\"\n";
+        var ex = assertThrows(PxfException.class, () -> Parser.parse(typed));
+        assertEquals("2:8: @proto source body must be a triple-quoted string (\"\"\"...\"\"\")", ex.getMessage());
+        ex = assertThrows(PxfException.class, () -> Pxf.unmarshal(utf8(typed), Empty.getDescriptor()));
+        assertEquals("2:8: @proto source body must be a triple-quoted string (\"\"\"...\"\"\")", ex.getMessage());
+    }
+
+    /** The triple-quoted form still reads, on the same line or the next, on every path. */
+    @Test
+    void acceptsTripleQuotedSource() throws Exception {
+        for (String in : new String[]{
+                "@proto \"\"\"syntax = \"proto3\";\"\"\"\n",
+                "@proto\n\"\"\"syntax = \"proto3\";\"\"\"\n",
+        }) {
+            var doc = Parser.parse(in);
+            assertEquals(Ast.ProtoShape.SOURCE, doc.protos().get(0).shape(), in);
+            assertEquals("syntax = \"proto3\";", new String(doc.protos().get(0).body(), StandardCharsets.UTF_8), in);
+            assertDoesNotThrow(() -> Pxf.unmarshal(utf8(in), Empty.getDescriptor()), in);
+            var full = Pxf.unmarshalFull(utf8(in), Empty.newBuilder());
+            assertEquals(1, full.protos().size(), in);
+            var tr = new DatasetReader(new ByteArrayInputStream(utf8(in + "@dataset T (a)\n")));
+            assertEquals("T", tr.type(), in);
+        }
+    }
+
+    /**
+     * The descriptor form is a bytes literal, not a string, and stays legal
+     * (proto_descr_body = bytes): even an empty one, on every path.
+     */
+    @Test
+    void acceptsDescriptorBytesForm() throws Exception {
+        String in = "@proto b\"\"\n";
+        var doc = Parser.parse(in);
+        assertEquals(Ast.ProtoShape.DESCRIPTOR, doc.protos().get(0).shape());
+        assertEquals(0, doc.protos().get(0).body().length);
+        assertDoesNotThrow(() -> Pxf.unmarshal(utf8(in), Empty.getDescriptor()));
+        assertEquals(Ast.ProtoShape.DESCRIPTOR,
+                Pxf.unmarshalFull(utf8(in), Empty.newBuilder()).protos().get(0).shape());
+        assertEquals("T", new DatasetReader(new ByteArrayInputStream(utf8(in + "@dataset T (a)\n"))).type());
+        assertEquals(0, Parser.parseTolerant(utf8(in)).errors().size());
+    }
+
+    /** A tolerant parse reports the simple-quoted body once and parses on. */
+    @Test
+    void tolerantReportsSimpleQuotedSourceAndParsesOn() {
+        var t = Parser.parseTolerant(utf8("@proto \"syntax\"\n@type a.v1.M\n\nx = 1\n"));
+        assertEquals(1, t.errors().size(), t.errors().toString());
+        assertEquals("1:8: @proto source body must be a triple-quoted string (\"\"\"...\"\"\")",
+                t.errors().get(0).getMessage());
+        assertTrue(t.document().protos().isEmpty());
+        assertEquals("a.v1.M", t.document().typeUrl());
+        assertEquals(1, t.document().entries().size());
     }
 
     // --- Reserved directive names (draft §3.4.6) ---

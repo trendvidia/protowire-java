@@ -24,6 +24,9 @@ format changes.
 ### Fixed
 
 - **`Parser.parseTolerant` reports a malformed directive once, as protowire-go's** (#259, protowire-go#312). After a directive failed, recovery resumed at the next token that could start an entry, even one still on the directive's own line or inside the rows of a dataset whose header failed. Each stray token then gave an error of its own, and a following `@type` was read as body: `@proto 5` then `@type a.v1.M` gave four errors and no type. Now the rest of the failed directive's line is skipped, unless it starts an entry (a key followed by `=`, `:` or `{`), and so is each parenthesized row after a failed `@dataset` header. Both give one error and keep what follows. `TolerantParseTest` holds Java to Go's table at protowire-go main on all 1021 documents again.
+- **`Format.formatDocument` writes a triple-quoted `@proto` with its `"""` on lines of their own**, as protowire-go does since [protowire-go#303]. It wrote the body straight after the opening `"""` and straight before the closing one. Reading strips a line break after the opening `"""` and drops a last line holding only whitespace, so some bodies did not read back. A body ending in `"`, such as a last line `import "x.proto"`, was written as `...proto""""`, which does not parse. A body's leading line break, trailing line break, or whitespace-only last line was lost. Now the output is `@proto """`, a line break, the body, a line break, and `"""`. Every body without a `"""` in it reads back byte for byte. Both tiers get the change, through `:pxf-runtime`.
+
+[protowire-go#303]: https://github.com/trendvidia/protowire-go/issues/303
 
 ## [2.0.1] — 2026-11-10
 

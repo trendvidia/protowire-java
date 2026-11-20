@@ -23,7 +23,9 @@ public final class Format {
      * (trendvidia/protowire#558, #188). {@code @type} is written first: it
      * binds no anonymous {@code @proto}, so moving it changes nothing. The
      * other directives follow in source order, each after its comments: a
-     * named directive's body and a {@code @proto} body as written, and a
+     * named directive's body and a {@code @proto} body as written (a
+     * triple-quoted one with its {@code """} on lines of their own, so the
+     * body reads back byte for byte, protowire-go#303), and a
      * dataset as its header and then one row per line, an absent cell left
      * empty. A document whose only directive is {@code @type} formats as it
      * always has. The output is byte for byte protowire-go's
@@ -162,7 +164,13 @@ public final class Format {
             case ANONYMOUS -> sb.append(" {").append(new String(d.body(), StandardCharsets.UTF_8)).append('}');
             case NAMED -> sb.append(' ').append(d.typeName())
                     .append(" {").append(new String(d.body(), StandardCharsets.UTF_8)).append('}');
-            case SOURCE -> sb.append(" \"\"\"").append(new String(d.body(), StandardCharsets.UTF_8)).append("\"\"\"");
+            // The delimiters go on lines of their own, as protowire-go writes
+            // them (protowire-go#303). Reading strips the line break after the
+            // opening """ and drops the last line when it holds only
+            // whitespace, so the body reads back byte for byte; written on the
+            // delimiters' lines instead, a body ending in '"' would close the
+            // string early and a whitespace-only last line would be dropped.
+            case SOURCE -> sb.append(" \"\"\"\n").append(new String(d.body(), StandardCharsets.UTF_8)).append("\n\"\"\"");
             case DESCRIPTOR -> sb.append(" b\"").append(Base64.getEncoder().encodeToString(d.body())).append('"');
         }
         sb.append('\n');

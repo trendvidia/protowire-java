@@ -101,7 +101,9 @@ class FormatDirectivesTest {
         String[][] cases = {
             {"@proto { string id = 1; }\n@dataset (id)\n(\"a\")\n", null},
             {"@proto a.v1.R { string id = 1; }\n@dataset a.v1.R (id)\n(\"a\")\n", null},
-            {"@proto \"\"\"syntax = \"proto3\"; message R { string id = 1; }\"\"\"\n@dataset R (id)\n(\"a\")\n", null},
+            // The triple quotes go on lines of their own (protowire-go#303).
+            {"@proto \"\"\"syntax = \"proto3\"; message R { string id = 1; }\"\"\"\n@dataset R (id)\n(\"a\")\n",
+                "@proto \"\"\"\nsyntax = \"proto3\"; message R { string id = 1; }\n\"\"\"\n@dataset R (id)\n(\"a\")\n"},
             // @type moves to the front: it binds no @proto, so this changes nothing.
             {"@proto b\"CgA=\"\n@type a.v1.M\n\nx = 1\n", "@type a.v1.M\n@proto b\"CgA=\"\n\nx = 1\n"},
         };
@@ -133,6 +135,38 @@ class FormatDirectivesTest {
     void onlyTypeUnchanged() {
         Ast.Document doc = Parser.parse("# c\n@type a.v1.M\n\nx = 1\n");
         assertEquals("@type a.v1.M\n\n# c\nx = 1\n", Format.formatDocument(doc));
+    }
+
+    /**
+     * A triple-quoted @proto is written with its delimiters on lines of their
+     * own, and its body reads back byte for byte (protowire-go#303). A port of
+     * protowire-go's {@code TestFormatDocument_ProtoSourceLayout}.
+     */
+    @Test
+    void protoSourceLayout() {
+        // The issue's document: the line breaks around the body stay.
+        String src = "@proto \"\"\"\n  syntax = \"proto3\";\n  package fmt.v1;\n  message Doc { string name = 1; }\n\"\"\"\n@type fmt.v1.Doc\n";
+        assertEquals("@type fmt.v1.Doc\n@proto \"\"\"\n  syntax = \"proto3\";\n  package fmt.v1;\n  message Doc { string name = 1; }\n\"\"\"\n",
+                formatRoundTrip(src));
+
+        String[][] cases = {
+            // Written on the closing delimiter's line, the last quote would
+            // open the closing """ early, and the output would not parse.
+            {"body ends in a quote", "@proto \"\"\"\n  syntax = \"proto3\";\n  import \"google/protobuf/empty.proto\"\n  \"\"\"\n",
+                "syntax = \"proto3\";\nimport \"google/protobuf/empty.proto\""},
+            // Written on the closing delimiter's line, a last line of only
+            // whitespace would be taken for the delimiter's indent and dropped.
+            {"whitespace-only last line", "@proto \"\"\"syntax = \"proto3\";\n  \n\"\"\"\n", "syntax = \"proto3\";\n  "},
+            {"leading line break", "@proto \"\"\"\n\nsyntax = \"proto3\";\"\"\"\n", "\nsyntax = \"proto3\";"},
+            {"trailing line break", "@proto \"\"\"syntax = \"proto3\";\n\n\"\"\"\n", "syntax = \"proto3\";\n"},
+            {"empty body", "@proto \"\"\"\"\"\"\n", ""},
+        };
+        for (String[] c : cases) {
+            Ast.Document doc = Parser.parse(c[1]);
+            assertEquals(1, doc.protos().size(), c[0]);
+            assertEquals(c[2], new String(doc.protos().get(0).body(), StandardCharsets.UTF_8), c[0] + ": body as read");
+            assertEquals("@proto \"\"\"\n" + c[2] + "\n\"\"\"\n", formatRoundTrip(c[1]), c[0]);
+        }
     }
 
     /** #188, first input: a @proto before an @entry used to be dropped. */

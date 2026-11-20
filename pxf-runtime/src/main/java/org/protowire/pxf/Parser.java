@@ -226,13 +226,32 @@ public final class Parser {
         };
     }
 
-    /** Advances to the next directive, token that can start a body entry, or the end: the recovery after a malformed directive. */
-    private void syncTopLevel() {
+    /**
+     * Advances to the next directive, token that can start a body entry, or
+     * the end: the recovery after a malformed directive that began on
+     * {@code line}. What is left of that line belongs to the directive,
+     * unless it starts an entry (a key followed by '=', ':' or '{'), and a
+     * parenthesized group is a row of a {@code @dataset} whose header failed,
+     * since an entry never opens with '('. Neither is read as an entry, as
+     * protowire-go#312 recovers (#259): {@code @proto 5} or
+     * {@code @dataset T 5} followed by rows gave one error per stray token
+     * and lost the directives after them.
+     */
+    private void syncTopLevel(int line) {
+        while (current.pos().line() == line && !currentStartsEntry()) {
+            switch (current.kind()) {
+                case EOF, AT_TYPE, AT_DIRECTIVE, AT_DATASET, AT_PROTO -> {
+                    return;
+                }
+                default -> advance();
+            }
+        }
         while (true) {
             switch (current.kind()) {
                 case EOF, AT_TYPE, AT_DIRECTIVE, AT_DATASET, AT_PROTO, IDENT, STRING, INT -> {
                     return;
                 }
+                case LPAREN -> skipBalanced(TokenKind.LPAREN, TokenKind.RPAREN);
                 default -> advance();
             }
         }
@@ -308,13 +327,14 @@ public final class Parser {
         while (true) {
             switch (current.kind()) {
                 case AT_TYPE -> {
+                    int line = current.pos().line();
                     advance();
                     // A dangling @type with the body right after it: an
                     // identifier followed by '=', ':' or '{' is the first
                     // entry's key, not the type name.
                     if (current.kind() != TokenKind.IDENT || (tolerant && currentStartsEntry())) {
                         soft(new PxfException(current.pos(), "expected type name after @type, got " + current.kind()));
-                        syncTopLevel();
+                        syncTopLevel(line);
                         continue;
                     }
                     typeUrl = current.value();
@@ -324,6 +344,7 @@ public final class Parser {
                 case AT_DIRECTIVE, AT_DATASET, AT_PROTO -> {
                     // A malformed directive: a tolerant parse records it and
                     // skips to the next directive or body entry.
+                    int line = current.pos().line();
                     try {
                         switch (current.kind()) {
                             case AT_DIRECTIVE -> directives.add(parseDirective());
@@ -333,7 +354,7 @@ public final class Parser {
                         bodyOffset = directiveEnd;
                     } catch (PxfException e) {
                         soft(e);
-                        syncTopLevel();
+                        syncTopLevel(line);
                     }
                 }
                 default -> {
@@ -567,6 +588,15 @@ public final class Parser {
      * between {@code {} and the matching {@code }} (both exclusive); the
      * contents are protobuf source and are NOT decoded as PXF entries.
      */
+    /**
+     * Refuses a {@code @proto} source body written as a simple-quoted
+     * string. The grammar admits only a triple-quoted one
+     * ({@code proto_source_body = triple_string}), and a simple-quoted body
+     * could carry {@code """} through its escapes, which no formatter can
+     * write back. protowire-go's words (#258, protowire-go#305).
+     */
+    static final String PROTO_SOURCE_NOT_TRIPLE = "@proto source body must be a triple-quoted string (\"\"\"...\"\"\")";
+
     private Ast.ProtoDirective parseProtoDirective() {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
@@ -590,6 +620,13 @@ public final class Parser {
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.NAMED, typeName, body, leading);
             }
             case STRING -> {
+                if (!lex.tripleAt(current.pos())) {
+                    PxfException e = new PxfException(current.pos(), PROTO_SOURCE_NOT_TRIPLE);
+                    // Consumed, so a tolerant parse does not resume at the
+                    // string and read it as an entry's key.
+                    if (tolerant) advance();
+                    throw e;
+                }
                 byte[] body = current.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 directiveEnd = tokenEnd().offset();
                 advance();

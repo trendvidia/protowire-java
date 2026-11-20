@@ -32,12 +32,6 @@ class TolerantParseTest {
 
     private record Row(String name, byte[] doc, String errors, String tree) {}
 
-    /**
-     * Rows Java does not match yet, against the open issue for each. A
-     * listed row that matches fails the test, so the list only shrinks.
-     */
-    private static final java.util.Map<String, String> KNOWN_GAPS = java.util.Map.of();
-
     private static List<Row> goRows() throws IOException {
         List<Row> rows = new ArrayList<>();
         try (InputStream in = TolerantParseTest.class.getResourceAsStream("/tolerant/go.tsv")) {
@@ -64,18 +58,12 @@ class TolerantParseTest {
             }
             String errors = errors(got.errors());
             String tree = Dump.document(got.document());
-            boolean same = errors.equals(r.errors()) && tree.equals(r.tree());
-            if (KNOWN_GAPS.containsKey(r.name())) {
-                if (same) differ.add(r.name() + "\n  matches Go now: drop it from KNOWN_GAPS (" + KNOWN_GAPS.get(r.name()) + ")");
-                continue;
-            }
             if (!errors.equals(r.errors())) {
                 differ.add(r.name() + "\n  go errors:   " + r.errors() + "\n  java errors: " + errors);
             } else if (!tree.equals(r.tree())) {
                 differ.add(r.name() + "\n  go tree:   " + r.tree() + "\n  java tree: " + tree);
             }
         }
-        assertTrue(rows.stream().map(Row::name).collect(Collectors.toSet()).containsAll(KNOWN_GAPS.keySet()), "KNOWN_GAPS names a row go.tsv lacks");
         assertTrue(differ.isEmpty(), differ.size() + " of " + rows.size() + " differ from Go:\n"
                 + differ.stream().limit(15).collect(Collectors.joining("\n")));
     }
@@ -115,6 +103,41 @@ class TolerantParseTest {
         for (String src : List.of("port =", "type = \"", "server {\n  port = 8080\n", "xs = [1, 2", "a = 1\n}\nb = 2\n", "a: 1\n")) {
             assertThrows(PxfException.class, () -> Parser.parse(src), src);
         }
+    }
+
+    /**
+     * A malformed directive gives one error, and recovery does not read the
+     * rest of its line, or the rows of a dataset whose header failed, as
+     * entries: protowire-go#312's table (#259). Each document here used to
+     * give one error per stray token and lose what followed.
+     */
+    @Test
+    void aMalformedDirectiveIsOneError() {
+        record Case(String src, String err, String typeUrl, int entries) {}
+        for (Case c : List.of(
+                new Case("@proto 5\n@type a.v1.M\n\nx = 1\n", "1:8: expected '{', dotted identifier", "a.v1.M", 1),
+                new Case("@proto a.b c\n@type a.v1.M\n\nx = 1\n", "1:12: expected '{' after @proto a.b", "a.v1.M", 1),
+                new Case("@type 5\n\nx = 1\n", "1:7: expected type name after @type", "", 1),
+                new Case("@dataset T 5\n(1)\n(2, \"a\")\n", "1:12: expected '(' to start @dataset column list", "", 0))) {
+            Parser.TolerantResult t = Parser.parseTolerant(c.src().getBytes(StandardCharsets.UTF_8));
+            assertEquals(1, t.errors().size(), c.src() + ": " + t.errors());
+            assertTrue(t.errors().get(0).getMessage().startsWith(c.err()), t.errors().get(0).getMessage());
+            assertEquals(c.typeUrl(), t.document().typeUrl(), c.src());
+            assertEquals(c.entries(), t.document().entries().size(), c.src());
+        }
+
+        // A key on the directive's line that starts an entry still starts one:
+        // the dangling-@type recovery reads `x = 1` as the first entry.
+        Parser.TolerantResult t = Parser.parseTolerant("@type x = 1\ny = 2\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals(1, t.errors().size(), t.errors().toString());
+        assertEquals(2, t.document().entries().size());
+
+        // A valid dataset after a failed one still parses.
+        t = Parser.parseTolerant("@dataset T 5\n(1)\n@dataset U (a)\n(2)\n".getBytes(StandardCharsets.UTF_8));
+        assertEquals(1, t.errors().size(), t.errors().toString());
+        assertEquals(1, t.document().datasets().size());
+        assertEquals("U", t.document().datasets().get(0).type());
+        assertEquals(1, t.document().datasets().get(0).rows().size());
     }
 
     @Test

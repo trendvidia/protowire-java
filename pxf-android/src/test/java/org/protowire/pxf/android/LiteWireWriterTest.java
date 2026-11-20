@@ -65,6 +65,22 @@ final class LiteWireWriterTest {
         return HexFormat.of().formatHex(b);
     }
 
+    /**
+     * The lite tier reads a document through {@link Parser#parse}, as
+     * check-decode-android does, so it refuses a simple-quoted {@code @proto}
+     * source body and keeps the triple-quoted and bytes forms (#258).
+     */
+    @Test
+    void protoSourceMustBeTripleQuoted() {
+        PxfMeta m = meta(Map.of("value", 1), Map.of(1, 9 /* STRING */), Set.of(), Set.of());
+        var ex = assertThrows(PxfException.class, () -> LiteWireWriter.encode(
+                Parser.parse("@proto \"syntax = \\\"proto3\\\";\"\nvalue = \"x\""), m));
+        assertEquals("1:8: @proto source body must be a triple-quoted string (\"\"\"...\"\"\")", ex.getMessage());
+        for (String proto : new String[]{"\"\"\"syntax = \"proto3\";\"\"\"", "\n\"\"\"\nsyntax = \"proto3\";\n\"\"\"", "b\"\""}) {
+            assertEquals("0a0178", hex(LiteWireWriter.encode(Parser.parse("@proto " + proto + "\nvalue = \"x\""), m)), proto);
+        }
+    }
+
     @Test
     void scalarString() {
         // message Sample { string name = 1; }  →  name = "Alice"

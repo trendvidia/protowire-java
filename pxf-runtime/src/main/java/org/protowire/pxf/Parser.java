@@ -567,6 +567,15 @@ public final class Parser {
      * between {@code {} and the matching {@code }} (both exclusive); the
      * contents are protobuf source and are NOT decoded as PXF entries.
      */
+    /**
+     * Refuses a {@code @proto} source body written as a simple-quoted
+     * string. The grammar admits only a triple-quoted one
+     * ({@code proto_source_body = triple_string}), and a simple-quoted body
+     * could carry {@code """} through its escapes, which no formatter can
+     * write back. protowire-go's words (#258, protowire-go#305).
+     */
+    static final String PROTO_SOURCE_NOT_TRIPLE = "@proto source body must be a triple-quoted string (\"\"\"...\"\"\")";
+
     private Ast.ProtoDirective parseProtoDirective() {
         List<Ast.Comment> leading = flushComments();
         Position pp = current.pos();
@@ -590,6 +599,13 @@ public final class Parser {
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.NAMED, typeName, body, leading);
             }
             case STRING -> {
+                if (!lex.tripleAt(current.pos())) {
+                    PxfException e = new PxfException(current.pos(), PROTO_SOURCE_NOT_TRIPLE);
+                    // Consumed, so a tolerant parse does not resume at the
+                    // string and read it as an entry's key.
+                    if (tolerant) advance();
+                    throw e;
+                }
                 byte[] body = current.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 directiveEnd = tokenEnd().offset();
                 advance();

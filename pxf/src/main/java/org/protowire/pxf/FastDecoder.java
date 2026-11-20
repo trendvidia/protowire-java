@@ -288,6 +288,9 @@ final class FastDecoder {
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.NAMED, typeName, body, java.util.List.of());
             }
             case STRING -> {
+                if (!lex.tripleAt(current.pos())) {
+                    throw new PxfException(current.pos(), Parser.PROTO_SOURCE_NOT_TRIPLE);
+                }
                 byte[] body = current.value().getBytes(java.nio.charset.StandardCharsets.UTF_8);
                 advance();
                 return new Ast.ProtoDirective(pp, Ast.ProtoShape.SOURCE, "", body, java.util.List.of());

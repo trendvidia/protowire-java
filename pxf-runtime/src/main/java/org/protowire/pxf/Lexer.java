@@ -63,6 +63,16 @@ final class Lexer {
 
     private Position currentPos() { return new Position(line, col, baseOffset + pos); }
 
+    /**
+     * Whether the token at {@code pp}, a {@link TokenKind#STRING}, was
+     * written triple-quoted. Its value cannot tell: both string forms lex
+     * to STRING. As protowire-go's {@code tripleAt} (#258).
+     */
+    boolean tripleAt(Position pp) {
+        int i = pp.offset() - baseOffset;
+        return i >= 0 && i + 3 <= input.length && input[i] == '"' && input[i + 1] == '"' && input[i + 2] == '"';
+    }
+
     /** Where the lexer stands: just past the token it returned last. */
     Position position() { return currentPos(); }
 

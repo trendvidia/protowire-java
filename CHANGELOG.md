@@ -18,6 +18,9 @@ format changes.
 
 ## [Unreleased]
 
+### Changed
+
+- **A `@proto` source body must be triple-quoted, as protowire-go's** (#258, protowire-go#305). Both tiers read a simple-quoted `@proto "…"` as a source body, which the grammar does not admit (`proto_source_body = triple_string`). Its escapes could put `"""` in the body, and no formatter can write that back as a triple-quoted string. Now `Parser.parse`, `Pxf.unmarshal` and `DatasetReader`'s header refuse it with Go's text, `1:8: @proto source body must be a triple-quoted string ("""...""")`, and `Parser.parseTolerant` reports it once and parses on. The lite tier reads through `Parser.parse`, so it refuses it too. The triple-quoted body, on one line or across lines, and the `b"…"` descriptor body still read.
 ### Fixed
 
 - **`Format.formatDocument` writes a triple-quoted `@proto` with its `"""` on lines of their own**, as protowire-go does since [protowire-go#303]. It wrote the body straight after the opening `"""` and straight before the closing one. Reading strips a line break after the opening `"""` and drops a last line holding only whitespace, so some bodies did not read back. A body ending in `"`, such as a last line `import "x.proto"`, was written as `...proto""""`, which does not parse. A body's leading line break, trailing line break, or whitespace-only last line was lost. Now the output is `@proto """`, a line break, the body, a line break, and `"""`. Every body without a `"""` in it reads back byte for byte. Both tiers get the change, through `:pxf-runtime`.

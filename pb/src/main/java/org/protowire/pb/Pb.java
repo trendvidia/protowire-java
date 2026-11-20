@@ -4,6 +4,7 @@ package org.protowire.pb;
 
 import com.google.protobuf.CodedInputStream;
 import com.google.protobuf.CodedOutputStream;
+import com.google.protobuf.InvalidProtocolBufferException;
 import com.google.protobuf.WireFormat;
 import org.protowire.pxf.BigFloats;
 
@@ -40,6 +41,10 @@ import java.util.concurrent.ConcurrentHashMap;
  *   <li>A map entry always carries its {@code key} and its {@code value}, zero-valued or not — the
  *       layout protoc, protobuf-go and C++ protobuf write (protowire#295; #78). An entry lacking
  *       either still decodes, to the zero value.</li>
+ *   <li>A field is read only from a tag of the wire type its type is written with, as protobuf
+ *       reads it (protowire#614; #257). A known field whose tag carries another wire type is
+ *       skipped as an unknown field and left as it was. Wire types 6 and 7 are refused on any
+ *       field, and so is a skipped value cut short.</li>
  * </ul>
  *
  * <p>Supported types: {@code boolean}, all integer primitives + boxed, {@code float}, {@code double},
@@ -171,8 +176,19 @@ public final class Pb {
 
     // -- struct info cache ---------------------------------------------------
 
+    /**
+     * One {@link ProtoField}. {@code wireType} is the wire type the field's
+     * value is written with, and {@code packed} says a list also reads the
+     * packed (length-delimited) form: the wire types it is read from.
+     */
     private record FieldInfo(Field field, int number, FieldKind kind, Class<?> elementClass, Class<?> mapKeyClass,
-                             boolean zigzag) {}
+                             boolean zigzag, int wireType, boolean packed) {
+
+        /** Whether a tag of this wire type carries the field's value; any other is skipped as unknown. */
+        boolean accepts(int wire) {
+            return wire == wireType || (packed && wire == WireFormat.WIRETYPE_LENGTH_DELIMITED);
+        }
+    }
 
     private record StructInfo(List<FieldInfo> ordered, Map<Integer, FieldInfo> byNumber) {}
 
@@ -192,7 +208,9 @@ public final class Pb {
             FieldKind kind = FieldKind.classify(f);
             Class<?> elem = elementClass(f, kind);
             Class<?> mapKey = kind == FieldKind.MAP ? mapKeyClass(f) : null;
-            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem, mapKey, pf.zigzag());
+            int wire = kind == FieldKind.MAP ? WireFormat.WIRETYPE_LENGTH_DELIMITED : wireTypeOf(elem);
+            boolean packed = kind == FieldKind.LIST && isPackable(elem);
+            FieldInfo fi = new FieldInfo(f, pf.value(), kind, elem, mapKey, pf.zigzag(), wire, packed);
             ordered.add(fi);
             byNumber.put(pf.value(), fi);
         }
@@ -424,8 +442,10 @@ public final class Pb {
             int num = WireFormat.getTagFieldNumber(tag);
             int wireType = WireFormat.getTagWireType(tag);
             FieldInfo fi = info.byNumber.get(num);
-            if (fi == null) {
-                in.skipField(tag);
+            if (fi == null || !fi.accepts(wireType)) {
+                // An unknown field, or a known one whose wire type does not
+                // match its type, which protobuf treats as unknown (#257).
+                skipField(in, tag, "");
                 continue;
             }
             try {
@@ -493,12 +513,13 @@ public final class Pb {
                 if (tag == 0) break;
                 int n = WireFormat.getTagFieldNumber(tag);
                 int wt = WireFormat.getTagWireType(tag);
-                if (n == 1) {
+                if (n == 1 && wt == wireTypeOf(fi.mapKeyClass)) {
                     key = readScalar(entryIn, fi.mapKeyClass, wt, depth + 1, fi.zigzag, opts);
-                } else if (n == 2) {
+                } else if (n == 2 && wt == wireTypeOf(fi.elementClass)) {
                     val = readScalar(entryIn, fi.elementClass, wt, depth + 1, fi.zigzag, opts);
                 } else {
-                    entryIn.skipField(tag);
+                    // Unknown, or a key or value whose wire type does not match.
+                    skipField(entryIn, tag, " in map entry");
                 }
             }
             if (!map.containsKey(key)) checkRepeated(map.size(), opts, "map");
@@ -507,6 +528,84 @@ public final class Pb {
         }
         Object value = readScalar(in, fi.field.getType(), wireType, depth, fi.zigzag, opts);
         fi.field.set(dest, value);
+    }
+
+    /**
+     * The wire type a value of this type is written with, and so the one it
+     * is read from. It mirrors {@link #readScalar}'s dispatch: a type that
+     * method does not name is read as a nested message.
+     */
+    private static int wireTypeOf(Class<?> type) {
+        if (type == boolean.class || type == Boolean.class || isSignedInt(type)) return WireFormat.WIRETYPE_VARINT;
+        if (type == float.class || type == Float.class) return WireFormat.WIRETYPE_FIXED32;
+        if (type == double.class || type == Double.class) return WireFormat.WIRETYPE_FIXED64;
+        return WireFormat.WIRETYPE_LENGTH_DELIMITED;
+    }
+
+    /**
+     * Consumes the value of a field read as unknown, as protobuf-go's
+     * {@code protowire.ConsumeFieldValue} does, and refuses what it refuses:
+     * wire types 6 and 7, an end-group that ends nothing, and a value cut
+     * short. The error is protowire-go's, {@code corrupt field <n><where>:
+     * <cause>}, where {@code where} names the message the field is in
+     * ({@code " in BigInt"}), if any. A group is skipped by protobuf-java,
+     * whose nesting bound of 100 is HARDENING.md's {@code MaxNestingDepth},
+     * and its error is the cause.
+     */
+    static void skipField(CodedInputStream in, int tag, String where) throws IOException {
+        try {
+            switch (WireFormat.getTagWireType(tag)) {
+                case WireFormat.WIRETYPE_VARINT -> skipVarint(in);
+                case WireFormat.WIRETYPE_FIXED64 -> skipBytes(in, 8);
+                case WireFormat.WIRETYPE_LENGTH_DELIMITED -> {
+                    long len = skipVarint(in);
+                    // A length past an int cannot fit what is left of a byte[].
+                    if (len < 0 || len > Integer.MAX_VALUE) throw new SkipError(UNEXPECTED_EOF);
+                    skipBytes(in, (int) len);
+                }
+                case WireFormat.WIRETYPE_START_GROUP -> {
+                    try {
+                        in.skipField(tag);
+                    } catch (InvalidProtocolBufferException e) {
+                        throw new SkipError(e.getMessage());
+                    }
+                }
+                case WireFormat.WIRETYPE_FIXED32 -> skipBytes(in, 4);
+                case WireFormat.WIRETYPE_END_GROUP -> throw new SkipError("proto: mismatching end group marker");
+                default -> throw new SkipError("proto: cannot parse reserved wire type");
+            }
+        } catch (SkipError e) {
+            throw new IOException("corrupt field " + WireFormat.getTagFieldNumber(tag) + where + ": " + e.getMessage());
+        }
+    }
+
+    /** {@code io.ErrUnexpectedEOF}'s text, protobuf-go's cause for a value cut short. */
+    private static final String UNEXPECTED_EOF = "unexpected EOF";
+
+    /** The cause of a failed skip, in protobuf-go's words; {@link #skipField} names the field. */
+    private static final class SkipError extends IOException {
+        SkipError(String cause) { super(cause); }
+    }
+
+    /** One varint, as protobuf-go's {@code ConsumeVarint}: ten bytes at most, the tenth 0 or 1. */
+    private static long skipVarint(CodedInputStream in) throws IOException {
+        long v = 0;
+        for (int i = 0; ; i++) {
+            if (in.isAtEnd()) throw new SkipError(UNEXPECTED_EOF);
+            int b = in.readRawByte() & 0xff;
+            if (i == 9 && b > 1) throw new SkipError("proto: variable length integer overflow");
+            v |= (long) (b & 0x7f) << (7 * i);
+            if (b < 0x80) return v;
+        }
+    }
+
+    private static void skipBytes(CodedInputStream in, int n) throws IOException {
+        try {
+            in.skipRawBytes(n);
+        } catch (InvalidProtocolBufferException e) {
+            // n is not negative, so the one failure is running out of bytes.
+            throw new SkipError(UNEXPECTED_EOF);
+        }
     }
 
     private static Object scalarZero(Class<?> type) {
@@ -590,11 +689,11 @@ public final class Pb {
         while (true) {
             int tag = in.readTag();
             if (tag == 0) break;
-            int num = WireFormat.getTagFieldNumber(tag);
-            switch (num) {
+            // A field whose wire type does not match is skipped as unknown (#257).
+            switch (bigField(tag, BIG_INT_WIRE)) {
                 case 1 -> abs = in.readByteArray();
                 case 2 -> negative = in.readBool();
-                default -> in.skipField(tag);
+                default -> skipField(in, tag, " in BigInt");
             }
         }
         if (abs.length == 0) return BigInteger.ZERO;
@@ -651,12 +750,11 @@ public final class Pb {
         while (true) {
             int tag = in.readTag();
             if (tag == 0) break;
-            int num = WireFormat.getTagFieldNumber(tag);
-            switch (num) {
+            switch (bigField(tag, DECIMAL_WIRE)) {
                 case 1 -> abs = in.readByteArray();
                 case 2 -> scale = (int) in.readRawVarint64();
                 case 3 -> negative = in.readBool();
-                default -> in.skipField(tag);
+                default -> skipField(in, tag, " in Decimal");
             }
         }
         if (scale > maxDigits || scale < -maxDigits) {
@@ -717,12 +815,12 @@ public final class Pb {
         while (true) {
             int tag = in.readTag();
             if (tag == 0) break;
-            switch (WireFormat.getTagFieldNumber(tag)) {
+            switch (bigField(tag, BIG_FLOAT_WIRE)) {
                 case 1 -> mantissa = in.readByteArray();
                 case 2 -> exponent = (int) in.readRawVarint64();
                 case 3 -> prec = in.readUInt32();
                 case 4 -> negative = in.readBool();
-                default -> in.skipField(tag);
+                default -> skipField(in, tag, " in BigFloat");
             }
         }
         if (prec == 0) return new BigFloat(mantissa, exponent, prec, negative);
@@ -741,6 +839,28 @@ public final class Pb {
             }
         }
         return new BigFloat(mantissa, exponent, prec, negative);
+    }
+
+    // The wire type of each field of a big-number message, field 1 first
+    // (pxf/bignum.proto).
+    private static final int[] BIG_INT_WIRE = {
+        WireFormat.WIRETYPE_LENGTH_DELIMITED, WireFormat.WIRETYPE_VARINT};  // abs, negative
+    private static final int[] DECIMAL_WIRE = {
+        WireFormat.WIRETYPE_LENGTH_DELIMITED, WireFormat.WIRETYPE_VARINT,
+        WireFormat.WIRETYPE_VARINT};                                        // unscaled, scale, negative
+    private static final int[] BIG_FLOAT_WIRE = {
+        WireFormat.WIRETYPE_LENGTH_DELIMITED, WireFormat.WIRETYPE_VARINT,
+        WireFormat.WIRETYPE_VARINT, WireFormat.WIRETYPE_VARINT};            // mantissa, exponent, prec, negative
+
+    /**
+     * The field number of a big-number message's tag when its wire type is
+     * the one {@code wireTypes} declares for that field, and 0 otherwise, so
+     * a mistyped or unknown field goes to {@link #skipField}.
+     */
+    private static int bigField(int tag, int[] wireTypes) {
+        int num = WireFormat.getTagFieldNumber(tag);
+        return num >= 1 && num <= wireTypes.length
+            && WireFormat.getTagWireType(tag) == wireTypes[num - 1] ? num : 0;
     }
 
     private static byte[] stripLeadingZero(byte[] b) {
